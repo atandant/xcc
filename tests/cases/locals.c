@@ -1,3 +1,4 @@
+/* expect: 12 */
 int main(void) {
     int a;
     int b;

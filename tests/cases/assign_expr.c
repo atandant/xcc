@@ -1,3 +1,4 @@
+/* expect: 7 */
 int main(void) {
     int a;
     int b;

@@ -24,6 +24,7 @@ int yycolumn = 1;
 
 [ \t\r]+            { /* whitespace */ }
 \n                  { yycolumn = 1; }
+"/*"([^*]|\*+[^*/])*\*+"/" { /* comment */ }
 
 "int"               { return INT; }
 "void"              { return VOID; }

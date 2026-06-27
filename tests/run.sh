@@ -8,6 +8,12 @@ DIR="tests/cases"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
+MANIFEST="$DIR/manifest.txt"
+if [ ! -f "$MANIFEST" ]; then
+    MANIFEST="$TMP/manifest.txt"
+    ./tests/gen-manifest.sh "$DIR" > "$MANIFEST" || exit 1
+fi
+
 pass=0
 fail=0
 
@@ -41,7 +47,7 @@ while IFS='|' read -r file expected; do
         echo "FAIL $file: expected $expected, got $got"
         fail=$((fail + 1))
     fi
-done < "$DIR/manifest.txt"
+done < "$MANIFEST"
 
 echo "----"
 echo "$pass passed, $fail failed"
