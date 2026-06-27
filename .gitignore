@@ -1,0 +1,12 @@
+# build output (includes generated bison/flex sources)
+/build/
+
+# the compiler binary
+/xcc
+
+# editor / OS noise
+*.o
+*.d
+*.s
+*.swp
+.DS_Store
