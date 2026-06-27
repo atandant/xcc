@@ -68,9 +68,9 @@ committed.
 
 ## Roadmap
 
-- `0.0.2` — control flow (`if`/`else`, `while`, `for`)
-- `0.0.3` — functions, parameters, calls (System V ABI)
-- `0.0.4` — pointers, `char`, arrays, real `int` width / type system
+- `0.0.1.1` — control flow (`if`/`else`, `while`, `for`)
+- `0.0.1.2` — functions, parameters, calls (System V ABI)
+- `0.0.1.3` — pointers, `char`, arrays, real `int` width / type system
 - later — the preprocessor, structs, and enough to compile real projects
 
 ## License
