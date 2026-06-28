@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 #ifndef XCC_AST_H
 #define XCC_AST_H
 
@@ -20,6 +21,7 @@ typedef enum {
 } BinOp;
 
 typedef struct Node Node;
+typedef struct NodeList NodeList;
 struct Node {
     NodeKind kind;
     SourceLoc loc;
@@ -50,7 +52,9 @@ Node *node_assign(Node *l, Node *r, SourceLoc loc);
 Node *node_return(Node *o, SourceLoc loc);
 Node *node_expr_stmt(Node *o, SourceLoc loc);
 Node *node_decl(char *name, Node *init, SourceLoc loc);
-Node *stmt_append(Node *head, Node *s);
+NodeList *stmt_list_new(void);
+NodeList *stmt_list_append(NodeList *list, Node *s);
+Node *stmt_list_head(NodeList *list);
 Function *func_new(char *name, Node *body);
 
 #endif /* XCC_AST_H */

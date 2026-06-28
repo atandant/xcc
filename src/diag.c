@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 #include "diag.h"
 
 #include <stdarg.h>

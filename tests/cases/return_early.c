@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 /* expect: 11 */
 int main(void) {
     return 11;

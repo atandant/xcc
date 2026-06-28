@@ -1,12 +1,10 @@
+/* SPDX-License-Identifier: MIT */
 #include "ast.h"
 #include "arena.h"
 
-#include <string.h>
-
 static Node *new_node(NodeKind kind, SourceLoc loc)
 {
-    Node *n = arena_alloc(sizeof(Node));
-    memset(n, 0, sizeof(Node));
+    Node *n = arena_alloc_zeroed(sizeof(Node));
     n->kind = kind;
     n->loc = loc;
     return n;
@@ -72,22 +70,37 @@ Node *node_decl(char *name, Node *init, SourceLoc loc)
     return n;
 }
 
-Node *stmt_append(Node *head, Node *s)
+struct NodeList {
+    Node *head;
+    Node *tail;
+};
+
+NodeList *stmt_list_new(void)
 {
-    if (!head)
-        return s;
-    Node *p = head;
-    while (p->next)
-        p = p->next;
-    p->next = s;
-    return head;
+    return arena_alloc_zeroed(sizeof(NodeList));
+}
+
+NodeList *stmt_list_append(NodeList *list, Node *s)
+{
+    if (!list)
+        list = stmt_list_new();
+    if (!list->head)
+        list->head = s;
+    else
+        list->tail->next = s;
+    list->tail = s;
+    return list;
+}
+
+Node *stmt_list_head(NodeList *list)
+{
+    return list ? list->head : NULL;
 }
 
 Function *func_new(char *name, Node *body)
 {
-    Function *f = arena_alloc(sizeof(Function));
+    Function *f = arena_alloc_zeroed(sizeof(Function));
     f->name = name;
     f->body = body;
-    f->stack_size = 0;
     return f;
 }

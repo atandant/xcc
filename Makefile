@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 CC      ?= cc
 CFLAGS  ?= -std=c11 -Wall -Wextra -g
 CPPFLAGS = -Isrc -Ibuild

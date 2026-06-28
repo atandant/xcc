@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 #ifndef XCC_CODEGEN_H
 #define XCC_CODEGEN_H
 

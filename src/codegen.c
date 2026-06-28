@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 #include "codegen.h"
 
 /* A simple stack-machine code generator: every expression leaves its

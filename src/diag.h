@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 #ifndef XCC_DIAG_H
 #define XCC_DIAG_H
 

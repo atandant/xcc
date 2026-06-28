@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: MIT
 # Emit test manifest entries from /* expect: N */ comments in tests/cases/*.c.
 set -u
 

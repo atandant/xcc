@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 %option noyywrap yylineno
 
 %{

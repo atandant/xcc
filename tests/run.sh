@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: MIT
 # Acceptance harness: compile each case with xcc, assemble+link with gcc,
 # run it, and compare the exit status against the manifest.
 set -u

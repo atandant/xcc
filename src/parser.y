@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 %{
 #include <stdio.h>
 #include <stdlib.h>
@@ -28,6 +29,7 @@ Function *g_program = NULL;
     long num;
     char *str;
     Node *node;
+    NodeList *list;
 }
 
 %token <num> NUM
@@ -35,7 +37,8 @@ Function *g_program = NULL;
 %token INT VOID RETURN
 %token EQ NE LE GE
 
-%type <node> expr stmt stmt_list
+%type <node> expr stmt
+%type <list> stmt_list
 
 %right '='
 %left EQ NE
@@ -48,12 +51,12 @@ Function *g_program = NULL;
 
 program:
     INT IDENT '(' VOID ')' '{' stmt_list '}'
-        { g_program = func_new($2, $7); }
+        { g_program = func_new($2, stmt_list_head($7)); }
   ;
 
 stmt_list:
-    /* empty */              { $$ = NULL; }
-  | stmt_list stmt           { $$ = stmt_append($1, $2); }
+    /* empty */              { $$ = stmt_list_new(); }
+  | stmt_list stmt           { $$ = stmt_list_append($1, $2); }
   ;
 
 stmt:

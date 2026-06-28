@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 #include "sema.h"
 #include "diag.h"
 

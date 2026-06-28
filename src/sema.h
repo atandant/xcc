@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 #ifndef XCC_SEMA_H
 #define XCC_SEMA_H
 
