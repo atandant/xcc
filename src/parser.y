@@ -34,7 +34,7 @@ Function *g_program = NULL;
 
 %token <num> NUM
 %token <str> IDENT
-%token INT VOID RETURN
+%token INT VOID RETURN IF ELSE
 %token EQ NE LE GE
 
 %type <node> expr stmt
@@ -46,6 +46,8 @@ Function *g_program = NULL;
 %left '+' '-'
 %left '*' '/' '%'
 %precedence UMINUS
+%nonassoc IFX
+%nonassoc ELSE
 
 %%
 
@@ -63,6 +65,11 @@ stmt:
     RETURN expr ';'          { $$ = node_return($2, LOC(@1)); }
   | INT IDENT ';'            { $$ = node_decl($2, NULL, LOC(@1)); }
   | INT IDENT '=' expr ';'   { $$ = node_decl($2, $4, LOC(@1)); }
+  | IF '(' expr ')' stmt %prec IFX
+                              { $$ = node_if($3, $5, NULL, LOC(@1)); }
+  | IF '(' expr ')' stmt ELSE stmt
+                              { $$ = node_if($3, $5, $7, LOC(@1)); }
+  | '{' stmt_list '}'         { $$ = node_block(stmt_list_head($2), LOC(@1)); }
   | expr ';'                 { $$ = node_expr_stmt($1, LOC(@1)); }
   ;
 

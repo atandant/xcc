@@ -70,6 +70,22 @@ Node *node_decl(char *name, Node *init, SourceLoc loc)
     return n;
 }
 
+Node *node_if(Node *cond, Node *then_body, Node *else_body, SourceLoc loc)
+{
+    Node *n = new_node(ND_IF, loc);
+    n->cond = cond;
+    n->then_body = then_body;
+    n->else_body = else_body;
+    return n;
+}
+
+Node *node_block(Node *body, SourceLoc loc)
+{
+    Node *n = new_node(ND_BLOCK, loc);
+    n->body = body;
+    return n;
+}
+
 struct NodeList {
     Node *head;
     Node *tail;

@@ -31,6 +31,8 @@ int yycolumn = 1;
 "int"               { return INT; }
 "void"              { return VOID; }
 "return"            { return RETURN; }
+"if"                { return IF; }
+"else"              { return ELSE; }
 
 "=="                { return EQ; }
 "!="                { return NE; }

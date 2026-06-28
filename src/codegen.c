@@ -16,8 +16,10 @@
 
 static FILE *o;
 static const char *fname;
+static int labelseq;
 
 static void gen_expr(Node *n);
+static void gen_stmt(Node *n);
 
 static int is_imm(Node *n)
 {
@@ -358,6 +360,28 @@ static void gen_stmt(Node *n)
             fprintf(o, "  mov %%rax, %d(%%rbp)\n", n->offset);
         }
         return;
+    case ND_IF: {
+        int id = labelseq++;
+        gen_expr(n->cond);
+        fprintf(o, "  test %%rax, %%rax\n");
+        if (n->else_body) {
+            fprintf(o, "  je .L.else.%s.%d\n", fname, id);
+            gen_stmt(n->then_body);
+            fprintf(o, "  jmp .L.end.%s.%d\n", fname, id);
+            fprintf(o, ".L.else.%s.%d:\n", fname, id);
+            gen_stmt(n->else_body);
+            fprintf(o, ".L.end.%s.%d:\n", fname, id);
+        } else {
+            fprintf(o, "  je .L.end.%s.%d\n", fname, id);
+            gen_stmt(n->then_body);
+            fprintf(o, ".L.end.%s.%d:\n", fname, id);
+        }
+        return;
+    }
+    case ND_BLOCK:
+        for (Node *s = n->body; s; s = s->next)
+            gen_stmt(s);
+        return;
     default:
         return;
     }
@@ -367,6 +391,7 @@ void codegen(Function *fn, FILE *out)
 {
     o = out;
     fname = fn->name;
+    labelseq = 0;
 
     fprintf(o, "  .text\n");
     fprintf(o, "  .globl %s\n", fn->name);

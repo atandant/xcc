@@ -2,6 +2,10 @@
 run|arith.c|13|
 run|assign_chain.c|12|
 run|assign_expr.c|7|
+run|block_scope_initializer_self.c|0|
+run|block_scope_restored.c|3|
+run|block_scope_shadow.c|7|
+run|block_statement.c|9|
 run|cmp.c|1|
 run|cmp_chain.c|3|
 run|cmp_false.c|0|
@@ -10,18 +14,30 @@ run|comment_line.c|7|
 run|div_assoc.c|5|
 run|div_mod.c|5|
 run|equality_precedence.c|1|
+xcc-error|error_block_scope_expired.c|1|use of undeclared identifier 'x'
 xcc-error|error_non_lvalue_assign.c|1|assignment to non-lvalue
 xcc-error|error_redeclaration.c|1|redeclaration of 'a'
+xcc-error|error_redeclaration_nested_same_scope.c|1|redeclaration of 'x'
 xcc-error|error_stray_char.c|1|stray '@' in program
 xcc-error|error_undeclared.c|1|use of undeclared identifier 'x'
 run|expr_stmt_effect.c|7|
 run|fallthrough.c|0|
+run|if_block_then_else.c|13|
+run|if_condition_expression.c|8|
+run|if_dangling_else.c|4|
+run|if_else_false.c|22|
+run|if_else_true.c|11|
+run|if_nested.c|31|
+run|if_no_else_false.c|9|
+run|if_no_else_true.c|3|
+run|if_scope_after_block.c|2|
+run|if_scope_shadow.c|5|
 run|local_init.c|13|
 run|locals.c|12|
 run|many_locals.c|27|
 run|mod_precedence.c|8|
-run|negative_div_mod.c|5|
 run|neg.c|3|
+run|negative_div_mod.c|5|
 run|paren_grouping.c|25|
 run|precedence.c|14|
 run|reassign.c|21|

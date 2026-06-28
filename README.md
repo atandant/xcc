@@ -29,8 +29,9 @@ This is the walking skeleton: the whole pipeline runs end to end
 | ------------------------------------------- | ---------------------------------------- |
 | `int main(void) { ... }`                    | function parameters / calls / ABI        |
 | `int` locals (`int a;`, `int a = 5;`)       | other types: `char`, pointers, arrays…   |
-| `return`, assignment, expression statements | `if` / `else` / `while` / `for`          |
-| `+ - * / %`, unary `-`, parentheses         | the preprocessor (`#include`, `#define`) |
+| `return`, assignment, expression statements | `while` / `for`                          |
+| `if` / `else`, compound blocks             | the preprocessor (`#include`, `#define`) |
+| `+ - * / %`, unary `-`, parentheses         | strict C89 mode                          |
 | `== != < <= > >=`                           | multiple functions / translation units   |
 | `file:line:col` diagnostics to stderr       | optimizations                            |
 
@@ -68,7 +69,7 @@ committed.
 
 ## Roadmap
 
-- `0.0.1.1` — control flow (`if`/`else`, `while`, `for`)
+- `0.0.1.1` — remaining control flow (`while`, `for`)
 - `0.0.1.2` — functions, parameters, calls (System V ABI)
 - `0.0.1.3` — pointers, `char`, arrays, real `int` width / type system
 - later — the preprocessor, structs, and enough to compile real projects
