@@ -14,6 +14,8 @@ typedef enum {
     ND_EXPR_STMT,  /* operand;                     */
     ND_DECL,       /* int name [= init];           */
     ND_IF,         /* if (cond) then [else else]   */
+    ND_WHILE,      /* while (cond) body            */
+    ND_FOR,        /* for (init; cond; step) body  */
     ND_BLOCK       /* { body }                     */
 } NodeKind;
 
@@ -37,9 +39,10 @@ struct Node {
     Node *lhs, *rhs;   /* ND_BINOP, ND_ASSIGN                       */
 
     Node *operand;     /* ND_NEG, ND_RETURN, ND_EXPR_STMT           */
-    Node *init;        /* ND_DECL initializer (may be NULL)         */
-    Node *cond;        /* ND_IF                                     */
-    Node *then_body;   /* ND_IF                                     */
+    Node *init;        /* ND_DECL initializer, ND_FOR init (NULL ok)*/
+    Node *cond;        /* ND_IF, ND_WHILE, ND_FOR (FOR cond NULL ok)*/
+    Node *step;        /* ND_FOR step (may be NULL)                 */
+    Node *then_body;   /* ND_IF, ND_WHILE, ND_FOR loop body         */
     Node *else_body;   /* ND_IF (may be NULL)                       */
     Node *body;        /* ND_BLOCK linked list of statements        */
 };
@@ -59,6 +62,8 @@ Node *node_return(Node *o, SourceLoc loc);
 Node *node_expr_stmt(Node *o, SourceLoc loc);
 Node *node_decl(char *name, Node *init, SourceLoc loc);
 Node *node_if(Node *cond, Node *then_body, Node *else_body, SourceLoc loc);
+Node *node_while(Node *cond, Node *body, SourceLoc loc);
+Node *node_for(Node *init, Node *cond, Node *step, Node *body, SourceLoc loc);
 Node *node_block(Node *body, SourceLoc loc);
 NodeList *stmt_list_new(void);
 NodeList *stmt_list_append(NodeList *list, Node *s);

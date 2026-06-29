@@ -128,6 +128,16 @@ static void resolve_stmt(Node *s)
         if (s->else_body)
             resolve_stmt(s->else_body);
         return;
+    case ND_WHILE:
+        resolve_expr(s->cond);
+        resolve_stmt(s->then_body);
+        return;
+    case ND_FOR:
+        resolve_expr(s->init);
+        resolve_expr(s->cond);
+        resolve_expr(s->step);
+        resolve_stmt(s->then_body);
+        return;
     case ND_BLOCK:
         enter_scope();
         resolve_stmt_list(s->body);

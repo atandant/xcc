@@ -22,6 +22,14 @@ xcc-error|error_stray_char.c|1|stray '@' in program
 xcc-error|error_undeclared.c|1|use of undeclared identifier 'x'
 run|expr_stmt_effect.c|7|
 run|fallthrough.c|0|
+run|for_body_block_scope.c|10|
+run|for_count_sum.c|10|
+run|for_empty_clauses_return.c|3|
+run|for_false_skips_body.c|4|
+run|for_nested_loops.c|12|
+run|for_omitted_cond_return.c|5|
+run|for_omitted_init.c|6|
+run|for_omitted_step.c|8|
 run|if_block_then_else.c|13|
 run|if_condition_expression.c|8|
 run|if_dangling_else.c|4|
@@ -36,8 +44,8 @@ run|local_init.c|13|
 run|locals.c|12|
 run|many_locals.c|27|
 run|mod_precedence.c|8|
-run|neg.c|3|
 run|negative_div_mod.c|5|
+run|neg.c|3|
 run|paren_grouping.c|25|
 run|precedence.c|14|
 run|reassign.c|21|
@@ -45,3 +53,7 @@ run|ret_const.c|42|
 run|return_early.c|11|
 run|sub_assoc.c|12|
 run|unary_precedence.c|4|
+run|while_body_block_scope.c|11|
+run|while_count_sum.c|15|
+run|while_false_skips_body.c|7|
+run|while_nested_if.c|5|

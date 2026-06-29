@@ -33,6 +33,8 @@ int yycolumn = 1;
 "return"            { return RETURN; }
 "if"                { return IF; }
 "else"              { return ELSE; }
+"while"             { return WHILE; }
+"for"               { return FOR; }
 
 "=="                { return EQ; }
 "!="                { return NE; }

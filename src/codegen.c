@@ -378,6 +378,34 @@ static void gen_stmt(Node *n)
         }
         return;
     }
+    case ND_WHILE: {
+        int id = labelseq++;
+        fprintf(o, ".L.begin.%s.%d:\n", fname, id);
+        gen_expr(n->cond);
+        fprintf(o, "  test %%rax, %%rax\n");
+        fprintf(o, "  je .L.end.%s.%d\n", fname, id);
+        gen_stmt(n->then_body);
+        fprintf(o, "  jmp .L.begin.%s.%d\n", fname, id);
+        fprintf(o, ".L.end.%s.%d:\n", fname, id);
+        return;
+    }
+    case ND_FOR: {
+        int id = labelseq++;
+        if (n->init)
+            gen_expr(n->init);
+        fprintf(o, ".L.begin.%s.%d:\n", fname, id);
+        if (n->cond) {
+            gen_expr(n->cond);
+            fprintf(o, "  test %%rax, %%rax\n");
+            fprintf(o, "  je .L.end.%s.%d\n", fname, id);
+        }
+        gen_stmt(n->then_body);
+        if (n->step)
+            gen_expr(n->step);
+        fprintf(o, "  jmp .L.begin.%s.%d\n", fname, id);
+        fprintf(o, ".L.end.%s.%d:\n", fname, id);
+        return;
+    }
     case ND_BLOCK:
         for (Node *s = n->body; s; s = s->next)
             gen_stmt(s);

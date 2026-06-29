@@ -34,10 +34,10 @@ Function *g_program = NULL;
 
 %token <num> NUM
 %token <str> IDENT
-%token INT VOID RETURN IF ELSE
+%token INT VOID RETURN IF ELSE WHILE FOR
 %token EQ NE LE GE
 
-%type <node> expr stmt
+%type <node> expr expr_opt stmt
 %type <list> stmt_list
 
 %right '='
@@ -69,8 +69,16 @@ stmt:
                               { $$ = node_if($3, $5, NULL, LOC(@1)); }
   | IF '(' expr ')' stmt ELSE stmt
                               { $$ = node_if($3, $5, $7, LOC(@1)); }
+  | WHILE '(' expr ')' stmt   { $$ = node_while($3, $5, LOC(@1)); }
+  | FOR '(' expr_opt ';' expr_opt ';' expr_opt ')' stmt
+                              { $$ = node_for($3, $5, $7, $9, LOC(@1)); }
   | '{' stmt_list '}'         { $$ = node_block(stmt_list_head($2), LOC(@1)); }
   | expr ';'                 { $$ = node_expr_stmt($1, LOC(@1)); }
+  ;
+
+expr_opt:
+    /* empty */              { $$ = NULL; }
+  | expr                     { $$ = $1; }
   ;
 
 expr:

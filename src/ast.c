@@ -79,6 +79,24 @@ Node *node_if(Node *cond, Node *then_body, Node *else_body, SourceLoc loc)
     return n;
 }
 
+Node *node_while(Node *cond, Node *body, SourceLoc loc)
+{
+    Node *n = new_node(ND_WHILE, loc);
+    n->cond = cond;
+    n->then_body = body;
+    return n;
+}
+
+Node *node_for(Node *init, Node *cond, Node *step, Node *body, SourceLoc loc)
+{
+    Node *n = new_node(ND_FOR, loc);
+    n->init = init;
+    n->cond = cond;
+    n->step = step;
+    n->then_body = body;
+    return n;
+}
+
 Node *node_block(Node *body, SourceLoc loc)
 {
     Node *n = new_node(ND_BLOCK, loc);
