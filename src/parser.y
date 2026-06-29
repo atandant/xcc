@@ -30,6 +30,9 @@ Function *g_program = NULL;
     char *str;
     Node *node;
     NodeList *list;
+    Param *param;
+    ParamClause *pclause;
+    Function *func;
 }
 
 %token <num> NUM
@@ -38,7 +41,11 @@ Function *g_program = NULL;
 %token EQ NE LE GE
 
 %type <node> expr expr_opt stmt
-%type <list> stmt_list
+%type <list> stmt_list arg_clause arg_list
+%type <param> params
+%type <pclause> param_clause
+%type <func> toplevel
+%type <num> ret_type
 
 %right '='
 %left EQ NE
@@ -52,8 +59,33 @@ Function *g_program = NULL;
 %%
 
 program:
-    INT IDENT '(' VOID ')' '{' stmt_list '}'
-        { g_program = func_new($2, stmt_list_head($7)); }
+    /* empty */              { }
+  | program toplevel         { g_program = func_append(g_program, $2); }
+  ;
+
+toplevel:
+    ret_type IDENT '(' param_clause ')' '{' stmt_list '}'
+        { $$ = func_new($2, $4, $1, 1, stmt_list_head($7), LOC(@2)); }
+  | ret_type IDENT '(' param_clause ')' ';'
+        { $$ = func_new($2, $4, $1, 0, NULL, LOC(@2)); }
+  ;
+
+ret_type:
+    INT                      { $$ = 0; }
+  | VOID                     { $$ = 1; }
+  ;
+
+param_clause:
+    /* empty */              { $$ = param_clause(NULL, 0); }
+  | VOID                     { $$ = param_clause(NULL, 1); }
+  | params                   { $$ = param_clause($1, 1); }
+  ;
+
+params:
+    INT IDENT                { $$ = param_append(NULL, $2); }
+  | INT                      { $$ = param_append(NULL, NULL); }
+  | params ',' INT IDENT     { $$ = param_append($1, $4); }
+  | params ',' INT           { $$ = param_append($1, NULL); }
   ;
 
 stmt_list:
@@ -63,6 +95,7 @@ stmt_list:
 
 stmt:
     RETURN expr ';'          { $$ = node_return($2, LOC(@1)); }
+  | RETURN ';'               { $$ = node_return(NULL, LOC(@1)); }
   | INT IDENT ';'            { $$ = node_decl($2, NULL, LOC(@1)); }
   | INT IDENT '=' expr ';'   { $$ = node_decl($2, $4, LOC(@1)); }
   | IF '(' expr ')' stmt %prec IFX
@@ -84,6 +117,7 @@ expr_opt:
 expr:
     NUM                      { $$ = node_num($1, LOC(@1)); }
   | IDENT                    { $$ = node_var($1, LOC(@1)); }
+  | IDENT '(' arg_clause ')' { $$ = node_call($1, $3, LOC(@1)); }
   | expr '=' expr            { $$ = node_assign($1, $3, LOC(@2)); }
   | expr '+' expr            { $$ = node_binop(OP_ADD, $1, $3, LOC(@2)); }
   | expr '-' expr            { $$ = node_binop(OP_SUB, $1, $3, LOC(@2)); }
@@ -98,6 +132,16 @@ expr:
   | expr GE expr             { $$ = node_binop(OP_GE, $1, $3, LOC(@2)); }
   | '-' expr %prec UMINUS    { $$ = node_neg($2, LOC(@1)); }
   | '(' expr ')'             { $$ = $2; }
+  ;
+
+arg_clause:
+    /* empty */              { $$ = NULL; }
+  | arg_list                 { $$ = $1; }
+  ;
+
+arg_list:
+    expr                     { $$ = stmt_list_append(NULL, $1); }
+  | arg_list ',' expr        { $$ = stmt_list_append($1, $3); }
   ;
 
 %%

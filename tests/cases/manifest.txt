@@ -2,27 +2,49 @@
 run|arith.c|13|
 run|assign_chain.c|12|
 run|assign_expr.c|7|
+run|block_comment_multiline.c|12|
 run|block_scope_initializer_self.c|0|
 run|block_scope_restored.c|3|
 run|block_scope_shadow.c|7|
 run|block_statement.c|9|
+run|call_arg_local_before_assignment.c|23|
+run|call_expr_statement.c|5|
+run|call_forward_implicit.c|6|
+run|call_many_args.c|36|
+run|call_nested_args.c|21|
+run|call_no_args.c|9|
+run|call_prototype_before_definition.c|14|
+run|call_two_args.c|17|
+run|call_unprototyped_allows_any_arity.c|11|
 run|cmp.c|1|
 run|cmp_chain.c|3|
 run|cmp_false.c|0|
 run|cmp_precedence.c|1|
 run|comment_line.c|7|
+run|comparison_truth_values.c|6|
 run|div_assoc.c|5|
 run|div_mod.c|5|
 run|equality_precedence.c|1|
 xcc-error|error_block_scope_expired.c|1|use of undeclared identifier 'x'
+xcc-error|error_called_local.c|1|called object 'f' is not a function
+xcc-error|error_conflicting_param_count.c|1|conflicting types for 'f'
+xcc-error|error_conflicting_return_type.c|1|conflicting types for 'f'
+xcc-error|error_function_redefinition.c|1|redefinition of 'f'
 xcc-error|error_non_lvalue_assign.c|1|assignment to non-lvalue
+xcc-error|error_param_redefinition.c|1|redefinition of parameter 'x'
+xcc-error|error_parse_missing_semicolon.c|1|syntax error
 xcc-error|error_redeclaration.c|1|redeclaration of 'a'
 xcc-error|error_redeclaration_nested_same_scope.c|1|redeclaration of 'x'
 xcc-error|error_stray_char.c|1|stray '@' in program
+xcc-error|error_too_few_args.c|1|too few arguments to function 'add'
+xcc-error|error_too_many_args.c|1|too many arguments to function 'id'
 xcc-error|error_undeclared.c|1|use of undeclared identifier 'x'
+xcc-error|error_void_return_value.c|1|void function 'f' should not return a value
 run|expr_stmt_effect.c|7|
+run|falloff_non_main_returns_zero.c|0|
 run|fallthrough.c|0|
 run|for_body_block_scope.c|10|
+run|for_condition_assignment.c|3|
 run|for_count_sum.c|10|
 run|for_empty_clauses_return.c|3|
 run|for_false_skips_body.c|4|
@@ -30,6 +52,7 @@ run|for_nested_loops.c|12|
 run|for_omitted_cond_return.c|5|
 run|for_omitted_init.c|6|
 run|for_omitted_step.c|8|
+run|for_step_assignment_value.c|10|
 run|if_block_then_else.c|13|
 run|if_condition_expression.c|8|
 run|if_dangling_else.c|4|
@@ -40,19 +63,26 @@ run|if_no_else_false.c|9|
 run|if_no_else_true.c|3|
 run|if_scope_after_block.c|2|
 run|if_scope_shadow.c|5|
+run|large_immediate_slow_path.c|1|
 run|local_init.c|13|
 run|locals.c|12|
 run|many_locals.c|27|
 run|mod_precedence.c|8|
-run|negative_div_mod.c|5|
 run|neg.c|3|
+run|negative_div_mod.c|5|
+run|nested_blocks_reuse_names.c|16|
+run|param_seventh_stack_arg.c|7|
+run|param_shadow_block.c|8|
 run|paren_grouping.c|25|
 run|precedence.c|14|
 run|reassign.c|21|
+run|recursion_factorial.c|120|
 run|ret_const.c|42|
 run|return_early.c|11|
 run|sub_assoc.c|12|
 run|unary_precedence.c|4|
+run|void_function_bare_return.c|3|
+run|while_assignment_condition.c|4|
 run|while_body_block_scope.c|11|
 run|while_count_sum.c|15|
 run|while_false_skips_body.c|7|

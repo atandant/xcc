@@ -4,22 +4,51 @@
 #include <assert.h>
 #include <limits.h>
 
-/* This is still intentionally a stack-machine code generator: expression
- * results live in %rax, and complex binary RHS values are spilled to the
- * hardware stack. The difference from the skeleton emitter is that simple
- * immediates and locals are consumed directly as x86 operands when legal.
+/* Stack-machine code generator: expression results live in %rax, and complex
+ * sub-expressions are spilled to reserved frame slots (Option B). Unlike a
+ * push/pop emitter, %rsp never moves inside the function body: sema reserves a
+ * temp area and an outgoing-argument area up front, so every `call` site is
+ * already 16-byte aligned per the System V ABI.
  *
- * Note (known v0.0.1 deviation): C `int` is 32-bit on this ABI, but we
- * compute in 64-bit registers/slots throughout. The exit-status tests only
- * observe the low 8 bits, so this is invisible for now and fixed when the
- * real type system lands. */
+ * Note (known v0.0.1 deviation): C `int` is 32-bit on this ABI, but we compute
+ * in 64-bit registers/slots throughout. The exit-status tests only observe the
+ * low 8 bits, so this is invisible for now and fixed when the real type system
+ * lands. */
 
 static FILE *o;
 static const char *fname;
 static int labelseq;
 
+static int cur_locals_size; /* bytes of locals + spilled reg params */
+static int depth;           /* current expression-temp depth        */
+
+/* System V integer argument registers, in order. */
+static const char *argreg64[6] = {
+    "%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"
+};
+
 static void gen_expr(Node *n);
 static void gen_stmt(Node *n);
+
+/* Offset of expression temp slot `i`, just below the locals area. */
+static int temp_off(int i)
+{
+    return -(cur_locals_size + 8 * (i + 1));
+}
+
+/* Spill %rax into the next temp slot (replaces `push %rax`). */
+static void spill(void)
+{
+    fprintf(o, "  mov %%rax, %d(%%rbp)\n", temp_off(depth));
+    depth++;
+}
+
+/* Reload the most recently spilled temp (replaces `pop reg`). */
+static void reload(const char *reg)
+{
+    depth--;
+    fprintf(o, "  mov %d(%%rbp), %s\n", temp_off(depth), reg);
+}
 
 static int is_imm(Node *n)
 {
@@ -34,6 +63,16 @@ static int is_local(Node *n)
 static int is_zero(Node *n)
 {
     return is_imm(n) && n->val == 0;
+}
+
+static int is_direct_arg(Node *n)
+{
+    return is_imm(n) || is_local(n);
+}
+
+static int is_call_arg_direct(Node *n, int complex_after)
+{
+    return is_imm(n) || (is_local(n) && complex_after == 0);
 }
 
 static int fits_i32(long val)
@@ -58,6 +97,36 @@ static void emit_load_local(Node *n)
 {
     assert(n->kind == ND_VAR);
     fprintf(o, "  mov %d(%%rbp), %%rax\n", n->offset);
+}
+
+static void emit_arg_to_reg(Node *n, const char *reg)
+{
+    switch (n->kind) {
+    case ND_NUM:
+        fprintf(o, "  mov $%ld, %s\n", n->val, reg);
+        return;
+    case ND_VAR:
+        fprintf(o, "  mov %d(%%rbp), %s\n", n->offset, reg);
+        return;
+    default:
+        assert(0 && "not a direct argument");
+    }
+}
+
+static void emit_arg_to_stack(Node *n, int off)
+{
+    switch (n->kind) {
+    case ND_NUM:
+        emit_load_imm(n->val);
+        fprintf(o, "  mov %%rax, %d(%%rsp)\n", off);
+        return;
+    case ND_VAR:
+        emit_load_local(n);
+        fprintf(o, "  mov %%rax, %d(%%rsp)\n", off);
+        return;
+    default:
+        assert(0 && "not a direct argument");
+    }
 }
 
 static const char *setcc_for(BinOp op)
@@ -98,6 +167,73 @@ static void gen_addr(Node *n)
         /* sema rejects non-lvalue assignments. */
         assert(0 && "invalid lvalue");
     }
+}
+
+static void gen_call(Node *n)
+{
+    enum { MAX_CALL_ARGS = 4096 };
+    int temp_slot[MAX_CALL_ARGS];
+    int base = depth;
+    int i = 0;
+    int ntemps = 0;
+    int complex_after = 0;
+
+    assert(n->nargs <= MAX_CALL_ARGS);
+
+    for (Node *a = n->args; a; a = a->next)
+        if (!is_direct_arg(a))
+            complex_after++;
+
+    /* Only complex arguments need to be stashed before the call. Immediates
+     * can be copied directly into final argument locations. Locals can too,
+     * but only after any later complex argument that might mutate them. */
+    for (Node *a = n->args; a; a = a->next, i++) {
+        if (is_call_arg_direct(a, complex_after)) {
+            temp_slot[i] = -1;
+            continue;
+        }
+
+        gen_expr(a);
+        temp_slot[i] = base + ntemps;
+        fprintf(o, "  mov %%rax, %d(%%rbp)\n", temp_off(temp_slot[i]));
+        depth++;
+        ntemps++;
+        if (!is_direct_arg(a))
+            complex_after--;
+    }
+
+    /* Arguments 7+ go in the outgoing-arg area at 0(%rsp), 8(%rsp), ... */
+    for (i = 6; i < n->nargs; i++) {
+        if (temp_slot[i] < 0) {
+            Node *a = n->args;
+            for (int j = 0; j < i; j++)
+                a = a->next;
+            emit_arg_to_stack(a, 8 * (i - 6));
+            continue;
+        }
+        fprintf(o, "  mov %d(%%rbp), %%rax\n", temp_off(temp_slot[i]));
+        fprintf(o, "  mov %%rax, %d(%%rsp)\n", 8 * (i - 6));
+    }
+
+    /* Load the register arguments last, so nested calls above can't clobber
+     * them before the call. */
+    int nreg = n->nargs < 6 ? n->nargs : 6;
+    Node *a = n->args;
+    for (i = 0; i < nreg; i++, a = a->next) {
+        if (temp_slot[i] < 0)
+            emit_arg_to_reg(a, argreg64[i]);
+        else
+            fprintf(o, "  mov %d(%%rbp), %s\n",
+                    temp_off(temp_slot[i]), argreg64[i]);
+    }
+
+    depth = base;
+
+    /* SysV: %al = number of vector registers used (always 0 here). Required
+     * for variadic and unprototyped callees. */
+    fprintf(o, "  mov $0, %%al\n");
+    fprintf(o, "  call %s\n", n->name);
+    /* return value is already in %rax */
 }
 
 static int fold_binop(BinOp op, Node *lhs, Node *rhs)
@@ -260,9 +396,9 @@ static int gen_binop_commuted(BinOp op, Node *lhs, Node *rhs)
 static void gen_binop_slow(BinOp op, Node *lhs, Node *rhs)
 {
     gen_expr(rhs);
-    fprintf(o, "  push %%rax\n");
+    spill();
     gen_expr(lhs);
-    fprintf(o, "  pop %%rdi\n"); /* %rax = lhs, %rdi = rhs */
+    reload("%rdi"); /* %rax = lhs, %rdi = rhs */
 
     switch (op) {
     case OP_ADD:
@@ -325,15 +461,18 @@ static void gen_expr(Node *n)
     case ND_VAR:
         emit_load_local(n);
         return;
+    case ND_CALL:
+        gen_call(n);
+        return;
     case ND_NEG:
         gen_expr(n->operand);
         fprintf(o, "  neg %%rax\n");
         return;
     case ND_ASSIGN:
         gen_addr(n->lhs);
-        fprintf(o, "  push %%rax\n");
+        spill();
         gen_expr(n->rhs);
-        fprintf(o, "  pop %%rdi\n");
+        reload("%rdi");
         fprintf(o, "  mov %%rax, (%%rdi)\n");
         return;
     case ND_BINOP:
@@ -348,7 +487,8 @@ static void gen_stmt(Node *n)
 {
     switch (n->kind) {
     case ND_RETURN:
-        gen_expr(n->operand);
+        if (n->operand)
+            gen_expr(n->operand);
         fprintf(o, "  jmp .L.return.%s\n", fname);
         return;
     case ND_EXPR_STMT:
@@ -415,13 +555,42 @@ static void gen_stmt(Node *n)
     }
 }
 
-void codegen(Function *fn, FILE *out)
+static int stmt_returns(Node *n);
+
+static int stmt_list_returns(Node *body)
 {
-    o = out;
+    for (Node *s = body; s; s = s->next)
+        if (stmt_returns(s))
+            return 1;
+    return 0;
+}
+
+static int stmt_returns(Node *n)
+{
+    switch (n->kind) {
+    case ND_RETURN:
+        return 1;
+    case ND_IF:
+        return n->else_body &&
+               stmt_returns(n->then_body) &&
+               stmt_returns(n->else_body);
+    case ND_BLOCK:
+        return stmt_list_returns(n->body);
+    default:
+        return 0;
+    }
+}
+
+static void gen_function(Function *fn)
+{
+    if (!fn->is_definition)
+        return;
+
     fname = fn->name;
     labelseq = 0;
+    cur_locals_size = fn->locals_size;
+    depth = 0;
 
-    fprintf(o, "  .text\n");
     fprintf(o, "  .globl %s\n", fn->name);
     fprintf(o, "%s:\n", fn->name);
 
@@ -431,15 +600,29 @@ void codegen(Function *fn, FILE *out)
     if (fn->stack_size)
         fprintf(o, "  sub $%d, %%rsp\n", fn->stack_size);
 
+    /* spill the register-passed parameters into their slots */
+    int i = 0;
+    for (Param *p = fn->params; p; p = p->next, i++) {
+        if (i < 6)
+            fprintf(o, "  mov %s, %d(%%rbp)\n", argreg64[i], p->offset);
+    }
+
     for (Node *s = fn->body; s; s = s->next)
         gen_stmt(s);
 
-    /* falling off the end returns 0 */
-    emit_zero_rax();
+    if (!stmt_list_returns(fn->body))
+        emit_zero_rax();
 
     /* epilogue */
     fprintf(o, ".L.return.%s:\n", fn->name);
-    fprintf(o, "  mov %%rbp, %%rsp\n");
-    fprintf(o, "  pop %%rbp\n");
+    fprintf(o, "  leave\n");
     fprintf(o, "  ret\n");
+}
+
+void codegen(Function *prog, FILE *out)
+{
+    o = out;
+    fprintf(o, "  .text\n");
+    for (Function *fn = prog; fn; fn = fn->next)
+        gen_function(fn);
 }

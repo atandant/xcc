@@ -70,6 +70,17 @@ Node *node_decl(char *name, Node *init, SourceLoc loc)
     return n;
 }
 
+Node *node_call(char *name, NodeList *args, SourceLoc loc)
+{
+    Node *n = new_node(ND_CALL, loc);
+    n->name = name;
+    n->args = stmt_list_head(args);
+    n->nargs = 0;
+    for (Node *a = n->args; a; a = a->next)
+        n->nargs++;
+    return n;
+}
+
 Node *node_if(Node *cond, Node *then_body, Node *else_body, SourceLoc loc)
 {
     Node *n = new_node(ND_IF, loc);
@@ -131,10 +142,51 @@ Node *stmt_list_head(NodeList *list)
     return list ? list->head : NULL;
 }
 
-Function *func_new(char *name, Node *body)
+Param *param_append(Param *list, char *name)
+{
+    Param *p = arena_alloc_zeroed(sizeof(Param));
+    p->name = name;
+    if (!list)
+        return p;
+    Param *tail = list;
+    while (tail->next)
+        tail = tail->next;
+    tail->next = p;
+    return list;
+}
+
+ParamClause *param_clause(Param *head, int prototyped)
+{
+    ParamClause *pc = arena_alloc_zeroed(sizeof(ParamClause));
+    pc->head = head;
+    pc->prototyped = prototyped;
+    for (Param *p = head; p; p = p->next)
+        pc->count++;
+    return pc;
+}
+
+Function *func_new(char *name, ParamClause *pc, int ret_void,
+                   int is_definition, Node *body, SourceLoc loc)
 {
     Function *f = arena_alloc_zeroed(sizeof(Function));
     f->name = name;
+    f->loc = loc;
+    f->params = pc->head;
+    f->nparams = pc->count;
+    f->prototyped = pc->prototyped;
+    f->ret_void = ret_void;
+    f->is_definition = is_definition;
     f->body = body;
     return f;
+}
+
+Function *func_append(Function *list, Function *f)
+{
+    if (!list)
+        return f;
+    Function *tail = list;
+    while (tail->next)
+        tail = tail->next;
+    tail->next = f;
+    return list;
 }

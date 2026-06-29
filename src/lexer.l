@@ -44,7 +44,7 @@ int yycolumn = 1;
 [A-Za-z_][A-Za-z0-9_]*  { yylval.str = arena_strdup(yytext); return IDENT; }
 [0-9]+                  { yylval.num = strtol(yytext, NULL, 10); return NUM; }
 
-[-+*/%=<>(){};]     { return yytext[0]; }
+[-+*/%=<>(){};,]    { return yytext[0]; }
 
 .                   { diag_error_at((SourceLoc){ yylineno, yycolumn },
                                     "stray '%c' in program", yytext[0]); }
