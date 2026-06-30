@@ -20,24 +20,34 @@ Or against files:
 gcc program.s -o program
 ```
 
-## Status (v0.0.1)
+## Examples
 
-This is the walking skeleton: the whole pipeline runs end to end
-(lex → parse → sema → codegen → `.s` → gcc), with a real test harness.
+See [`examples/`](examples/) for small programs (prime sieve count, Fibonacci,
+GCD, pointer swap). Build and run them all:
 
-| Supported                                   | Not yet                                  |
-| ------------------------------------------- | ---------------------------------------- |
-| `int main(void) { ... }`                    | function parameters / calls / ABI        |
-| `int` locals (`int a;`, `int a = 5;`)       | other types: `char`, pointers, arrays…   |
-| `return`, assignment, expression statements | `while` / `for`                          |
-| `if` / `else`, compound blocks             | the preprocessor (`#include`, `#define`) |
-| `+ - * / %`, unary `-`, parentheses         | strict C89 mode                          |
-| `== != < <= > >=`                           | multiple functions / translation units   |
-| `file:line:col` diagnostics to stderr       | optimizations                            |
+```sh
+make
+./examples/build.sh
+```
 
-> Known deviation: `int` is computed in 64-bit registers for now (correct
-> 32-bit width arrives with the type system). Only the low 8 bits reach the
-> process exit status, so it is invisible to the current tests.
+## Status (v0.0.1.3)
+
+The pipeline runs end to end (lex → parse → sema → codegen → `.s` → gcc) with
+a typed semantic layer and 150+ acceptance tests.
+
+| Supported | Not yet |
+| --- | --- |
+| `int`, `char`, `void`, pointers (`*`, `&`, dereference) | arrays |
+| typed declarations, parameters, returns | pointer arithmetic |
+| function calls (prototyped arg checking, void `*` conversions) | `sizeof`, casts |
+| `if` / `else`, `while`, `for`, blocks | structs, unions, enums, `typedef` |
+| `+ - * / %`, unary `-`, comparisons | preprocessor (`#include`, `#define`) |
+| pointer `==` / `!=`, truthiness, `p == 0` | multiple translation units |
+| `file:line:col` errors and `note:` diagnostics | warning system / `-W` flags |
+
+> Known backend limitation: locals still live in 8-byte stack slots, so `char`
+> is modeled in the type system but is not byte-correct at runtime yet. See
+> `typesystemlist.txt` for deviations and scope.
 
 ## How it works
 
@@ -46,21 +56,22 @@ This is the walking skeleton: the whole pipeline runs end to end
                                                    │
                           arena-allocated, thin    │
                           grammar actions only     ▼
-                                            sema (resolve locals,
-                                                  check errors)
+                                            sema (types, lvalues,
+                                                  function table)
                                                    │
                                                    ▼
                                       codegen ──▶ x86-64 .s ──▶ gcc ──▶ binary
 ```
 
-The parser only builds AST nodes; all checking lives in a separate `sema`
-pass, and codegen walks the AST straight to assembly (no IR yet).
+The parser builds AST nodes and attaches parsed types to declarations. **sema**
+owns type checking; codegen reads typed nodes and emits load/store/compare.
 
 ## Build & test
 
 ```sh
-make        # requires bison + flex + a C compiler
-make test   # compile each tests/cases/*.c, run it, assert the exit code
+make            # requires bison + flex + a C compiler
+make test       # compile each tests/cases/*.c, run it, assert the exit code
+./examples/build.sh
 make clean
 ```
 
@@ -69,10 +80,10 @@ committed.
 
 ## Roadmap
 
-- `0.0.1.1` — remaining control flow (`while`, `for`)
-- `0.0.1.2` — functions, parameters, calls (System V ABI)
-- `0.0.1.3` — pointers, `char`, arrays, real `int` width / type system
-- later — the preprocessor, structs, and enough to compile real projects
+- `0.0.1.1` — `while`, `for` ✓
+- `0.0.1.2` — functions, parameters, calls (System V ABI) ✓
+- `0.0.1.3` — type system, pointers, `char`, `void *` ✓
+- later — arrays, preprocessor, structs, and enough to compile real projects
 
 ## License
 

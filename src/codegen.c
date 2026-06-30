@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include "codegen.h"
+#include "type.h"
 
 #include <assert.h>
 #include <limits.h>
@@ -10,10 +11,8 @@
  * temp area and an outgoing-argument area up front, so every `call` site is
  * already 16-byte aligned per the System V ABI.
  *
- * Note (known v0.0.1 deviation): C `int` is 32-bit on this ABI, but we compute
- * in 64-bit registers/slots throughout. The exit-status tests only observe the
- * low 8 bits, so this is invisible for now and fixed when the real type system
- * lands. */
+ * Note: char uses byte-wide load/store (movzbl/movb) into 8-byte stack slots.
+ * int and pointers still use 8-byte word operations. */
 
 static FILE *o;
 static const char *fname;
@@ -93,10 +92,26 @@ static void emit_load_imm(long val)
         fprintf(o, "  mov $%ld, %%rax\n", val);
 }
 
+static void emit_load_slot(Type *ty, int offset)
+{
+    if (type_is_char(ty))
+        fprintf(o, "  movzbl %d(%%rbp), %%eax\n", offset);
+    else
+        fprintf(o, "  mov %d(%%rbp), %%rax\n", offset);
+}
+
+static void emit_store_slot(Type *ty, int offset)
+{
+    if (type_is_char(ty))
+        fprintf(o, "  mov %%al, %d(%%rbp)\n", offset);
+    else
+        fprintf(o, "  mov %%rax, %d(%%rbp)\n", offset);
+}
+
 static void emit_load_local(Node *n)
 {
     assert(n->kind == ND_VAR);
-    fprintf(o, "  mov %d(%%rbp), %%rax\n", n->offset);
+    emit_load_slot(n->ty, n->offset);
 }
 
 static void emit_arg_to_reg(Node *n, const char *reg)
@@ -106,7 +121,8 @@ static void emit_arg_to_reg(Node *n, const char *reg)
         fprintf(o, "  mov $%ld, %s\n", n->val, reg);
         return;
     case ND_VAR:
-        fprintf(o, "  mov %d(%%rbp), %s\n", n->offset, reg);
+        emit_load_slot(n->ty, n->offset);
+        fprintf(o, "  mov %%rax, %s\n", reg);
         return;
     default:
         assert(0 && "not a direct argument");
@@ -121,7 +137,7 @@ static void emit_arg_to_stack(Node *n, int off)
         fprintf(o, "  mov %%rax, %d(%%rsp)\n", off);
         return;
     case ND_VAR:
-        emit_load_local(n);
+        emit_load_slot(n->ty, n->offset);
         fprintf(o, "  mov %%rax, %d(%%rsp)\n", off);
         return;
     default:
@@ -157,11 +173,33 @@ static void emit_setcc(BinOp op)
     fprintf(o, "  movzbq %%al, %%rax\n");
 }
 
+/* Typed value load/store: width comes from Type. Locals still live in
+ * 8-byte slots; char uses the low byte only (unsigned, movzbl/movb). */
+static void emit_load(Type *ty)
+{
+    if (type_is_char(ty))
+        fprintf(o, "  movzbl (%%rax), %%eax\n");
+    else
+        fprintf(o, "  mov (%%rax), %%rax\n");
+}
+
+static void emit_store(Type *ty)
+{
+    if (type_is_char(ty))
+        fprintf(o, "  mov %%al, (%%rdi)\n");
+    else
+        fprintf(o, "  mov %%rax, (%%rdi)\n");
+}
+
 static void gen_addr(Node *n)
 {
     switch (n->kind) {
     case ND_VAR:
         fprintf(o, "  lea %d(%%rbp), %%rax\n", n->offset);
+        return;
+    case ND_DEREF:
+        /* The address of *p is just the value of p. */
+        gen_expr(n->operand);
         return;
     default:
         /* sema rejects non-lvalue assignments. */
@@ -468,12 +506,19 @@ static void gen_expr(Node *n)
         gen_expr(n->operand);
         fprintf(o, "  neg %%rax\n");
         return;
+    case ND_ADDR:
+        gen_addr(n->operand);
+        return;
+    case ND_DEREF:
+        gen_addr(n);              /* %rax = address */
+        emit_load(n->ty);         /* load value by result type */
+        return;
     case ND_ASSIGN:
         gen_addr(n->lhs);
         spill();
         gen_expr(n->rhs);
-        reload("%rdi");
-        fprintf(o, "  mov %%rax, (%%rdi)\n");
+        reload("%rdi");           /* %rdi = address, %rax = value */
+        emit_store(n->lhs->ty);
         return;
     case ND_BINOP:
         gen_binop(n->op, n->lhs, n->rhs);
@@ -497,7 +542,7 @@ static void gen_stmt(Node *n)
     case ND_DECL:
         if (n->init) {
             gen_expr(n->init);
-            fprintf(o, "  mov %%rax, %d(%%rbp)\n", n->offset);
+            emit_store_slot(n->ty, n->offset);
         }
         return;
     case ND_IF: {

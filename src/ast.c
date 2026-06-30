@@ -40,6 +40,20 @@ Node *node_neg(Node *o, SourceLoc loc)
     return n;
 }
 
+Node *node_addr(Node *o, SourceLoc loc)
+{
+    Node *n = new_node(ND_ADDR, loc);
+    n->operand = o;
+    return n;
+}
+
+Node *node_deref(Node *o, SourceLoc loc)
+{
+    Node *n = new_node(ND_DEREF, loc);
+    n->operand = o;
+    return n;
+}
+
 Node *node_assign(Node *l, Node *r, SourceLoc loc)
 {
     Node *n = new_node(ND_ASSIGN, loc);
@@ -62,10 +76,11 @@ Node *node_expr_stmt(Node *o, SourceLoc loc)
     return n;
 }
 
-Node *node_decl(char *name, Node *init, SourceLoc loc)
+Node *node_decl(char *name, Type *ty, Node *init, SourceLoc loc)
 {
     Node *n = new_node(ND_DECL, loc);
     n->name = name;
+    n->ty = ty;
     n->init = init;
     return n;
 }
@@ -142,10 +157,11 @@ Node *stmt_list_head(NodeList *list)
     return list ? list->head : NULL;
 }
 
-Param *param_append(Param *list, char *name)
+Param *param_append(Param *list, Type *ty, char *name)
 {
     Param *p = arena_alloc_zeroed(sizeof(Param));
     p->name = name;
+    p->ty = ty;
     if (!list)
         return p;
     Param *tail = list;
@@ -165,7 +181,7 @@ ParamClause *param_clause(Param *head, int prototyped)
     return pc;
 }
 
-Function *func_new(char *name, ParamClause *pc, int ret_void,
+Function *func_new(char *name, ParamClause *pc, Type *ret_ty,
                    int is_definition, Node *body, SourceLoc loc)
 {
     Function *f = arena_alloc_zeroed(sizeof(Function));
@@ -174,9 +190,20 @@ Function *func_new(char *name, ParamClause *pc, int ret_void,
     f->params = pc->head;
     f->nparams = pc->count;
     f->prototyped = pc->prototyped;
-    f->ret_void = ret_void;
+    f->ret_ty = ret_ty;
     f->is_definition = is_definition;
     f->body = body;
+
+    /* Build the full function type from the parsed parameter types. */
+    Type **ptypes = NULL;
+    if (pc->count > 0) {
+        ptypes = arena_alloc(sizeof(Type *) * pc->count);
+        int i = 0;
+        for (Param *p = pc->head; p; p = p->next, i++)
+            ptypes[i] = p->ty;
+    }
+    f->ty = type_func(ret_ty, ptypes, pc->count, pc->prototyped);
+
     return f;
 }
 

@@ -9,7 +9,7 @@ BUILD = build
 BIN   = xcc
 
 # Hand-written sources
-SRCS = src/main.c src/arena.c src/ast.c src/diag.c src/sema.c src/codegen.c
+SRCS = src/main.c src/arena.c src/ast.c src/type.c src/diag.c src/sema.c src/codegen.c
 OBJS = $(patsubst src/%.c,$(BUILD)/%.o,$(SRCS))
 
 # Generated sources (bison/flex) - compiled with warnings off
@@ -17,7 +17,7 @@ GEN_OBJS = $(BUILD)/parser.o $(BUILD)/lexer.o
 
 DEPS = $(OBJS:.o=.d) $(GEN_OBJS:.o=.d)
 
-.PHONY: all clean test
+.PHONY: all clean test examples
 
 all: $(BIN)
 
@@ -51,6 +51,9 @@ $(BUILD)/lexer.o: $(BUILD)/lexer.c $(BUILD)/parser.h | $(BUILD)
 
 test: $(BIN)
 	./tests/run.sh
+
+examples: $(BIN)
+	./examples/build.sh
 
 clean:
 	rm -rf $(BUILD) $(BIN)

@@ -12,6 +12,7 @@
 
 typedef struct {
     char *name;
+    Type *ty;
     int offset;
 } Local;
 
@@ -26,7 +27,7 @@ static int nscopes;
 static int cur_offset; /* grows downward from %rbp, in bytes */
 
 /* return-statement context for the function being resolved */
-static int cur_ret_void;
+static Type *cur_ret_ty;
 static const char *cur_fname;
 
 /* frame-sizing accumulators (Option B: reserve temp + outgoing-arg areas) */
@@ -37,9 +38,7 @@ static int cur_max_out;   /* max outgoing stack-arg bytes over all calls    */
 
 typedef struct {
     char *name;
-    int prototyped;
-    int nparams;
-    int ret_void;
+    Type *ty;          /* full TY_FUNC type (merged across declarations) */
     int defined;
 } FuncSym;
 
@@ -54,40 +53,37 @@ static FuncSym *find_func(const char *name)
     return NULL;
 }
 
-static FuncSym *add_func(char *name, int prototyped, int nparams,
-                         int ret_void, int defined)
+static FuncSym *add_func(char *name, Type *ty, int defined)
 {
     FuncSym *s = &funcs[nfuncs++];
     s->name = name;
-    s->prototyped = prototyped;
-    s->nparams = nparams;
-    s->ret_void = ret_void;
+    s->ty = ty;
     s->defined = defined;
     return s;
 }
 
 /* Merge a top-level declaration/definition into the function table, emitting
- * redefinition / conflicting-type errors per C89. */
+ * redefinition / conflicting-type errors per C89.
+ *
+ * type_same on two TY_FUNC types yields the C89 merge rule we want: a bare
+ * `()` declaration is compatible with a prototype (only the return type is
+ * compared), while two prototypes must agree on parameter types and count. */
 static void register_func(Function *fn)
 {
     FuncSym *s = find_func(fn->name);
     if (!s) {
-        add_func(fn->name, fn->prototyped, fn->nparams, fn->ret_void,
-                 fn->is_definition);
+        add_func(fn->name, fn->ty, fn->is_definition);
         return;
     }
 
     if (fn->is_definition && s->defined)
         diag_error_at(fn->loc, "redefinition of '%s'", fn->name);
-    else if (s->ret_void != fn->ret_void)
-        diag_error_at(fn->loc, "conflicting types for '%s'", fn->name);
-    else if (s->prototyped && fn->prototyped && s->nparams != fn->nparams)
+    else if (!type_same(s->ty, fn->ty))
         diag_error_at(fn->loc, "conflicting types for '%s'", fn->name);
 
-    if (fn->prototyped && !s->prototyped) {
-        s->prototyped = 1;
-        s->nparams = fn->nparams;
-    }
+    /* A later prototype refines an earlier unprototyped declaration. */
+    if (fn->ty->prototyped && !s->ty->prototyped)
+        s->ty = fn->ty;
     if (fn->is_definition)
         s->defined = 1;
 }
@@ -106,11 +102,14 @@ static void leave_scope(void)
     nlocals = scopes[nscopes].start_local;
 }
 
-static int lookup(const char *name, int *out_offset)
+static int lookup(const char *name, int *out_offset, Type **out_ty)
 {
     for (int i = nlocals - 1; i >= 0; i--) {
         if (strcmp(locals[i].name, name) == 0) {
-            *out_offset = locals[i].offset;
+            if (out_offset)
+                *out_offset = locals[i].offset;
+            if (out_ty)
+                *out_ty = locals[i].ty;
             return 1;
         }
     }
@@ -133,22 +132,80 @@ static int alloc_slot(void)
     return cur_offset;
 }
 
-static void bind_local(char *name, int offset)
+static void bind_local(char *name, Type *ty, int offset)
 {
     locals[nlocals].name = name;
+    locals[nlocals].ty = ty;
     locals[nlocals].offset = offset;
     nlocals++;
 }
 
-static int add_local(char *name)
+static int add_local(char *name, Type *ty)
 {
     int off = alloc_slot();
-    bind_local(name, off);
+    bind_local(name, ty, off);
     return off;
 }
 
 /* ---- resolution ---- */
 
+static int is_arith_op(BinOp op)
+{
+    return op == OP_ADD || op == OP_SUB || op == OP_MUL ||
+           op == OP_DIV || op == OP_MOD;
+}
+
+static int is_eq_op(BinOp op)
+{
+    return op == OP_EQ || op == OP_NE;
+}
+
+/* C89 null pointer constant: integer constant expression with value 0. */
+static int is_null_ptr_constant(Node *n)
+{
+    return n && n->kind == ND_NUM && n->val == 0;
+}
+
+static int is_null_ptr_eq(Node *lhs, Node *rhs)
+{
+    return (type_is_pointer(lhs->ty) && is_null_ptr_constant(rhs)) ||
+           (type_is_pointer(rhs->ty) && is_null_ptr_constant(lhs));
+}
+
+/* Assignment-compatible, including null pointer constant 0 -> pointer. */
+static int expr_assignable_to(Type *dst, Node *src)
+{
+    if (!dst || !src)
+        return 0;
+    if (type_assignable(dst, src->ty))
+        return 1;
+    return type_is_pointer(dst) && is_null_ptr_constant(src);
+}
+
+/* ---- lvalue helpers (sema is the single authority) ---- */
+
+static int expr_is_lvalue(Node *n)
+{
+    return n && n->is_lvalue;
+}
+
+static int expr_is_modifiable_lvalue(Node *n)
+{
+    return expr_is_lvalue(n) && n->ty && type_is_object(n->ty);
+}
+
+/* Equality operands: both integers, compatible pointers, or pointer vs 0. */
+static int eq_operands_compatible(Node *lhs, Node *rhs)
+{
+    return (type_is_integer(lhs->ty) && type_is_integer(rhs->ty)) ||
+           (type_is_pointer(lhs->ty) && type_is_pointer(rhs->ty) &&
+            type_compatible(lhs->ty, rhs->ty)) ||
+           is_null_ptr_eq(lhs, rhs);
+}
+
+/* Resolve names/offsets and assign a Type * (and lvalue flag) to every
+ * expression node. On any error we still set a fallback type so later checks
+ * don't dereference a NULL Type. */
 static void resolve_expr(Node *n)
 {
     if (!n)
@@ -156,27 +213,42 @@ static void resolve_expr(Node *n)
 
     switch (n->kind) {
     case ND_NUM:
+        n->ty = type_int();
+        n->is_lvalue = 0;
         return;
     case ND_VAR: {
         int off;
-        if (!lookup(n->name, &off))
+        Type *ty;
+        if (!lookup(n->name, &off, &ty)) {
             diag_error_at(n->loc, "use of undeclared identifier '%s'", n->name);
-        else
+            n->ty = type_int();
+        } else {
             n->offset = off;
+            n->ty = ty;
+            n->is_lvalue = type_is_object(ty);
+        }
         return;
     }
     case ND_CALL: {
         int off;
-        if (lookup(n->name, &off)) {
+        FuncSym *s = NULL;
+
+        n->ty = type_int();   /* fallback */
+        n->func_ty = NULL;
+        n->is_lvalue = 0;
+        for (Node *a = n->args; a; a = a->next)
+            resolve_expr(a);
+
+        if (lookup(n->name, &off, NULL)) {
             diag_error_at(n->loc, "called object '%s' is not a function",
                           n->name);
         } else {
-            FuncSym *s = find_func(n->name);
+            s = find_func(n->name);
             if (!s) {
                 /* C89 implicit declaration: extern int name(); silent (D). */
-                add_func(n->name, 0, 0, 0, 0);
-            } else if (s->prototyped && s->nparams != n->nargs) {
-                if (n->nargs < s->nparams)
+                s = add_func(n->name, type_func(type_int(), NULL, 0, 0), 0);
+            } else if (s->ty->prototyped && s->ty->nparams != n->nargs) {
+                if (n->nargs < s->ty->nparams)
                     diag_error_at(n->loc,
                                   "too few arguments to function '%s'",
                                   n->name);
@@ -184,24 +256,82 @@ static void resolve_expr(Node *n)
                     diag_error_at(n->loc,
                                   "too many arguments to function '%s'",
                                   n->name);
+            } else if (s->ty->prototyped) {
+                int i = 0;
+                for (Node *a = n->args; a; a = a->next, i++) {
+                    if (!expr_assignable_to(s->ty->params[i], a))
+                        diag_error_at(a->loc,
+                                      "passing '%s' to parameter of type '%s' in call to '%s'",
+                                      type_name(a->ty),
+                                      type_name(s->ty->params[i]),
+                                      n->name);
+                }
             }
+            n->func_ty = s->ty;
+            n->ty = s->ty->ret;
         }
-        for (Node *a = n->args; a; a = a->next)
-            resolve_expr(a);
         return;
     }
     case ND_ASSIGN:
-        if (n->lhs->kind != ND_VAR)
-            diag_error_at(n->loc, "assignment to non-lvalue");
         resolve_expr(n->lhs);
         resolve_expr(n->rhs);
+        if (!expr_is_modifiable_lvalue(n->lhs))
+            diag_error_at(n->loc, "assignment to non-lvalue");
+        else if (!expr_assignable_to(n->lhs->ty, n->rhs))
+            diag_error_at(n->loc,
+                          "incompatible types assigning '%s' to '%s'",
+                          type_name(n->rhs->ty), type_name(n->lhs->ty));
+        n->ty = n->lhs->ty;
+        n->is_lvalue = 0;
         return;
     case ND_BINOP:
         resolve_expr(n->lhs);
         resolve_expr(n->rhs);
+        if (is_arith_op(n->op)) {
+            if (!type_is_integer(n->lhs->ty) || !type_is_integer(n->rhs->ty))
+                diag_error_at(n->loc,
+                              "invalid operands to arithmetic operator");
+        } else if (is_eq_op(n->op)) {
+            if (!eq_operands_compatible(n->lhs, n->rhs))
+                diag_error_at(n->loc, "invalid operands to comparison");
+        } else {
+            /* < <= > >= : integers only in 0.0.1.3. */
+            if (!type_is_integer(n->lhs->ty) || !type_is_integer(n->rhs->ty))
+                diag_error_at(n->loc,
+                              "invalid operands to relational operator");
+        }
+        n->ty = type_int();
+        n->is_lvalue = 0;
         return;
     case ND_NEG:
         resolve_expr(n->operand);
+        if (!type_is_integer(n->operand->ty))
+            diag_error_at(n->loc, "invalid operand to unary minus");
+        n->ty = type_int();
+        n->is_lvalue = 0;
+        return;
+    case ND_ADDR:
+        resolve_expr(n->operand);
+        if (!expr_is_lvalue(n->operand))
+            diag_error_at(n->loc, "cannot take address of non-lvalue");
+        n->ty = type_ptr(n->operand->ty);
+        n->is_lvalue = 0;
+        return;
+    case ND_DEREF:
+        resolve_expr(n->operand);
+        if (!type_is_pointer(n->operand->ty)) {
+            diag_error_at(n->loc, "cannot dereference non-pointer type '%s'",
+                          type_name(n->operand->ty));
+            n->ty = type_int();
+        } else if (type_is_void(n->operand->ty->base)) {
+            diag_error_at(n->loc, "dereference of void pointer");
+            diag_note_at(n->loc,
+                         "xcc 0.0.1.3 supports void * conversions but not void * dereference");
+            n->ty = type_int();
+        } else {
+            n->ty = n->operand->ty->base;
+            n->is_lvalue = 1;
+        }
         return;
     default:
         return;
@@ -209,6 +339,15 @@ static void resolve_expr(Node *n)
 }
 
 static void resolve_stmt(Node *s);
+
+/* A controlling expression (if/while/for condition) must be scalar: an
+ * integer or a pointer. A NULL `for` condition is an infinite loop. */
+static void require_scalar_cond(Node *cond)
+{
+    if (cond && !type_is_scalar(cond->ty))
+        diag_error_at(cond->loc, "condition has non-scalar type '%s'",
+                      type_name(cond->ty));
+}
 
 static void resolve_stmt_list(Node *body)
 {
@@ -220,22 +359,35 @@ static void resolve_stmt(Node *s)
 {
     switch (s->kind) {
     case ND_DECL:
+        if (!type_is_object(s->ty))
+            diag_error_at(s->loc,
+                          "variable '%s' has non-object type '%s'",
+                          s->name, type_name(s->ty));
         if (declared_here(s->name)) {
             diag_error_at(s->loc, "redeclaration of '%s'", s->name);
-            lookup(s->name, &s->offset);
+            lookup(s->name, &s->offset, NULL);
         } else {
-            s->offset = add_local(s->name);
+            s->offset = add_local(s->name, s->ty);
         }
         /* The name is in scope within its own initializer (C semantics). */
         resolve_expr(s->init);
+        if (s->init && !expr_assignable_to(s->ty, s->init))
+            diag_error_at(s->loc,
+                          "incompatible types initializing '%s' with '%s'",
+                          type_name(s->ty), type_name(s->init->ty));
         return;
     case ND_RETURN:
         if (s->operand) {
-            if (cur_ret_void)
+            if (type_is_void(cur_ret_ty))
                 diag_error_at(s->loc,
                               "void function '%s' should not return a value",
                               cur_fname);
             resolve_expr(s->operand);
+            if (!type_is_void(cur_ret_ty) &&
+                !expr_assignable_to(cur_ret_ty, s->operand))
+                diag_error_at(s->loc,
+                              "returning '%s' from a function returning '%s'",
+                              type_name(s->operand->ty), type_name(cur_ret_ty));
         }
         /* bare `return;` is legal C89 in any function (UB only if used). */
         return;
@@ -244,17 +396,20 @@ static void resolve_stmt(Node *s)
         return;
     case ND_IF:
         resolve_expr(s->cond);
+        require_scalar_cond(s->cond);
         resolve_stmt(s->then_body);
         if (s->else_body)
             resolve_stmt(s->else_body);
         return;
     case ND_WHILE:
         resolve_expr(s->cond);
+        require_scalar_cond(s->cond);
         resolve_stmt(s->then_body);
         return;
     case ND_FOR:
         resolve_expr(s->init);
         resolve_expr(s->cond);
+        require_scalar_cond(s->cond);
         resolve_expr(s->step);
         resolve_stmt(s->then_body);
         return;
@@ -322,6 +477,8 @@ static int measure_expr(Node *e)
     case ND_VAR:
         return 0;
     case ND_NEG:
+    case ND_ADDR:
+    case ND_DEREF:
         return measure_expr(e->operand);
     case ND_BINOP: {
         int r = measure_expr(e->rhs);
@@ -458,7 +615,7 @@ static void sema_function(Function *fn)
     cur_offset = 0;
     cur_max_depth = 0;
     cur_max_out = 0;
-    cur_ret_void = fn->ret_void;
+    cur_ret_ty = fn->ret_ty;
     cur_fname = fn->name;
 
     enter_scope();
@@ -477,7 +634,7 @@ static void sema_function(Function *fn)
                 diag_error_at(fn->loc, "redefinition of parameter '%s'",
                               p->name);
             else
-                bind_local(p->name, p->offset);
+                bind_local(p->name, p->ty, p->offset);
         }
     }
 

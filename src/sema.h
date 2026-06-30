@@ -4,9 +4,8 @@
 
 #include "ast.h"
 
-/* Separate pass over the AST: resolves local variables to stack offsets,
- * reports undeclared/redeclared/invalid-lvalue errors, and computes the
- * function's stack frame size. */
-void sema(Function *fn);
+/* Separate pass over the AST: resolves names to typed symbols, checks types
+ * and lvalues, and computes each function's stack frame size. */
+void sema(Function *prog);
 
 #endif /* XCC_SEMA_H */
