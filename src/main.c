@@ -27,10 +27,38 @@ static void usage(FILE *f)
         "  --version   show version\n");
 }
 
+static char **load_source_lines(FILE *f, int *out_nlines)
+{
+    char **lines = NULL;
+    int n = 0;
+    int cap = 0;
+    char buf[4096];
+
+    rewind(f);
+    while (fgets(buf, sizeof buf, f)) {
+        size_t len = strlen(buf);
+
+        if (n >= cap) {
+            cap = cap ? cap * 2 : 64;
+            lines = realloc(lines, (size_t)cap * sizeof(*lines));
+            if (!lines)
+                diag_fatal("out of memory reading source");
+        }
+        if (len > 0 && buf[len - 1] == '\n')
+            buf[len - 1] = '\0';
+        lines[n++] = arena_strdup(buf);
+    }
+    *out_nlines = n;
+    return lines;
+}
+
 int main(int argc, char **argv)
 {
     const char *inpath = NULL;
     const char *outpath = NULL;
+    char **source_lines = NULL;
+    int nsource_lines = 0;
+    int from_file = 0;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--help") == 0) {
@@ -41,17 +69,17 @@ int main(int argc, char **argv)
             return 0;
         } else if (strcmp(argv[i], "-o") == 0) {
             if (i + 1 >= argc) {
-                fprintf(stderr, "xcc: -o requires an argument\n");
+                diag_error("-o requires an argument");
                 return 1;
             }
             outpath = argv[++i];
         } else if (argv[i][0] == '-' && argv[i][1] != '\0' &&
                    strcmp(argv[i], "-") != 0) {
-            fprintf(stderr, "xcc: unknown option '%s'\n", argv[i]);
+            diag_error("unknown option '%s'", argv[i]);
             return 1;
         } else {
             if (inpath) {
-                fprintf(stderr, "xcc: multiple input files not supported\n");
+                diag_error("multiple input files not supported");
                 return 1;
             }
             inpath = argv[i];
@@ -61,10 +89,14 @@ int main(int argc, char **argv)
     if (inpath && strcmp(inpath, "-") != 0) {
         yyin = fopen(inpath, "r");
         if (!yyin) {
-            fprintf(stderr, "xcc: cannot open '%s'\n", inpath);
+            diag_error("cannot open '%s'", inpath);
             return 1;
         }
         g_filename = inpath;
+        from_file = 1;
+        source_lines = load_source_lines(yyin, &nsource_lines);
+        diag_set_source(source_lines, nsource_lines);
+        rewind(yyin);
     } else {
         yyin = stdin;
         g_filename = "<stdin>";
@@ -74,7 +106,7 @@ int main(int argc, char **argv)
         return 1;
 
     if (!g_program) {
-        fprintf(stderr, "xcc: empty translation unit\n");
+        diag_error("empty translation unit");
         return 1;
     }
 
@@ -86,7 +118,7 @@ int main(int argc, char **argv)
     if (outpath && strcmp(outpath, "-") != 0) {
         out = fopen(outpath, "w");
         if (!out) {
-            fprintf(stderr, "xcc: cannot open '%s' for writing\n", outpath);
+            diag_error("cannot open '%s' for writing", outpath);
             return 1;
         }
     }
@@ -95,6 +127,10 @@ int main(int argc, char **argv)
 
     if (out != stdout)
         fclose(out);
+    if (from_file) {
+        free(source_lines);
+        fclose(yyin);
+    }
     arena_free_all();
     return 0;
 }

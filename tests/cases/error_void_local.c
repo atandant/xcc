@@ -1,3 +1,3 @@
 /* SPDX-License-Identifier: MIT */
-/* expect-error: non-object type */
+/* expect-error: variable 'x' has non-object type 'void' */
 int main(void) { void x; return 0; }

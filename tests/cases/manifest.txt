@@ -55,14 +55,14 @@ run|equality_precedence.c|1|
 xcc-error|error_addr_arith_non_lvalue.c|1|cannot take address of non-lvalue
 xcc-error|error_addr_assign_result.c|1|cannot take address of non-lvalue
 xcc-error|error_addr_call_non_lvalue.c|1|cannot take address of non-lvalue
-xcc-error|error_addr_int_to_char_ptr.c|1|incompatible types
+xcc-error|error_addr_int_to_char_ptr.c|1|incompatible types assigning 'int *' to 'char *'
 xcc-error|error_addr_neg_non_lvalue.c|1|cannot take address of non-lvalue
 xcc-error|error_addr_non_lvalue.c|1|cannot take address of non-lvalue
-xcc-error|error_addr_ptr_eq_int.c|1|invalid operands to comparison
+xcc-error|error_addr_ptr_eq_int.c|1|comparison between pointer type 'int *' and integer type 'int'
 xcc-error|error_addr_ptr_ordering.c|1|invalid operands to relational operator
-xcc-error|error_addr_wrong_ptr_level.c|1|incompatible types
-xcc-error|error_assign_int_to_pointer.c|1|incompatible types
-xcc-error|error_assign_pointer_to_int.c|1|incompatible types
+xcc-error|error_addr_wrong_ptr_level.c|1|incompatible types assigning 'int *' to 'int * *'
+xcc-error|error_assign_int_to_pointer.c|1|incompatible types assigning 'int' to 'int *'
+xcc-error|error_assign_pointer_to_int.c|1|incompatible types assigning 'int *' to 'int'
 xcc-error|error_block_scope_expired.c|1|use of undeclared identifier 'x'
 xcc-error|error_called_local.c|1|called object 'f' is not a function
 xcc-error|error_call_int_expected_pointer.c|1|passing 'int' to parameter of type 'int *' in call to 'f'
@@ -80,17 +80,17 @@ xcc-error|error_non_lvalue_call_assign.c|1|assignment to non-lvalue
 xcc-error|error_non_lvalue_cmp_assign.c|1|assignment to non-lvalue
 xcc-error|error_non_lvalue_neg_assign.c|1|assignment to non-lvalue
 xcc-error|error_param_redefinition.c|1|redefinition of parameter 'x'
-xcc-error|error_parse_missing_semicolon.c|1|syntax error
+xcc-error|error_parse_missing_semicolon.c|1|syntax error, unexpected RETURN
 xcc-error|error_redeclaration.c|1|redeclaration of 'a'
 xcc-error|error_redeclaration_nested_same_scope.c|1|redeclaration of 'x'
 xcc-error|error_return_pointer_from_int.c|1|returning 'int *' from a function returning 'int'
 xcc-error|error_stray_char.c|1|stray '@' in program
 xcc-error|error_too_few_args.c|1|too few arguments to function 'add'
 xcc-error|error_too_many_args.c|1|too many arguments to function 'id'
-xcc-error|error_ty_ptr_eq_mismatch.c|1|invalid operands to comparison
+xcc-error|error_ty_ptr_eq_mismatch.c|1|comparison between incompatible pointer types 'int *' and 'char *'
 xcc-error|error_undeclared.c|1|use of undeclared identifier 'x'
-xcc-error|error_void_condition.c|1|non-scalar type 'void'
-xcc-error|error_void_local.c|1|non-object type
+xcc-error|error_void_condition.c|1|condition has non-scalar type 'void'
+xcc-error|error_void_local.c|1|variable 'x' has non-object type 'void'
 xcc-error|error_void_return_value.c|1|void function 'f' should not return a value
 run|expr_stmt_effect.c|7|
 run|falloff_non_main_returns_zero.c|0|

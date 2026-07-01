@@ -8,10 +8,14 @@
  * A nonzero count makes xcc exit nonzero. Notes never increment the count. */
 extern int diag_error_count;
 
-void diag_error_at(SourceLoc loc, const char *fmt, ...);
+/* Source lines for carets (1-based line numbers). NULL disables carets. */
+void diag_set_source(char **lines, int nlines);
 
-/* Supplementary context printed after an error. No-op unless at least one error
- * has already been reported (diag_error_count > 0). Never emits "warning:". */
+void diag_error_at(SourceLoc loc, const char *fmt, ...);
 void diag_note_at(SourceLoc loc, const char *fmt, ...);
+
+/* Driver / fatal messages without a source location (no caret). */
+void diag_error(const char *fmt, ...);
+void diag_fatal(const char *fmt, ...);
 
 #endif /* XCC_DIAG_H */

@@ -55,11 +55,11 @@ while IFS='|' read -r kind file expected expected_err; do
                 continue
             fi
 
-            if grep -F "$expected_err" "$TMP/err" > /dev/null; then
+            if grep ': error: ' "$TMP/err" | sed 's/^.*: error: //' | grep -Fx "$expected_err" > /dev/null; then
                 echo "ok   $file -> xcc error"
                 pass=$((pass + 1))
             else
-                echo "FAIL $file: expected stderr containing '$expected_err'"
+                echo "FAIL $file: expected primary error message '$expected_err'"
                 sed 's/^/      /' "$TMP/err"
                 fail=$((fail + 1))
             fi

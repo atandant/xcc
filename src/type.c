@@ -162,3 +162,42 @@ const char *type_name(Type *ty)
     }
     return "<type>";
 }
+
+const char *type_func_sig(Type *ty)
+{
+    char *buf;
+    size_t n;
+    int pos;
+
+    if (!ty || ty->kind != TY_FUNC)
+        return type_name(ty);
+
+    if (!ty->prototyped) {
+        n = strlen(type_name(ty->ret)) + 3;
+        buf = arena_alloc(n);
+        snprintf(buf, n, "%s()", type_name(ty->ret));
+        return buf;
+    }
+
+    if (ty->nparams == 0) {
+        n = strlen(type_name(ty->ret)) + 8;
+        buf = arena_alloc(n);
+        snprintf(buf, n, "%s(void)", type_name(ty->ret));
+        return buf;
+    }
+
+    n = strlen(type_name(ty->ret)) + 3;
+    for (int i = 0; i < ty->nparams; i++)
+        n += strlen(type_name(ty->params[i])) + 2;
+
+    buf = arena_alloc(n);
+    pos = snprintf(buf, n, "%s(", type_name(ty->ret));
+    for (int i = 0; i < ty->nparams; i++) {
+        if (i > 0)
+            pos += snprintf(buf + pos, n - (size_t)pos, ", ");
+        pos += snprintf(buf + pos, n - (size_t)pos, "%s",
+                        type_name(ty->params[i]));
+    }
+    snprintf(buf + pos, n - (size_t)pos, ")");
+    return buf;
+}

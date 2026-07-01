@@ -43,7 +43,7 @@ a typed semantic layer and 150+ acceptance tests.
 | `if` / `else`, `while`, `for`, blocks | structs, unions, enums, `typedef` |
 | `+ - * / %`, unary `-`, comparisons | preprocessor (`#include`, `#define`) |
 | pointer `==` / `!=`, truthiness, `p == 0` | multiple translation units |
-| `file:line:col` errors and `note:` diagnostics | warning system / `-W` flags |
+| `file:line:col` errors, carets, `note:` spans, color (`auto`) | warning system / `-W` flags |
 
 > Known backend limitation: locals still live in 8-byte stack slots, so `char`
 > is modeled in the type system but is not byte-correct at runtime yet. See

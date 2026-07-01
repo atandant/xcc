@@ -56,5 +56,6 @@ int type_assignable(Type *dst, Type *src);
 int type_size(Type *ty);
 int type_align(Type *ty);
 const char *type_name(Type *ty);
+const char *type_func_sig(Type *ty);
 
 #endif /* XCC_TYPE_H */

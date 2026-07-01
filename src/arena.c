@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include "arena.h"
+#include "diag.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -19,14 +20,12 @@ static Block *head = NULL;
 
 static void arena_die_oom(void)
 {
-    perror("xcc: arena out of memory");
-    exit(1);
+    diag_fatal("out of memory");
 }
 
 static void arena_die_overflow(void)
 {
-    fprintf(stderr, "xcc: arena allocation size overflow\n");
-    exit(1);
+    diag_fatal("arena allocation size overflow");
 }
 
 static size_t align_up_size(size_t n, size_t align)

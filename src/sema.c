@@ -14,6 +14,7 @@ typedef struct {
     char *name;
     Type *ty;
     int offset;
+    SourceLoc loc;
 } Local;
 
 typedef struct {
@@ -38,8 +39,9 @@ static int cur_max_out;   /* max outgoing stack-arg bytes over all calls    */
 
 typedef struct {
     char *name;
-    Type *ty;          /* full TY_FUNC type (merged across declarations) */
+    Type *ty;
     int defined;
+    SourceLoc loc;
 } FuncSym;
 
 static FuncSym funcs[MAX_FUNCS];
@@ -53,12 +55,13 @@ static FuncSym *find_func(const char *name)
     return NULL;
 }
 
-static FuncSym *add_func(char *name, Type *ty, int defined)
+static FuncSym *add_func(char *name, Type *ty, int defined, SourceLoc loc)
 {
     FuncSym *s = &funcs[nfuncs++];
     s->name = name;
     s->ty = ty;
     s->defined = defined;
+    s->loc = loc;
     return s;
 }
 
@@ -72,20 +75,28 @@ static void register_func(Function *fn)
 {
     FuncSym *s = find_func(fn->name);
     if (!s) {
-        add_func(fn->name, fn->ty, fn->is_definition);
+        add_func(fn->name, fn->ty, fn->is_definition, fn->loc);
         return;
     }
 
-    if (fn->is_definition && s->defined)
+    if (fn->is_definition && s->defined) {
         diag_error_at(fn->loc, "redefinition of '%s'", fn->name);
-    else if (!type_same(s->ty, fn->ty))
+        diag_note_at(s->loc, "previous definition of '%s' is here", fn->name);
+    } else if (!type_same(s->ty, fn->ty)) {
         diag_error_at(fn->loc, "conflicting types for '%s'", fn->name);
+        diag_note_at(fn->loc, "conflicting declaration has type '%s'",
+                     type_func_sig(fn->ty));
+        diag_note_at(s->loc, "previous declaration is here with type '%s'",
+                     type_func_sig(s->ty));
+    }
 
     /* A later prototype refines an earlier unprototyped declaration. */
     if (fn->ty->prototyped && !s->ty->prototyped)
         s->ty = fn->ty;
-    if (fn->is_definition)
+    if (fn->is_definition) {
         s->defined = 1;
+        s->loc = fn->loc;
+    }
 }
 
 /* ---- scope helpers ---- */
@@ -132,18 +143,32 @@ static int alloc_slot(void)
     return cur_offset;
 }
 
-static void bind_local(char *name, Type *ty, int offset)
+static int lookup_loc_here(const char *name, SourceLoc *out_loc)
+{
+    int start = scopes[nscopes - 1].start_local;
+
+    for (int i = nlocals - 1; i >= start; i--) {
+        if (strcmp(locals[i].name, name) == 0) {
+            *out_loc = locals[i].loc;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void bind_local(char *name, Type *ty, int offset, SourceLoc loc)
 {
     locals[nlocals].name = name;
     locals[nlocals].ty = ty;
     locals[nlocals].offset = offset;
+    locals[nlocals].loc = loc;
     nlocals++;
 }
 
-static int add_local(char *name, Type *ty)
+static int add_local(char *name, Type *ty, SourceLoc loc)
 {
     int off = alloc_slot();
-    bind_local(name, ty, off);
+    bind_local(name, ty, off, loc);
     return off;
 }
 
@@ -246,7 +271,8 @@ static void resolve_expr(Node *n)
             s = find_func(n->name);
             if (!s) {
                 /* C89 implicit declaration: extern int name(); silent (D). */
-                s = add_func(n->name, type_func(type_int(), NULL, 0, 0), 0);
+                s = add_func(n->name, type_func(type_int(), NULL, 0, 0), 0,
+                             n->loc);
             } else if (s->ty->prototyped && s->ty->nparams != n->nargs) {
                 if (n->nargs < s->ty->nparams)
                     diag_error_at(n->loc,
@@ -292,8 +318,27 @@ static void resolve_expr(Node *n)
                 diag_error_at(n->loc,
                               "invalid operands to arithmetic operator");
         } else if (is_eq_op(n->op)) {
-            if (!eq_operands_compatible(n->lhs, n->rhs))
-                diag_error_at(n->loc, "invalid operands to comparison");
+            if (!eq_operands_compatible(n->lhs, n->rhs)) {
+                if (type_is_pointer(n->lhs->ty) && type_is_pointer(n->rhs->ty))
+                    diag_error_at(n->loc,
+                                  "comparison between incompatible pointer types '%s' and '%s'",
+                                  type_name(n->lhs->ty),
+                                  type_name(n->rhs->ty));
+                else if (type_is_pointer(n->lhs->ty) &&
+                         type_is_integer(n->rhs->ty))
+                    diag_error_at(n->loc,
+                                  "comparison between pointer type '%s' and integer type '%s'",
+                                  type_name(n->lhs->ty),
+                                  type_name(n->rhs->ty));
+                else if (type_is_integer(n->lhs->ty) &&
+                         type_is_pointer(n->rhs->ty))
+                    diag_error_at(n->loc,
+                                  "comparison between integer type '%s' and pointer type '%s'",
+                                  type_name(n->lhs->ty),
+                                  type_name(n->rhs->ty));
+                else
+                    diag_error_at(n->loc, "invalid operands to comparison");
+            }
         } else {
             /* < <= > >= : integers only in 0.0.1.3. */
             if (!type_is_integer(n->lhs->ty) || !type_is_integer(n->rhs->ty))
@@ -364,10 +409,13 @@ static void resolve_stmt(Node *s)
                           "variable '%s' has non-object type '%s'",
                           s->name, type_name(s->ty));
         if (declared_here(s->name)) {
+            SourceLoc prev;
+            lookup_loc_here(s->name, &prev);
             diag_error_at(s->loc, "redeclaration of '%s'", s->name);
+            diag_note_at(prev, "previous declaration of '%s' is here", s->name);
             lookup(s->name, &s->offset, NULL);
         } else {
-            s->offset = add_local(s->name, s->ty);
+            s->offset = add_local(s->name, s->ty, s->loc);
         }
         /* The name is in scope within its own initializer (C semantics). */
         resolve_expr(s->init);
@@ -634,7 +682,7 @@ static void sema_function(Function *fn)
                 diag_error_at(fn->loc, "redefinition of parameter '%s'",
                               p->name);
             else
-                bind_local(p->name, p->ty, p->offset);
+                bind_local(p->name, p->ty, p->offset, fn->loc);
         }
     }
 
