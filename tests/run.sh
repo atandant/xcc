@@ -64,6 +64,23 @@ while IFS='|' read -r kind file expected expected_err; do
                 fail=$((fail + 1))
             fi
             ;;
+        xcc-warning)
+            if ! "$XCC" "$src" -o "$TMP/out.s" 2> "$TMP/err"; then
+                echo "FAIL $file (xcc error, expected warning only)"
+                sed 's/^/      /' "$TMP/err"
+                fail=$((fail + 1))
+                continue
+            fi
+
+            if grep ': warning: ' "$TMP/err" | sed 's/^.*: warning: //' | grep -Fx "$expected_err" > /dev/null; then
+                echo "ok   $file -> xcc warning"
+                pass=$((pass + 1))
+            else
+                echo "FAIL $file: expected primary warning message '$expected_err'"
+                sed 's/^/      /' "$TMP/err"
+                fail=$((fail + 1))
+            fi
+            ;;
         *)
             echo "FAIL manifest: unknown test kind '$kind' for $file"
             fail=$((fail + 1))

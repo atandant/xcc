@@ -7,6 +7,7 @@
 #include "ast.h"
 #include "diag.h"
 #include "sema.h"
+#include "copts.h"
 #include "codegen.h"
 #include "arena.h"
 
@@ -113,6 +114,8 @@ int main(int argc, char **argv)
     sema(g_program);
     if (diag_error_count > 0)
         return 1;
+
+    copts_optimize(g_program);
 
     FILE *out = stdout;
     if (outpath && strcmp(outpath, "-") != 0) {

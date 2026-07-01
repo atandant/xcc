@@ -8,6 +8,7 @@
 #include <unistd.h>
 
 int diag_error_count = 0;
+int diag_warning_count = 0;
 
 static char **diag_lines;
 static int diag_nlines;
@@ -16,24 +17,49 @@ static int diag_nlines;
 static const char *sgr_reset = "";
 static const char *sgr_bold = "";
 static const char *sgr_error = "";
+static const char *sgr_warning = "";
 static const char *sgr_note = "";
 static int colors_inited;
+
+typedef struct {
+    const char *name;
+    int enabled;
+    int as_error;
+} WarnOpt;
+
+static WarnOpt warn_opts[W_COUNT] = {
+    [W_IMPLICIT_FUNCTION_DECLARATION] =
+        { "implicit-function-declaration", 1, 0 },
+    [W_UNPROTOTYPED_FUNCTION_CALL] =
+        { "unprototyped-function-call", 1, 0 },
+    [W_INT_TO_CHAR_OVERFLOW] =
+        { "int-to-char-overflow", 1, 0 },
+    [W_INT_TO_CHAR_CONVERSION] =
+        { "int-to-char-conversion", 0, 0 },
+    [W_RETURN_TYPE] =
+        { "return-type", 1, 0 },
+    [W_OLD_STYLE_FUNCTION_DEFINITION] =
+        { "old-style-function-definition", 1, 0 },
+    [W_POINTER_CONVERSION] =
+        { "pointer-conversion", 0, 0 },
+};
 
 static void diag_init_colors(void)
 {
     const char *no_color = getenv("NO_COLOR");
 
     if (no_color && no_color[0] != '\0') {
-        sgr_reset = sgr_bold = sgr_error = sgr_note = "";
+        sgr_reset = sgr_bold = sgr_error = sgr_warning = sgr_note = "";
         return;
     }
     if (!isatty(STDERR_FILENO)) {
-        sgr_reset = sgr_bold = sgr_error = sgr_note = "";
+        sgr_reset = sgr_bold = sgr_error = sgr_warning = sgr_note = "";
         return;
     }
     sgr_reset = "\033[0m";
     sgr_bold = "\033[1m";
     sgr_error = "\033[1;31m";
+    sgr_warning = "\033[1;33m";
     sgr_note = "\033[1;36m";
 }
 
@@ -84,14 +110,34 @@ static void diag_vemit_at(SourceLoc loc, const char *kind, const char *sgr_kind,
     diag_emit_caret(loc);
 }
 
+static void diag_vwarning_at(SourceLoc loc, const char *fmt, va_list ap)
+{
+    diag_vemit_at(loc, "warning", sgr_warning, fmt, ap);
+    diag_warning_count++;
+}
+
+static void diag_verror_at(SourceLoc loc, const char *fmt, va_list ap)
+{
+    diag_vemit_at(loc, "error", sgr_error, fmt, ap);
+    diag_error_count++;
+}
+
 void diag_error_at(SourceLoc loc, const char *fmt, ...)
 {
     va_list ap;
 
     va_start(ap, fmt);
-    diag_vemit_at(loc, "error", sgr_error, fmt, ap);
+    diag_verror_at(loc, fmt, ap);
     va_end(ap);
-    diag_error_count++;
+}
+
+void diag_warning_at(SourceLoc loc, const char *fmt, ...)
+{
+    va_list ap;
+
+    va_start(ap, fmt);
+    diag_vwarning_at(loc, fmt, ap);
+    va_end(ap);
 }
 
 void diag_note_at(SourceLoc loc, const char *fmt, ...)
@@ -100,6 +146,56 @@ void diag_note_at(SourceLoc loc, const char *fmt, ...)
 
     va_start(ap, fmt);
     diag_vemit_at(loc, "note", sgr_note, fmt, ap);
+    va_end(ap);
+}
+
+int diag_warn_enabled(DiagWarnId id)
+{
+    if (id < 0 || id >= W_COUNT)
+        return 0;
+    return warn_opts[id].enabled;
+}
+
+int diag_warn_as_error(DiagWarnId id)
+{
+    if (id < 0 || id >= W_COUNT)
+        return 0;
+    return warn_opts[id].as_error;
+}
+
+const char *diag_warn_name(DiagWarnId id)
+{
+    if (id < 0 || id >= W_COUNT)
+        return "";
+    return warn_opts[id].name;
+}
+
+void diag_set_warn_enabled(DiagWarnId id, int enabled)
+{
+    if (id < 0 || id >= W_COUNT)
+        return;
+    warn_opts[id].enabled = enabled ? 1 : 0;
+}
+
+void diag_set_warn_as_error(DiagWarnId id, int as_error)
+{
+    if (id < 0 || id >= W_COUNT)
+        return;
+    warn_opts[id].as_error = as_error ? 1 : 0;
+}
+
+void diag_warn(DiagWarnId id, SourceLoc loc, const char *fmt, ...)
+{
+    va_list ap;
+
+    if (!diag_warn_enabled(id))
+        return;
+
+    va_start(ap, fmt);
+    if (diag_warn_as_error(id))
+        diag_verror_at(loc, fmt, ap);
+    else
+        diag_vwarning_at(loc, fmt, ap);
     va_end(ap);
 }
 

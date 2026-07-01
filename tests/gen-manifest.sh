@@ -10,17 +10,28 @@ for src in "$DIR"/*.c; do
     [ -e "$src" ] || continue
     expect_run=$(sed -n 's@^/[*] expect: \([0-9][0-9]*\) [*]/$@\1@p' "$src" | sed -n '1p')
     expect_error=$(sed -n 's@^/[*] expect-error: \(.*\) [*]/$@\1@p' "$src" | sed -n '1p')
+    expect_warning=$(sed -n 's@^/[*] expect-warning: \(.*\) [*]/$@\1@p' "$src" | sed -n '1p')
 
     if [ -n "$expect_run" ] && [ -n "$expect_error" ]; then
         echo "gen-manifest: both expect and expect-error in $src" >&2
+        exit 1
+    fi
+    if [ -n "$expect_run" ] && [ -n "$expect_warning" ]; then
+        echo "gen-manifest: both expect and expect-warning in $src" >&2
+        exit 1
+    fi
+    if [ -n "$expect_error" ] && [ -n "$expect_warning" ]; then
+        echo "gen-manifest: both expect-error and expect-warning in $src" >&2
         exit 1
     fi
     if [ -n "$expect_run" ]; then
         echo "run|$(basename "$src")|$expect_run|"
     elif [ -n "$expect_error" ]; then
         echo "xcc-error|$(basename "$src")|1|$expect_error"
+    elif [ -n "$expect_warning" ]; then
+        echo "xcc-warning|$(basename "$src")|0|$expect_warning"
     else
-        echo "gen-manifest: missing /* expect: N */ or /* expect-error: text */ in $src" >&2
+        echo "gen-manifest: missing /* expect: N */, /* expect-error: text */, or /* expect-warning: text */ in $src" >&2
         exit 1
     fi
 done

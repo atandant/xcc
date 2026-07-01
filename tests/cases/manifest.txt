@@ -155,6 +155,31 @@ run|null_ptr_assign.c|1|
 run|null_ptr_call.c|0|
 run|null_ptr_init.c|0|
 run|null_ptr_return.c|1|
+run|opt_fold_add.c|30|
+run|opt_fold_chain.c|10|
+run|opt_fold_cmp_eq.c|1|
+run|opt_fold_cmp_gt.c|1|
+run|opt_fold_cmp_lt.c|1|
+run|opt_fold_cmp_ne.c|1|
+run|opt_fold_deep.c|10|
+run|opt_fold_div.c|25|
+run|opt_fold_mod.c|2|
+run|opt_fold_mul.c|42|
+run|opt_fold_neg.c|8|
+run|opt_fold_nested.c|20|
+run|opt_fold_one.c|88|
+run|opt_fold_prop_add.c|15|
+run|opt_fold_prop.c|100|
+run|opt_fold_sub.c|63|
+run|opt_fold_zero.c|0|
+run|opt_prop_assign.c|20|
+run|opt_prop_block.c|12|
+run|opt_prop_chain.c|1|
+run|opt_prop_expr.c|25|
+run|opt_prop_init.c|99|
+run|opt_prop_multistmt.c|21|
+run|opt_prop_return_add.c|42|
+run|opt_prop_simple.c|50|
 run|param_seventh_stack_arg.c|7|
 run|param_shadow_block.c|8|
 run|paren_grouping.c|25|
@@ -183,6 +208,11 @@ run|void_function_bare_return.c|3|
 run|void_param_no_args.c|9|
 run|void_ptr_assign_from_int_ptr.c|0|
 run|void_ptr_decl.c|0|
+xcc-warning|warn_implicit_function_decl.c|0|implicit declaration of function 'foo'
+xcc-warning|warn_int_to_char_overflow.c|0|overflow in conversion from 'int' to 'char'
+xcc-warning|warn_old_style_definition.c|0|function 'f' defined without a prototype
+xcc-warning|warn_return_type.c|0|non-void function 'f' should return a value
+xcc-warning|warn_unprototyped_call.c|0|call to function 'g' without a prototype
 run|while_assignment_condition.c|4|
 run|while_body_block_scope.c|11|
 run|while_count_sum.c|15|

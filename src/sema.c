@@ -41,6 +41,7 @@ typedef struct {
     char *name;
     Type *ty;
     int defined;
+    int implicit;
     SourceLoc loc;
 } FuncSym;
 
@@ -55,12 +56,14 @@ static FuncSym *find_func(const char *name)
     return NULL;
 }
 
-static FuncSym *add_func(char *name, Type *ty, int defined, SourceLoc loc)
+static FuncSym *add_func(char *name, Type *ty, int defined, int implicit,
+                         SourceLoc loc)
 {
     FuncSym *s = &funcs[nfuncs++];
     s->name = name;
     s->ty = ty;
     s->defined = defined;
+    s->implicit = implicit;
     s->loc = loc;
     return s;
 }
@@ -75,7 +78,10 @@ static void register_func(Function *fn)
 {
     FuncSym *s = find_func(fn->name);
     if (!s) {
-        add_func(fn->name, fn->ty, fn->is_definition, fn->loc);
+        add_func(fn->name, fn->ty, fn->is_definition, 0, fn->loc);
+        if (fn->is_definition && !fn->ty->prototyped)
+            diag_warn(W_OLD_STYLE_FUNCTION_DEFINITION, fn->loc,
+                      "function '%s' defined without a prototype", fn->name);
         return;
     }
 
@@ -224,6 +230,39 @@ static int expr_assignable_to(Type *dst, Node *src)
     return type_is_pointer(dst) && is_null_ptr_constant(src);
 }
 
+static int is_void_ptr_type(Type *ty)
+{
+    return type_is_pointer(ty) && type_is_void(ty->base);
+}
+
+/* char storage is unsigned byte-wide (movzbl); warn on out-of-range constants. */
+static void warn_value_conversion(SourceLoc loc, Type *dst, Node *src)
+{
+    if (!dst || !src || !src->ty)
+        return;
+
+    if (type_is_char(dst) && type_is_integer(src->ty) && !type_is_char(src->ty)) {
+        if (src->kind == ND_NUM) {
+            if (src->val < 0 || src->val > 255)
+                diag_warn(W_INT_TO_CHAR_OVERFLOW, loc,
+                          "overflow in conversion from '%s' to '%s'",
+                          type_name(src->ty), type_name(dst));
+        } else if (diag_warn_enabled(W_INT_TO_CHAR_CONVERSION)) {
+            diag_warn(W_INT_TO_CHAR_CONVERSION, loc,
+                      "conversion from '%s' to '%s' may alter value",
+                      type_name(src->ty), type_name(dst));
+        }
+    }
+
+    if (type_is_pointer(dst) && type_is_pointer(src->ty) &&
+        type_assignable(dst, src->ty) && !type_same(dst, src->ty) &&
+        (is_void_ptr_type(dst) || is_void_ptr_type(src->ty))) {
+        diag_warn(W_POINTER_CONVERSION, loc,
+                  "conversion from '%s' to '%s' without a cast",
+                  type_name(src->ty), type_name(dst));
+    }
+}
+
 /* ---- lvalue helpers (sema is the single authority) ---- */
 
 static int expr_is_lvalue(Node *n)
@@ -356,26 +395,40 @@ static void resolve_expr_ctx(Node *n, ExprCtx ctx)
         } else {
             s = find_func(n->name);
             if (!s) {
-                s = add_func(n->name, type_func(type_int(), NULL, 0, 0), 0,
+                s = add_func(n->name, type_func(type_int(), NULL, 0, 0), 0, 1,
                              n->loc);
-            } else if (s->ty->prototyped && s->ty->nparams != n->nargs) {
-                if (n->nargs < s->ty->nparams)
-                    diag_error_at(n->loc,
-                                  "too few arguments to function '%s'",
-                                  n->name);
-                else
-                    diag_error_at(n->loc,
-                                  "too many arguments to function '%s'",
-                                  n->name);
-            } else if (s->ty->prototyped) {
-                int i = 0;
-                for (Node *a = n->args; a; a = a->next, i++) {
-                    if (!expr_assignable_to(s->ty->params[i], a))
-                        diag_error_at(a->loc,
-                                      "passing '%s' to parameter of type '%s' in call to '%s'",
-                                      type_name(a->ty),
-                                      type_name(s->ty->params[i]),
+                diag_warn(W_IMPLICIT_FUNCTION_DECLARATION, n->loc,
+                          "implicit declaration of function '%s'", n->name);
+            } else {
+                if (s->implicit)
+                    diag_warn(W_IMPLICIT_FUNCTION_DECLARATION, n->loc,
+                              "implicit declaration of function '%s'",
+                              n->name);
+                if (!s->ty->prototyped && !s->implicit)
+                    diag_warn(W_UNPROTOTYPED_FUNCTION_CALL, n->loc,
+                              "call to function '%s' without a prototype",
+                              n->name);
+                if (s->ty->prototyped && s->ty->nparams != n->nargs) {
+                    if (n->nargs < s->ty->nparams)
+                        diag_error_at(n->loc,
+                                      "too few arguments to function '%s'",
                                       n->name);
+                    else
+                        diag_error_at(n->loc,
+                                      "too many arguments to function '%s'",
+                                      n->name);
+                } else if (s->ty->prototyped) {
+                    int i = 0;
+                    for (Node *a = n->args; a; a = a->next, i++) {
+                        if (!expr_assignable_to(s->ty->params[i], a))
+                            diag_error_at(a->loc,
+                                          "passing '%s' to parameter of type '%s' in call to '%s'",
+                                          type_name(a->ty),
+                                          type_name(s->ty->params[i]),
+                                          n->name);
+                        else
+                            warn_value_conversion(a->loc, s->ty->params[i], a);
+                    }
                 }
             }
             n->func_ty = s->ty;
@@ -393,6 +446,8 @@ static void resolve_expr_ctx(Node *n, ExprCtx ctx)
             diag_error_at(n->loc,
                           "incompatible types assigning '%s' to '%s'",
                           type_name(n->rhs->ty), type_name(n->lhs->ty));
+        else
+            warn_value_conversion(n->loc, n->lhs->ty, n->rhs);
         n->ty = n->lhs->ty;
         n->is_lvalue = 0;
         return;
@@ -514,6 +569,8 @@ static void resolve_stmt(Node *s)
             diag_error_at(s->loc,
                           "incompatible types initializing '%s' with '%s'",
                           type_name(s->ty), type_name(s->init->ty));
+        else if (s->init)
+            warn_value_conversion(s->loc, s->ty, s->init);
         return;
     case ND_RETURN:
         if (s->operand) {
@@ -527,8 +584,13 @@ static void resolve_stmt(Node *s)
                 diag_error_at(s->loc,
                               "returning '%s' from a function returning '%s'",
                               type_name(s->operand->ty), type_name(cur_ret_ty));
+            else if (!type_is_void(cur_ret_ty))
+                warn_value_conversion(s->loc, cur_ret_ty, s->operand);
+        } else if (!type_is_void(cur_ret_ty)) {
+            diag_warn(W_RETURN_TYPE, s->loc,
+                      "non-void function '%s' should return a value",
+                      cur_fname);
         }
-        /* bare `return;` is legal C89 in any function (UB only if used). */
         return;
     case ND_EXPR_STMT:
         resolve_expr_ctx(s->operand, CTX_RVALUE);

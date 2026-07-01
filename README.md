@@ -33,7 +33,7 @@ make
 ## Status (v0.0.1.4)
 
 The pipeline runs end to end (lex → parse → sema → codegen → `.s` → gcc) with
-a typed semantic layer and 180+ acceptance tests.
+a typed semantic layer and 190+ acceptance tests.
 
 | Supported | Not yet |
 | --- | --- |
@@ -43,8 +43,9 @@ a typed semantic layer and 180+ acceptance tests.
 | function calls (prototyped arg checking, void `*` conversions) | structs, unions, enums, `typedef` |
 | `if` / `else`, `while`, `for`, blocks | preprocessor (`#include`, `#define`) |
 | `+ - * / %`, unary `-`, comparisons | multiple translation units |
-| pointer `==` / `!=` / ordering, truthiness, `p == 0` | warning system / `-W` flags |
-| `file:line:col` errors, carets, `note:` spans, color (`auto`) | |
+| pointer `==` / `!=` / ordering, truthiness, `p == 0` | `-W` CLI flags |
+| warnings (`implicit` decl, unprototyped calls, `char` overflow, …) | |
+| `file:line:col` diagnostics, carets, `note:` spans, color (`auto`) | |
 
 > Locals use type-aware stack layout (`int` is 4 bytes, `char` is 1 byte).
 > `auto` arrays are not zero-initialized (faithful C89).

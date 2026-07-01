@@ -13,9 +13,13 @@ binary.
 | `fibonacci.c`    | `fib(10)`                            | 55        |
 | `gcd.c`          | `gcd(48, 18)`                        | 6         |
 | `pointer_swap.c` | Swap via `int *`, return `x + y`     | 30        |
+| `bsort.c`        | Bubble sort `int[5]`, return `a[0]`  | 3         |
+| `warnex.c`       | Warning demo (compiles; see stderr)  | 42        |
 
-These use loops, functions, and (in `pointer_swap.c`) address-of, dereference,
-and pointer parameters. They do **not** need arrays or pointer arithmetic.
+`warnex.c` is a **deliberately sloppy** C89 program: it triggers many default
+xcc warnings (implicit declarations, unprototyped calls, `char` overflow, old-
+style definitions, bare `return` in a non-void function) but still links and
+returns `42`. Compare stderr from xcc with a normal example like `gcd.c`.
 
 ## Error demonstration (`errnop.c`)
 
@@ -49,4 +53,6 @@ echo $?    # -> 25
 The build script compiles every runnable `examples/*.c` file, links with `gcc`,
 runs each binary, and prints its exit code. Files containing `xcc-expect-error`
 in a comment (currently `errnop.c`) are compiled expecting failure; their
-diagnostics are printed instead.
+diagnostics are printed instead. Files with `xcc-expect-warning` (currently
+`warnex.c`) must compile and run successfully; warnings on stderr are expected
+and shown, not treated as failure.
