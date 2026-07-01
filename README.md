@@ -39,7 +39,8 @@ a typed semantic layer and 190+ acceptance tests.
 | --- | --- |
 | `int`, `char`, `void`, pointers (`*`, `&`, dereference) | multi-dimensional arrays |
 | 1D arrays, `[]` subscript, `ptr ± int`, param decay | pointer arithmetic beyond `±` / `[]` |
-| typed declarations, parameters, returns | `sizeof`, casts, brace initializers |
+| typed declarations, parameters, returns | `sizeof`, brace initializers |
+| casts `(type)expr`, `(void)expr` discard | `sizeof`, `long`, unsigned types |
 | function calls (prototyped arg checking, void `*` conversions) | structs, unions, enums, `typedef` |
 | `if` / `else`, `while`, `for`, blocks | preprocessor (`#include`, `#define`) |
 | `+ - * / %`, unary `-`, comparisons | multiple translation units |

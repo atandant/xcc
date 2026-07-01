@@ -76,6 +76,21 @@ int cosfold_expr(Node **np)
     case ND_DEREF:
         changed |= cosfold_expr(&n->operand);
         return changed;
+    case ND_CAST:
+        changed |= cosfold_expr(&n->operand);
+        /* Fold a cast of a constant to a constant of the target type.
+         * (char) reduces modulo 256 (unsigned-byte model); (void) has no
+         * value, so it is left for codegen to discard. */
+        if (n->operand && n->operand->kind == ND_NUM &&
+            !type_is_void(n->ty)) {
+            long v = n->operand->val;
+            if (type_is_char(n->ty))
+                v &= 0xFF;
+            *np = node_num(v, n->loc);
+            (*np)->ty = n->ty;
+            return 1;
+        }
+        return changed;
     case ND_ASSIGN:
         changed |= cosfold_expr(&n->lhs);
         changed |= cosfold_expr(&n->rhs);

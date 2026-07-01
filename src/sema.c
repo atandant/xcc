@@ -208,10 +208,81 @@ static int is_eq_op(BinOp op)
     return op == OP_EQ || op == OP_NE;
 }
 
-/* C89 null pointer constant: integer constant expression with value 0. */
+static int is_void_ptr_type(Type *ty)
+{
+    return type_is_pointer(ty) && type_is_void(ty->base);
+}
+
+/* C89 3.4 / 3.2.2.3: evaluate an integral constant expression (ICE). */
+static int ice_eval(Node *n, long *out)
+{
+    long l, r;
+
+    if (!n || !out)
+        return 0;
+
+    switch (n->kind) {
+    case ND_NUM:
+        if (!type_is_integer(n->ty))
+            return 0;
+        *out = n->val;
+        return 1;
+    case ND_NEG:
+        if (!ice_eval(n->operand, out))
+            return 0;
+        *out = -*out;
+        return 1;
+    case ND_BINOP:
+        if (!ice_eval(n->lhs, &l) || !ice_eval(n->rhs, &r))
+            return 0;
+        switch (n->op) {
+        case OP_ADD: *out = l + r; return 1;
+        case OP_SUB: *out = l - r; return 1;
+        case OP_MUL: *out = l * r; return 1;
+        case OP_DIV:
+            if (r == 0)
+                return 0;
+            *out = l / r;
+            return 1;
+        case OP_MOD:
+            if (r == 0)
+                return 0;
+            *out = l % r;
+            return 1;
+        default:
+            return 0;
+        }
+    case ND_CAST:
+        if (!n->cast_ty || !type_is_integer(n->cast_ty))
+            return 0;
+        if (!ice_eval(n->operand, out))
+            return 0;
+        if (type_is_char(n->cast_ty))
+            *out &= 0xFF;
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+/* C89 3.2.2.3: ICE with value 0, or such an expression cast to void *. */
 static int is_null_ptr_constant(Node *n)
 {
-    return n && n->kind == ND_NUM && n->val == 0;
+    long v;
+
+    if (!n)
+        return 0;
+    if (ice_eval(n, &v) && v == 0)
+        return 1;
+    if (n->kind == ND_CAST && n->cast_ty && is_void_ptr_type(n->cast_ty))
+        return ice_eval(n->operand, &v) && v == 0;
+    return 0;
+}
+
+static void note_non_null_int_to_pointer(SourceLoc loc)
+{
+    diag_note_at(loc,
+                 "only integer constant expression 0 is a null pointer constant");
 }
 
 static int is_null_ptr_eq(Node *lhs, Node *rhs)
@@ -228,11 +299,6 @@ static int expr_assignable_to(Type *dst, Node *src)
     if (type_assignable(dst, src->ty))
         return 1;
     return type_is_pointer(dst) && is_null_ptr_constant(src);
-}
-
-static int is_void_ptr_type(Type *ty)
-{
-    return type_is_pointer(ty) && type_is_void(ty->base);
 }
 
 /* char storage is unsigned byte-wide (movzbl); warn on out-of-range constants. */
@@ -261,6 +327,68 @@ static void warn_value_conversion(SourceLoc loc, Type *dst, Node *src)
                   "conversion from '%s' to '%s' without a cast",
                   type_name(src->ty), type_name(dst));
     }
+}
+
+static void check_init_from_self(Node *n, Node *decl)
+{
+    if (!n || !decl)
+        return;
+
+    if (n->kind == ND_VAR && strcmp(n->name, decl->name) == 0 &&
+        n->offset == decl->offset) {
+        diag_warn(W_INIT_FROM_SELF, n->loc,
+                  "initializer refers to '%s' before its value is defined",
+                  decl->name);
+        diag_note_at(n->loc,
+                     "'%s' has indeterminate value here; behavior is undefined in C89",
+                     decl->name);
+        return;
+    }
+
+    switch (n->kind) {
+    case ND_BINOP:
+        check_init_from_self(n->lhs, decl);
+        check_init_from_self(n->rhs, decl);
+        return;
+    case ND_NEG:
+    case ND_DEREF:
+    case ND_CAST:
+        check_init_from_self(n->operand, decl);
+        return;
+    case ND_ADDR:
+        check_init_from_self(n->operand, decl);
+        return;
+    case ND_ASSIGN:
+        check_init_from_self(n->lhs, decl);
+        check_init_from_self(n->rhs, decl);
+        return;
+    case ND_CALL:
+        for (Node *a = n->args; a; a = a->next)
+            check_init_from_self(a, decl);
+        return;
+    default:
+        return;
+    }
+}
+
+static void diag_incompatible_assign(SourceLoc loc, Type *dst, Node *src)
+{
+    diag_error_at(loc,
+                  "incompatible types assigning '%s' to '%s'",
+                  type_name(src->ty), type_name(dst));
+    if (type_is_pointer(dst) && type_is_integer(src->ty) &&
+        !is_null_ptr_constant(src))
+        note_non_null_int_to_pointer(loc);
+}
+
+static void diag_incompatible_init(SourceLoc loc, Type *dst, Node *src)
+{
+    diag_error_at(loc,
+                  "incompatible types initializing '%s' with '%s'",
+                  type_name(dst), type_name(src->ty));
+    if (type_is_pointer(dst) && type_is_integer(src->ty) &&
+        !is_null_ptr_constant(src))
+        note_non_null_int_to_pointer(loc);
 }
 
 /* ---- lvalue helpers (sema is the single authority) ---- */
@@ -443,9 +571,7 @@ static void resolve_expr_ctx(Node *n, ExprCtx ctx)
         if (!expr_is_modifiable_lvalue(n->lhs))
             diag_error_at(n->loc, "assignment to non-lvalue");
         else if (!expr_assignable_to(n->lhs->ty, n->rhs))
-            diag_error_at(n->loc,
-                          "incompatible types assigning '%s' to '%s'",
-                          type_name(n->rhs->ty), type_name(n->lhs->ty));
+            diag_incompatible_assign(n->loc, n->lhs->ty, n->rhs);
         else
             warn_value_conversion(n->loc, n->lhs->ty, n->rhs);
         n->ty = n->lhs->ty;
@@ -523,6 +649,31 @@ static void resolve_expr_ctx(Node *n, ExprCtx ctx)
             n->is_lvalue = 1;
         }
         return;
+    case ND_CAST: {
+        Type *dst = n->cast_ty;
+
+        resolve_expr_ctx(n->operand, CTX_RVALUE);
+        n->var_decay = 0;
+        n->is_lvalue = 0;
+
+        /* C89 3.3.4: the target must be void or scalar, and (unless the
+         * target is void) the operand must also have scalar type. An explicit
+         * cast is the programmer's escape hatch, so it silences the implicit
+         * conversion warnings that assignment would raise. */
+        if (type_is_void(dst)) {
+            /* (void)e discards the value; any operand type is fine. */
+        } else if (!type_is_scalar(dst)) {
+            diag_error_at(n->loc, "cast to non-scalar type '%s'",
+                          type_name(dst));
+        } else if (!type_is_scalar(n->operand->ty)) {
+            diag_error_at(n->loc,
+                          "operand of cast has non-scalar type '%s'",
+                          type_name(n->operand->ty));
+        }
+
+        n->ty = dst;
+        return;
+    }
     default:
         return;
     }
@@ -563,12 +714,12 @@ static void resolve_stmt(Node *s)
         } else {
             s->offset = add_local(s->name, s->ty, s->loc);
         }
-        /* The name is in scope within its own initializer (C semantics). */
+        /* C89 3.1.2.1: the name is in scope within its own initializer. */
         resolve_expr_ctx(s->init, CTX_RVALUE);
+        if (s->init)
+            check_init_from_self(s->init, s);
         if (s->init && !expr_assignable_to(s->ty, s->init))
-            diag_error_at(s->loc,
-                          "incompatible types initializing '%s' with '%s'",
-                          type_name(s->ty), type_name(s->init->ty));
+            diag_incompatible_init(s->loc, s->ty, s->init);
         else if (s->init)
             warn_value_conversion(s->loc, s->ty, s->init);
         return;
@@ -580,11 +731,14 @@ static void resolve_stmt(Node *s)
                               cur_fname);
             resolve_expr_ctx(s->operand, CTX_RVALUE);
             if (!type_is_void(cur_ret_ty) &&
-                !expr_assignable_to(cur_ret_ty, s->operand))
+                !expr_assignable_to(cur_ret_ty, s->operand)) {
                 diag_error_at(s->loc,
                               "returning '%s' from a function returning '%s'",
                               type_name(s->operand->ty), type_name(cur_ret_ty));
-            else if (!type_is_void(cur_ret_ty))
+                if (type_is_pointer(cur_ret_ty) && type_is_integer(s->operand->ty) &&
+                    !is_null_ptr_constant(s->operand))
+                    note_non_null_int_to_pointer(s->loc);
+            } else if (!type_is_void(cur_ret_ty))
                 warn_value_conversion(s->loc, cur_ret_ty, s->operand);
         } else if (!type_is_void(cur_ret_ty)) {
             diag_warn(W_RETURN_TYPE, s->loc,

@@ -55,6 +55,14 @@ Node *node_deref(Node *o, SourceLoc loc)
     return n;
 }
 
+Node *node_cast(Type *ty, Node *o, SourceLoc loc)
+{
+    Node *n = new_node(ND_CAST, loc);
+    n->cast_ty = ty;
+    n->operand = o;
+    return n;
+}
+
 Node *node_assign(Node *l, Node *r, SourceLoc loc)
 {
     Node *n = new_node(ND_ASSIGN, loc);

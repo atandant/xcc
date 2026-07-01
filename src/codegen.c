@@ -683,6 +683,19 @@ static void gen_expr(Node *n)
         gen_addr(n);              /* %rax = address */
         emit_load(n->ty);         /* load value by result type */
         return;
+    case ND_CAST:
+        gen_expr(n->operand);
+        /* void: value discarded. char: truncate to the unsigned-byte model
+         * (required, and observable after promotion). ptr->int: normalize to
+         * the sign-extended int-in-%rax invariant (impl-defined value, kept
+         * for hygiene). All other conversions are representation no-ops. */
+        if (type_is_void(n->ty))
+            ;
+        else if (type_is_char(n->ty) && !type_is_char(n->operand->ty))
+            fprintf(o, "  movzbl %%al, %%eax\n");
+        else if (type_is_integer(n->ty) && type_is_pointer(n->operand->ty))
+            fprintf(o, "  movslq %%eax, %%rax\n");
+        return;
     case ND_ASSIGN:
         gen_addr(n->lhs);
         spill();

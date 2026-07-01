@@ -19,6 +19,7 @@ typedef enum {
     W_RETURN_TYPE,
     W_OLD_STYLE_FUNCTION_DEFINITION,
     W_POINTER_CONVERSION,
+    W_INIT_FROM_SELF,
     W_COUNT
 } DiagWarnId;
 

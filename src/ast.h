@@ -20,6 +20,7 @@ typedef enum {
     ND_NEG,        /* unary minus on operand       */
     ND_ADDR,       /* unary & (address-of operand) */
     ND_DEREF,      /* unary * (dereference operand)*/
+    ND_CAST,       /* (type)operand                */
     ND_ASSIGN,     /* lhs = rhs (lhs must be modifiable lvalue) */
     ND_RETURN,     /* return operand;              */
     ND_EXPR_STMT,  /* operand;                     */
@@ -54,7 +55,8 @@ struct Node {
     BinOp op;          /* ND_BINOP                                  */
     Node *lhs, *rhs;   /* ND_BINOP, ND_ASSIGN                       */
 
-    Node *operand;     /* ND_NEG, ND_RETURN, ND_EXPR_STMT (NULL ok) */
+    Node *operand;     /* ND_NEG, ND_RETURN, ND_EXPR_STMT, ND_CAST  */
+    Type *cast_ty;     /* ND_CAST: parsed target type               */
     Node *init;        /* ND_DECL initializer, ND_FOR init (NULL ok)*/
     Node *cond;        /* ND_IF, ND_WHILE, ND_FOR (FOR cond NULL ok)*/
     Node *step;        /* ND_FOR step (may be NULL)                 */
@@ -106,6 +108,7 @@ Node *node_binop(BinOp op, Node *l, Node *r, SourceLoc loc);
 Node *node_neg(Node *o, SourceLoc loc);
 Node *node_addr(Node *o, SourceLoc loc);
 Node *node_deref(Node *o, SourceLoc loc);
+Node *node_cast(Type *ty, Node *o, SourceLoc loc);
 Node *node_assign(Node *l, Node *r, SourceLoc loc);
 Node *node_return(Node *o, SourceLoc loc);
 Node *node_expr_stmt(Node *o, SourceLoc loc);

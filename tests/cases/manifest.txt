@@ -41,7 +41,7 @@ run|array_while_index.c|6|
 run|assign_chain.c|12|
 run|assign_expr.c|7|
 run|block_comment_multiline.c|12|
-run|block_scope_initializer_self.c|0|
+xcc-warning|block_scope_initializer_self.c|0|initializer refers to 'x' before its value is defined
 run|block_scope_restored.c|3|
 run|block_scope_shadow.c|7|
 run|block_statement.c|9|
@@ -57,6 +57,20 @@ run|call_two_args.c|17|
 run|call_unprototyped_allows_any_arity.c|11|
 run|call_unprototyped_pointer_temporarily_ok.c|0|
 run|call_void_pointer_arg.c|0|
+run|cast_binds_before_add.c|45|
+run|cast_char_neg_unsigned.c|255|
+run|cast_char_promote_observable.c|44|
+run|cast_char_ptr_deref.c|200|
+run|cast_char_runtime.c|44|
+run|cast_char_to_int.c|65|
+run|cast_int_noop.c|5|
+run|cast_int_to_char_trunc.c|44|
+run|cast_null_ptr_constant.c|1|
+run|cast_ptr_through_void_ptr.c|7|
+run|cast_ptr_to_int_hygiene.c|1|
+run|cast_subscript_precedence.c|3|
+run|cast_void_discard.c|3|
+xcc-error|cast_void_operand_error.c|1|operand of cast has non-scalar type 'void'
 run|char_decl_local.c|3|
 run|char_deref_truncate.c|44|
 run|char_ptr_decl.c|0|
@@ -152,6 +166,8 @@ run|negative_div_mod.c|5|
 run|neg.c|3|
 run|nested_blocks_reuse_names.c|16|
 run|null_ptr_assign.c|1|
+run|null_ptr_assign_ice.c|1|
+run|null_ptr_assign_void_cast.c|1|
 run|null_ptr_call.c|0|
 run|null_ptr_init.c|0|
 run|null_ptr_return.c|1|

@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: MIT */
-/* expect: 0 */
+/* expect-warning: initializer refers to 'x' before its value is defined */
 int main(void) {
     int x = 5;
     {

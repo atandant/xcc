@@ -42,6 +42,8 @@ static WarnOpt warn_opts[W_COUNT] = {
         { "old-style-function-definition", 1, 0 },
     [W_POINTER_CONVERSION] =
         { "pointer-conversion", 0, 0 },
+    [W_INIT_FROM_SELF] =
+        { "init-from-self", 1, 0 },
 };
 
 static void diag_init_colors(void)

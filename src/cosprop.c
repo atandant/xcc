@@ -226,6 +226,7 @@ static int prop_expr(Node **np, int rvalue, int allow_subst)
         return changed;
     case ND_NEG:
     case ND_DEREF:
+    case ND_CAST:
         changed |= prop_expr(&n->operand, 1, allow_subst);
         return changed;
     case ND_ADDR:

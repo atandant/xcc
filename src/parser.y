@@ -182,6 +182,8 @@ expr:
   | '-' expr %prec UMINUS    { $$ = node_neg($2, LOC(@1)); }
   | '&' expr %prec UMINUS    { $$ = node_addr($2, LOC(@1)); }
   | '*' expr %prec UMINUS    { $$ = node_deref($2, LOC(@1)); }
+  | '(' type ')' expr %prec UMINUS
+                             { $$ = node_cast($2, $4, LOC(@1)); }
   | expr '[' expr ']'
         { $$ = node_deref(node_binop(OP_ADD, $1, $3, LOC(@2)), LOC(@2)); }
   | '(' expr ')'             { $$ = $2; }
