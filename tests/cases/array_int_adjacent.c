@@ -1,0 +1,3 @@
+/* SPDX-License-Identifier: MIT */
+/* expect: 2 */
+int main(void) { int a[2]; a[0]=1; a[1]=2; return a[1]; }

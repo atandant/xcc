@@ -30,24 +30,24 @@ make
 ./examples/build.sh
 ```
 
-## Status (v0.0.1.3)
+## Status (v0.0.1.4)
 
 The pipeline runs end to end (lex → parse → sema → codegen → `.s` → gcc) with
-a typed semantic layer and 150+ acceptance tests.
+a typed semantic layer and 180+ acceptance tests.
 
 | Supported | Not yet |
 | --- | --- |
-| `int`, `char`, `void`, pointers (`*`, `&`, dereference) | arrays |
-| typed declarations, parameters, returns | pointer arithmetic |
-| function calls (prototyped arg checking, void `*` conversions) | `sizeof`, casts |
-| `if` / `else`, `while`, `for`, blocks | structs, unions, enums, `typedef` |
-| `+ - * / %`, unary `-`, comparisons | preprocessor (`#include`, `#define`) |
-| pointer `==` / `!=`, truthiness, `p == 0` | multiple translation units |
-| `file:line:col` errors, carets, `note:` spans, color (`auto`) | warning system / `-W` flags |
+| `int`, `char`, `void`, pointers (`*`, `&`, dereference) | multi-dimensional arrays |
+| 1D arrays, `[]` subscript, `ptr ± int`, param decay | pointer arithmetic beyond `±` / `[]` |
+| typed declarations, parameters, returns | `sizeof`, casts, brace initializers |
+| function calls (prototyped arg checking, void `*` conversions) | structs, unions, enums, `typedef` |
+| `if` / `else`, `while`, `for`, blocks | preprocessor (`#include`, `#define`) |
+| `+ - * / %`, unary `-`, comparisons | multiple translation units |
+| pointer `==` / `!=` / ordering, truthiness, `p == 0` | warning system / `-W` flags |
+| `file:line:col` errors, carets, `note:` spans, color (`auto`) | |
 
-> Known backend limitation: locals still live in 8-byte stack slots, so `char`
-> is modeled in the type system but is not byte-correct at runtime yet. See
-> `typesystemlist.txt` for deviations and scope.
+> Locals use type-aware stack layout (`int` is 4 bytes, `char` is 1 byte).
+> `auto` arrays are not zero-initialized (faithful C89).
 
 ## How it works
 
@@ -83,7 +83,8 @@ committed.
 - `0.0.1.1` — `while`, `for` ✓
 - `0.0.1.2` — functions, parameters, calls (System V ABI) ✓
 - `0.0.1.3` — type system, pointers, `char`, `void *` ✓
-- later — arrays, preprocessor, structs, and enough to compile real projects
+- `0.0.1.4` — 1D arrays, subscript, pointer arithmetic, layout fix ✓
+- later — preprocessor, structs, and enough to compile real projects
 
 ## License
 

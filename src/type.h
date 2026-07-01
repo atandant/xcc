@@ -13,6 +13,7 @@ typedef enum {
     TY_CHAR,
     TY_INT,
     TY_PTR,
+    TY_ARRAY,
     TY_FUNC
 } TypeKind;
 
@@ -22,7 +23,8 @@ struct Type {
     int size;          /* object size in bytes (0 for void/func)        */
     int align;         /* alignment in bytes                            */
 
-    Type *base;        /* TY_PTR: pointee type                          */
+    Type *base;        /* TY_PTR / TY_ARRAY: pointee / element type     */
+    int count;         /* TY_ARRAY: element count (constant)            */
 
     Type *ret;         /* TY_FUNC: return type                          */
     Type **params;     /* TY_FUNC: parameter types                      */
@@ -37,9 +39,11 @@ Type *type_int(void);
 
 /* Derived-type constructors (arena allocated). */
 Type *type_ptr(Type *base);
+Type *type_array(Type *elem, int count);
 Type *type_func(Type *ret, Type **params, int nparams, int prototyped);
 
 /* Predicates. */
+int type_is_array(Type *ty);
 int type_is_void(Type *ty);
 int type_is_char(Type *ty);
 int type_is_integer(Type *ty);
@@ -55,6 +59,10 @@ int type_assignable(Type *dst, Type *src);
 /* Queries. */
 int type_size(Type *ty);
 int type_align(Type *ty);
+Type *type_decay(Type *ty);
+Type *type_array_elem(Type *ty);
+int type_array_count(Type *ty);
+Type *type_ptr_elem(Type *ty);
 const char *type_name(Type *ty);
 const char *type_func_sig(Type *ty);
 

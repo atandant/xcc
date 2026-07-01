@@ -5,6 +5,14 @@
 #include "token.h"
 #include "type.h"
 
+#define MAX_DECL_DIMS 16
+
+typedef struct {
+    char *name;
+    int ndims;
+    long dims[MAX_DECL_DIMS];
+} Declarator;
+
 typedef enum {
     ND_NUM,        /* integer literal              */
     ND_VAR,        /* reference to a local         */
@@ -37,6 +45,7 @@ struct Node {
 
     Type *ty;          /* expression type (filled by sema)          */
     int is_lvalue;     /* 1 if this expression is an lvalue (sema)  */
+    int var_decay;     /* ND_VAR: 1 → address of array object (sema) */
 
     long val;          /* ND_NUM                                    */
     char *name;        /* ND_VAR, ND_DECL                           */
@@ -115,5 +124,6 @@ ParamClause *param_clause(Param *head, int prototyped);
 Function *func_new(char *name, ParamClause *pc, Type *ret_ty,
                    int is_definition, Node *body, SourceLoc loc);
 Function *func_append(Function *list, Function *f);
+Type *type_apply_declarator(Type *base, Declarator *d, SourceLoc loc);
 
 #endif /* XCC_AST_H */

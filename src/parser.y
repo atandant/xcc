@@ -10,10 +10,8 @@
 extern int yylex(void);
 void yyerror(const char *msg);
 
-/* Result of a successful parse. */
 Function *g_program = NULL;
 
-/* Convert a bison location to our SourceLoc. */
 #define LOC(L) ((SourceLoc){ (L).first_line, (L).first_column })
 %}
 
@@ -35,6 +33,7 @@ Function *g_program = NULL;
     ParamClause *pclause;
     Function *func;
     Type *type;
+    Declarator decl;
 }
 
 %token <num> NUM
@@ -48,6 +47,7 @@ Function *g_program = NULL;
 %type <pclause> param_clause
 %type <func> toplevel
 %type <type> type
+%type <decl> declarator
 
 %right '='
 %left EQ NE
@@ -72,9 +72,7 @@ toplevel:
         { $$ = func_new($2, $4, $1, 0, NULL, LOC(@2)); }
   ;
 
-/* Type specifier with optional pointer declarator. Left recursion on '*'
- * builds nested pointer types: `int * *` -> ptr(ptr(int)). This is a known
- * subset of the C89 declarator grammar (no arrays, no function pointers). */
+/* Type specifier with optional pointer declarator. */
 type:
     INT                      { $$ = type_int(); }
   | CHAR                     { $$ = type_char(); }
@@ -82,12 +80,38 @@ type:
   | type '*'                 { $$ = type_ptr($1); }
   ;
 
+declarator:
+    IDENT
+        {
+            $$.name = $1;
+            $$.ndims = 0;
+        }
+  | declarator '[' NUM ']'
+        {
+            $$ = $1;
+            if ($$.ndims >= MAX_DECL_DIMS) {
+                diag_error_at(LOC(@3), "too many array dimensions");
+            } else {
+                $$.dims[$$.ndims] = $3;
+                $$.ndims++;
+            }
+        }
+  | declarator '[' ']'
+        {
+            $$ = $1;
+            if ($$.ndims >= MAX_DECL_DIMS) {
+                diag_error_at(LOC(@3), "too many array dimensions");
+            } else {
+                $$.dims[$$.ndims] = 0;
+                $$.ndims++;
+            }
+        }
+  ;
+
 param_clause:
     /* empty */              { $$ = param_clause(NULL, 0); }
   | param_list
         {
-            /* `(void)` parses as one unnamed void param and means
-             * "no parameters", not a parameter of type void. */
             Param *h = $1;
             if (h && h->next == NULL && h->name == NULL && type_is_void(h->ty))
                 $$ = param_clause(NULL, 1);
@@ -102,8 +126,13 @@ param_list:
   ;
 
 param:
-    type IDENT               { $$ = param_append(NULL, $1, $2); }
-  | type                     { $$ = param_append(NULL, $1, NULL); }
+    type declarator
+        {
+            Type *ty = type_apply_declarator($1, &$2, LOC(@1));
+            $$ = param_append(NULL, ty, $2.name);
+        }
+  | type
+        { $$ = param_append(NULL, $1, NULL); }
   ;
 
 stmt_list:
@@ -114,8 +143,10 @@ stmt_list:
 stmt:
     RETURN expr ';'          { $$ = node_return($2, LOC(@1)); }
   | RETURN ';'               { $$ = node_return(NULL, LOC(@1)); }
-  | type IDENT ';'           { $$ = node_decl($2, $1, NULL, LOC(@1)); }
-  | type IDENT '=' expr ';'  { $$ = node_decl($2, $1, $4, LOC(@1)); }
+  | type declarator ';'
+        { $$ = node_decl($2.name, type_apply_declarator($1, &$2, LOC(@1)), NULL, LOC(@1)); }
+  | type declarator '=' expr ';'
+        { $$ = node_decl($2.name, type_apply_declarator($1, &$2, LOC(@1)), $4, LOC(@1)); }
   | IF '(' expr ')' stmt %prec IFX
                               { $$ = node_if($3, $5, NULL, LOC(@1)); }
   | IF '(' expr ')' stmt ELSE stmt
@@ -151,6 +182,8 @@ expr:
   | '-' expr %prec UMINUS    { $$ = node_neg($2, LOC(@1)); }
   | '&' expr %prec UMINUS    { $$ = node_addr($2, LOC(@1)); }
   | '*' expr %prec UMINUS    { $$ = node_deref($2, LOC(@1)); }
+  | expr '[' expr ']'
+        { $$ = node_deref(node_binop(OP_ADD, $1, $3, LOC(@2)), LOC(@2)); }
   | '(' expr ')'             { $$ = $2; }
   ;
 

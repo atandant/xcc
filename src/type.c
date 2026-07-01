@@ -5,16 +5,11 @@
 #include <string.h>
 #include <stdio.h>
 
-/* ---- builtin singletons ----
- *
- * char is modeled with its true C size (1). int uses 4 here as the semantic
- * size; codegen may still lower both through 8-byte slots in 0.0.1.3 (a known
- * temporary backend limitation, documented in typesystemlist.txt). Pointers
- * are 8 bytes / 8-aligned on x86-64 SysV. */
+/* char is 1 byte; int is 4 bytes; pointers are 8 on x86-64 SysV. */
 
-static Type ty_void = { TY_VOID, 0, 1, NULL, NULL, NULL, 0, 0 };
-static Type ty_char = { TY_CHAR, 1, 1, NULL, NULL, NULL, 0, 0 };
-static Type ty_int  = { TY_INT,  4, 4, NULL, NULL, NULL, 0, 0 };
+static Type ty_void = { TY_VOID, 0, 1, NULL, 0, NULL, NULL, 0, 0 };
+static Type ty_char = { TY_CHAR, 1, 1, NULL, 0, NULL, NULL, 0, 0 };
+static Type ty_int  = { TY_INT,  4, 4, NULL, 0, NULL, NULL, 0, 0 };
 
 Type *type_void(void) { return &ty_void; }
 Type *type_char(void) { return &ty_char; }
@@ -27,6 +22,17 @@ Type *type_ptr(Type *base)
     t->size = 8;
     t->align = 8;
     t->base = base;
+    return t;
+}
+
+Type *type_array(Type *elem, int count)
+{
+    Type *t = arena_alloc_zeroed(sizeof(Type));
+    t->kind = TY_ARRAY;
+    t->base = elem;
+    t->count = count;
+    t->size = type_size(elem) * count;
+    t->align = type_align(elem);
     return t;
 }
 
@@ -56,6 +62,8 @@ int type_is_integer(Type *ty)
 
 int type_is_pointer(Type *ty) { return ty && ty->kind == TY_PTR; }
 
+int type_is_array(Type *ty)   { return ty && ty->kind == TY_ARRAY; }
+
 int type_is_scalar(Type *ty)
 {
     return type_is_integer(ty) || type_is_pointer(ty);
@@ -63,7 +71,6 @@ int type_is_scalar(Type *ty)
 
 int type_is_object(Type *ty)
 {
-    /* Object types have storage. void and functions do not. */
     return ty && ty->kind != TY_VOID && ty->kind != TY_FUNC;
 }
 
@@ -83,6 +90,9 @@ int type_same(Type *a, Type *b)
         return 1;
     case TY_PTR:
         return type_same(a->base, b->base);
+    case TY_ARRAY:
+        return a->count == b->count &&
+               type_same(a->base, b->base);
     case TY_FUNC:
         if (!type_same(a->ret, b->ret))
             return 0;
@@ -98,19 +108,16 @@ int type_same(Type *a, Type *b)
     return 0;
 }
 
-/* A void pointer (pointer to void). */
 static int is_void_ptr(Type *ty)
 {
     return type_is_pointer(ty) && type_is_void(ty->base);
 }
 
-/* Two types are compatible for pointer comparison / conversion purposes. */
 int type_compatible(Type *a, Type *b)
 {
     if (type_same(a, b))
         return 1;
 
-    /* void * is compatible with any object pointer (and vice versa). */
     if (type_is_pointer(a) && type_is_pointer(b)) {
         if (is_void_ptr(a) || is_void_ptr(b))
             return 1;
@@ -124,11 +131,12 @@ int type_assignable(Type *dst, Type *src)
     if (!dst || !src)
         return 0;
 
-    /* integer <- integer (char and int interchange in 0.0.1.3). */
+    if (type_is_array(dst) || type_is_array(src))
+        return 0;
+
     if (type_is_integer(dst) && type_is_integer(src))
         return 1;
 
-    /* pointer <- compatible pointer, including void * conversions. */
     if (type_is_pointer(dst) && type_is_pointer(src))
         return type_compatible(dst, src);
 
@@ -140,6 +148,28 @@ int type_assignable(Type *dst, Type *src)
 int type_size(Type *ty)  { return ty ? ty->size : 0; }
 int type_align(Type *ty) { return ty ? ty->align : 1; }
 
+Type *type_decay(Type *ty)
+{
+    if (type_is_array(ty))
+        return type_ptr(type_array_elem(ty));
+    return ty;
+}
+
+Type *type_array_elem(Type *ty)
+{
+    return type_is_array(ty) ? ty->base : NULL;
+}
+
+int type_array_count(Type *ty)
+{
+    return type_is_array(ty) ? ty->count : 0;
+}
+
+Type *type_ptr_elem(Type *ty)
+{
+    return type_is_pointer(ty) ? ty->base : NULL;
+}
+
 const char *type_name(Type *ty)
 {
     if (!ty)
@@ -150,11 +180,17 @@ const char *type_name(Type *ty)
     case TY_CHAR: return "char";
     case TY_INT:  return "int";
     case TY_PTR: {
-        /* "T *" — build recursively into an arena buffer. */
         const char *inner = type_name(ty->base);
-        size_t n = strlen(inner) + 3; /* inner + " *" + NUL */
+        size_t n = strlen(inner) + 3;
         char *buf = arena_alloc(n);
         snprintf(buf, n, "%s *", inner);
+        return buf;
+    }
+    case TY_ARRAY: {
+        const char *inner = type_name(ty->base);
+        size_t n = strlen(inner) + 32;
+        char *buf = arena_alloc(n);
+        snprintf(buf, n, "%s[%d]", inner, ty->count);
         return buf;
     }
     case TY_FUNC:

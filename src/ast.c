@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include "ast.h"
 #include "arena.h"
+#include "diag.h"
 
 static Node *new_node(NodeKind kind, SourceLoc loc)
 {
@@ -194,13 +195,13 @@ Function *func_new(char *name, ParamClause *pc, Type *ret_ty,
     f->is_definition = is_definition;
     f->body = body;
 
-    /* Build the full function type from the parsed parameter types. */
+    /* Build the full function type; array parameters decay to pointers. */
     Type **ptypes = NULL;
     if (pc->count > 0) {
         ptypes = arena_alloc(sizeof(Type *) * pc->count);
         int i = 0;
         for (Param *p = pc->head; p; p = p->next, i++)
-            ptypes[i] = p->ty;
+            ptypes[i] = type_decay(p->ty);
     }
     f->ty = type_func(ret_ty, ptypes, pc->count, pc->prototyped);
 
@@ -216,4 +217,19 @@ Function *func_append(Function *list, Function *f)
         tail = tail->next;
     tail->next = f;
     return list;
+}
+
+Type *type_apply_declarator(Type *base, Declarator *d, SourceLoc loc)
+{
+    Type *ty = base;
+    int i;
+
+    if (type_is_pointer(base) && d->ndims > 0) {
+        diag_error_at(loc, "array declarator not allowed on pointer type");
+        return base;
+    }
+
+    for (i = 0; i < d->ndims; i++)
+        ty = type_array(ty, (int)d->dims[i]);
+    return ty;
 }

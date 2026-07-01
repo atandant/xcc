@@ -65,7 +65,7 @@ int shadow_errors(void)
     int *cursor;                    /* redeclaration + note */
 
     cursor = 0;
-    return &(*cursor + 1);          /* non-lvalue: assignment result */
+    return &(*cursor + 1);          /* address of non-lvalue (addition result) */
 }
 
 int main(void)

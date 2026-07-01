@@ -136,10 +136,27 @@ static int declared_here(const char *name)
     return 0;
 }
 
-/* Reserve one 8-byte slot below %rbp (int kept 64-bit, v0.0.1). */
-static int alloc_slot(void)
+/* Reserve stack space for a local object (type-aware size and alignment). */
+static int align_down(int off, int align)
 {
-    cur_offset -= 8;
+    unsigned u = (unsigned)(-off);
+    unsigned rem = u % (unsigned)align;
+
+    if (rem != 0)
+        off -= (int)rem;
+    return off;
+}
+
+static int alloc_local(Type *ty)
+{
+    int size = type_size(ty);
+    int align = type_align(ty);
+
+    if (size < 1)
+        size = 1;
+    cur_offset -= size;
+    if (align > 1)
+        cur_offset = align_down(cur_offset, align);
     return cur_offset;
 }
 
@@ -167,7 +184,7 @@ static void bind_local(char *name, Type *ty, int offset, SourceLoc loc)
 
 static int add_local(char *name, Type *ty, SourceLoc loc)
 {
-    int off = alloc_slot();
+    int off = alloc_local(ty);
     bind_local(name, ty, off, loc);
     return off;
 }
@@ -228,10 +245,66 @@ static int eq_operands_compatible(Node *lhs, Node *rhs)
            is_null_ptr_eq(lhs, rhs);
 }
 
+static int rel_operands_compatible(Node *lhs, Node *rhs)
+{
+    return (type_is_integer(lhs->ty) && type_is_integer(rhs->ty)) ||
+           (type_is_pointer(lhs->ty) && type_is_pointer(rhs->ty) &&
+            type_compatible(lhs->ty, rhs->ty));
+}
+
+typedef enum {
+    CTX_RVALUE,
+    CTX_LVALUE,
+    CTX_ADDR_OPERAND
+} ExprCtx;
+
+static void resolve_expr_ctx(Node *n, ExprCtx ctx);
+
+static int is_rel_op(BinOp op)
+{
+    return op == OP_LT || op == OP_LE || op == OP_GT || op == OP_GE;
+}
+
+static int check_arith_binop(Node *n)
+{
+    Type *l = n->lhs->ty;
+    Type *r = n->rhs->ty;
+
+    if (type_is_integer(l) && type_is_integer(r)) {
+        n->ty = type_int();
+        return 1;
+    }
+
+    if (n->op == OP_ADD) {
+        if (type_is_pointer(l) && type_is_integer(r)) {
+            n->ty = l;
+            return 1;
+        }
+        if (type_is_integer(l) && type_is_pointer(r)) {
+            n->ty = r;
+            return 1;
+        }
+    }
+
+    if (n->op == OP_SUB) {
+        if (type_is_pointer(l) && type_is_integer(r)) {
+            n->ty = l;
+            return 1;
+        }
+        if (type_is_pointer(l) && type_is_pointer(r) &&
+            type_compatible(l, r)) {
+            n->ty = type_int();
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
 /* Resolve names/offsets and assign a Type * (and lvalue flag) to every
  * expression node. On any error we still set a fallback type so later checks
  * don't dereference a NULL Type. */
-static void resolve_expr(Node *n)
+static void resolve_expr_ctx(Node *n, ExprCtx ctx)
 {
     if (!n)
         return;
@@ -240,17 +313,29 @@ static void resolve_expr(Node *n)
     case ND_NUM:
         n->ty = type_int();
         n->is_lvalue = 0;
+        n->var_decay = 0;
         return;
     case ND_VAR: {
         int off;
-        Type *ty;
-        if (!lookup(n->name, &off, &ty)) {
+        Type *decl_ty;
+
+        n->var_decay = 0;
+        if (!lookup(n->name, &off, &decl_ty)) {
             diag_error_at(n->loc, "use of undeclared identifier '%s'", n->name);
             n->ty = type_int();
+            n->is_lvalue = 0;
         } else {
             n->offset = off;
-            n->ty = ty;
-            n->is_lvalue = type_is_object(ty);
+            if (type_is_array(decl_ty) &&
+                (ctx == CTX_RVALUE)) {
+                n->ty = type_decay(decl_ty);
+                n->is_lvalue = 0;
+                n->var_decay = 1;
+            } else {
+                n->ty = decl_ty;
+                n->is_lvalue = (ctx != CTX_RVALUE) &&
+                               type_is_object(decl_ty);
+            }
         }
         return;
     }
@@ -258,11 +343,12 @@ static void resolve_expr(Node *n)
         int off;
         FuncSym *s = NULL;
 
-        n->ty = type_int();   /* fallback */
+        n->ty = type_int();
         n->func_ty = NULL;
         n->is_lvalue = 0;
+        n->var_decay = 0;
         for (Node *a = n->args; a; a = a->next)
-            resolve_expr(a);
+            resolve_expr_ctx(a, CTX_RVALUE);
 
         if (lookup(n->name, &off, NULL)) {
             diag_error_at(n->loc, "called object '%s' is not a function",
@@ -270,7 +356,6 @@ static void resolve_expr(Node *n)
         } else {
             s = find_func(n->name);
             if (!s) {
-                /* C89 implicit declaration: extern int name(); silent (D). */
                 s = add_func(n->name, type_func(type_int(), NULL, 0, 0), 0,
                              n->loc);
             } else if (s->ty->prototyped && s->ty->nparams != n->nargs) {
@@ -299,8 +384,9 @@ static void resolve_expr(Node *n)
         return;
     }
     case ND_ASSIGN:
-        resolve_expr(n->lhs);
-        resolve_expr(n->rhs);
+        resolve_expr_ctx(n->lhs, CTX_LVALUE);
+        resolve_expr_ctx(n->rhs, CTX_RVALUE);
+        n->var_decay = 0;
         if (!expr_is_modifiable_lvalue(n->lhs))
             diag_error_at(n->loc, "assignment to non-lvalue");
         else if (!expr_assignable_to(n->lhs->ty, n->rhs))
@@ -311,10 +397,11 @@ static void resolve_expr(Node *n)
         n->is_lvalue = 0;
         return;
     case ND_BINOP:
-        resolve_expr(n->lhs);
-        resolve_expr(n->rhs);
+        resolve_expr_ctx(n->lhs, CTX_RVALUE);
+        resolve_expr_ctx(n->rhs, CTX_RVALUE);
+        n->var_decay = 0;
         if (is_arith_op(n->op)) {
-            if (!type_is_integer(n->lhs->ty) || !type_is_integer(n->rhs->ty))
+            if (!check_arith_binop(n))
                 diag_error_at(n->loc,
                               "invalid operands to arithmetic operator");
         } else if (is_eq_op(n->op)) {
@@ -339,31 +426,34 @@ static void resolve_expr(Node *n)
                 else
                     diag_error_at(n->loc, "invalid operands to comparison");
             }
-        } else {
-            /* < <= > >= : integers only in 0.0.1.3. */
-            if (!type_is_integer(n->lhs->ty) || !type_is_integer(n->rhs->ty))
+            n->ty = type_int();
+        } else if (is_rel_op(n->op)) {
+            if (!rel_operands_compatible(n->lhs, n->rhs))
                 diag_error_at(n->loc,
                               "invalid operands to relational operator");
+            n->ty = type_int();
         }
-        n->ty = type_int();
         n->is_lvalue = 0;
         return;
     case ND_NEG:
-        resolve_expr(n->operand);
+        resolve_expr_ctx(n->operand, CTX_RVALUE);
+        n->var_decay = 0;
         if (!type_is_integer(n->operand->ty))
             diag_error_at(n->loc, "invalid operand to unary minus");
         n->ty = type_int();
         n->is_lvalue = 0;
         return;
     case ND_ADDR:
-        resolve_expr(n->operand);
+        resolve_expr_ctx(n->operand, CTX_ADDR_OPERAND);
+        n->var_decay = 0;
         if (!expr_is_lvalue(n->operand))
             diag_error_at(n->loc, "cannot take address of non-lvalue");
         n->ty = type_ptr(n->operand->ty);
         n->is_lvalue = 0;
         return;
     case ND_DEREF:
-        resolve_expr(n->operand);
+        resolve_expr_ctx(n->operand, CTX_RVALUE);
+        n->var_decay = 0;
         if (!type_is_pointer(n->operand->ty)) {
             diag_error_at(n->loc, "cannot dereference non-pointer type '%s'",
                           type_name(n->operand->ty));
@@ -371,7 +461,7 @@ static void resolve_expr(Node *n)
         } else if (type_is_void(n->operand->ty->base)) {
             diag_error_at(n->loc, "dereference of void pointer");
             diag_note_at(n->loc,
-                         "xcc 0.0.1.3 supports void * conversions but not void * dereference");
+                         "xcc supports void * conversions but not void * dereference");
             n->ty = type_int();
         } else {
             n->ty = n->operand->ty->base;
@@ -404,7 +494,8 @@ static void resolve_stmt(Node *s)
 {
     switch (s->kind) {
     case ND_DECL:
-        if (!type_is_object(s->ty))
+        if (!type_is_object(s->ty) || type_is_void(s->ty) ||
+            (type_is_array(s->ty) && type_is_void(type_array_elem(s->ty))))
             diag_error_at(s->loc,
                           "variable '%s' has non-object type '%s'",
                           s->name, type_name(s->ty));
@@ -418,7 +509,7 @@ static void resolve_stmt(Node *s)
             s->offset = add_local(s->name, s->ty, s->loc);
         }
         /* The name is in scope within its own initializer (C semantics). */
-        resolve_expr(s->init);
+        resolve_expr_ctx(s->init, CTX_RVALUE);
         if (s->init && !expr_assignable_to(s->ty, s->init))
             diag_error_at(s->loc,
                           "incompatible types initializing '%s' with '%s'",
@@ -430,7 +521,7 @@ static void resolve_stmt(Node *s)
                 diag_error_at(s->loc,
                               "void function '%s' should not return a value",
                               cur_fname);
-            resolve_expr(s->operand);
+            resolve_expr_ctx(s->operand, CTX_RVALUE);
             if (!type_is_void(cur_ret_ty) &&
                 !expr_assignable_to(cur_ret_ty, s->operand))
                 diag_error_at(s->loc,
@@ -440,25 +531,25 @@ static void resolve_stmt(Node *s)
         /* bare `return;` is legal C89 in any function (UB only if used). */
         return;
     case ND_EXPR_STMT:
-        resolve_expr(s->operand);
+        resolve_expr_ctx(s->operand, CTX_RVALUE);
         return;
     case ND_IF:
-        resolve_expr(s->cond);
+        resolve_expr_ctx(s->cond, CTX_RVALUE);
         require_scalar_cond(s->cond);
         resolve_stmt(s->then_body);
         if (s->else_body)
             resolve_stmt(s->else_body);
         return;
     case ND_WHILE:
-        resolve_expr(s->cond);
+        resolve_expr_ctx(s->cond, CTX_RVALUE);
         require_scalar_cond(s->cond);
         resolve_stmt(s->then_body);
         return;
     case ND_FOR:
-        resolve_expr(s->init);
-        resolve_expr(s->cond);
+        resolve_expr_ctx(s->init, CTX_RVALUE);
+        resolve_expr_ctx(s->cond, CTX_RVALUE);
         require_scalar_cond(s->cond);
-        resolve_expr(s->step);
+        resolve_expr_ctx(s->step, CTX_RVALUE);
         resolve_stmt(s->then_body);
         return;
     case ND_BLOCK:
@@ -673,8 +764,10 @@ static void sema_function(Function *fn)
      * the stack and referenced in place at positive offsets (16(%rbp)...). */
     int i = 0;
     for (Param *p = fn->params; p; p = p->next, i++) {
+        Type *pty = type_decay(p->ty);
+
         if (i < 6)
-            p->offset = alloc_slot();
+            p->offset = alloc_local(pty);
         else
             p->offset = 16 + 8 * (i - 6);
         if (p->name) {
@@ -682,7 +775,7 @@ static void sema_function(Function *fn)
                 diag_error_at(fn->loc, "redefinition of parameter '%s'",
                               p->name);
             else
-                bind_local(p->name, p->ty, p->offset, fn->loc);
+                bind_local(p->name, pty, p->offset, fn->loc);
         }
     }
 

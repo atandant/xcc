@@ -18,6 +18,26 @@ run|addr_ptr_truthy.c|1|
 run|addr_ptr_while_truthy.c|1|
 run|addr_same_var_eq.c|1|
 run|arith.c|13|
+run|array_addr_of_elem.c|3|
+run|array_assign_ptr.c|6|
+run|array_char_store.c|65|
+run|array_char_stride.c|99|
+run|array_condition_decay.c|1|
+run|array_decay_to_ptr.c|7|
+run|array_deref_ptr_arith.c|10|
+run|array_int_adjacent.c|2|
+run|array_int_store_load.c|3|
+run|array_param_bracket_n.c|4|
+run|array_param_decay.c|11|
+run|array_ptr_arith_int_plus.c|5|
+run|array_ptr_arith_minus.c|3|
+run|array_ptr_arith_plus.c|9|
+run|array_ptr_eq_same_array.c|1|
+run|array_ptr_from_subscript.c|8|
+run|array_ptr_relational.c|6|
+run|array_return_ptr_param.c|5|
+run|array_subscript_assign.c|42|
+run|array_while_index.c|6|
 run|assign_chain.c|12|
 run|assign_expr.c|7|
 run|block_comment_multiline.c|12|
@@ -61,6 +81,8 @@ xcc-error|error_addr_non_lvalue.c|1|cannot take address of non-lvalue
 xcc-error|error_addr_ptr_eq_int.c|1|comparison between pointer type 'int *' and integer type 'int'
 xcc-error|error_addr_ptr_ordering.c|1|invalid operands to relational operator
 xcc-error|error_addr_wrong_ptr_level.c|1|incompatible types assigning 'int *' to 'int * *'
+xcc-error|error_array_assign.c|1|incompatible types assigning 'int *' to 'int[2]'
+xcc-error|error_array_to_scalar.c|1|incompatible types assigning 'int *' to 'int'
 xcc-error|error_assign_int_to_pointer.c|1|incompatible types assigning 'int' to 'int *'
 xcc-error|error_assign_pointer_to_int.c|1|incompatible types assigning 'int *' to 'int'
 xcc-error|error_block_scope_expired.c|1|use of undeclared identifier 'x'
@@ -74,6 +96,7 @@ xcc-error|error_conflicting_return_type.c|1|conflicting types for 'f'
 xcc-error|error_deref_int.c|1|cannot dereference non-pointer type 'int'
 xcc-error|error_deref_void_pointer.c|1|dereference of void pointer
 xcc-error|error_function_redefinition.c|1|redefinition of 'f'
+xcc-error|error_neg_array.c|1|invalid operand to unary minus
 xcc-error|error_non_lvalue_arith_assign.c|1|assignment to non-lvalue
 xcc-error|error_non_lvalue_assign.c|1|assignment to non-lvalue
 xcc-error|error_non_lvalue_call_assign.c|1|assignment to non-lvalue
@@ -81,10 +104,13 @@ xcc-error|error_non_lvalue_cmp_assign.c|1|assignment to non-lvalue
 xcc-error|error_non_lvalue_neg_assign.c|1|assignment to non-lvalue
 xcc-error|error_param_redefinition.c|1|redefinition of parameter 'x'
 xcc-error|error_parse_missing_semicolon.c|1|syntax error, unexpected RETURN
+xcc-error|error_ptr_mul_int.c|1|invalid operands to arithmetic operator
+xcc-error|error_ptr_plus_ptr.c|1|invalid operands to arithmetic operator
 xcc-error|error_redeclaration.c|1|redeclaration of 'a'
 xcc-error|error_redeclaration_nested_same_scope.c|1|redeclaration of 'x'
 xcc-error|error_return_pointer_from_int.c|1|returning 'int *' from a function returning 'int'
 xcc-error|error_stray_char.c|1|stray '@' in program
+xcc-error|error_subscript_nonscalar.c|1|cannot dereference non-pointer type 'int'
 xcc-error|error_too_few_args.c|1|too few arguments to function 'add'
 xcc-error|error_too_many_args.c|1|too many arguments to function 'id'
 xcc-error|error_ty_ptr_eq_mismatch.c|1|comparison between incompatible pointer types 'int *' and 'char *'

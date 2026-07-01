@@ -4,6 +4,7 @@
 
 #include <assert.h>
 #include <limits.h>
+#include <string.h>
 
 /* Stack-machine code generator: expression results live in %rax, and complex
  * sub-expressions are spilled to reserved frame slots (Option B). Unlike a
@@ -24,6 +25,12 @@ static int depth;           /* current expression-temp depth        */
 /* System V integer argument registers, in order. */
 static const char *argreg64[6] = {
     "%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"
+};
+static const char *argreg32[6] = {
+    "%edi", "%esi", "%edx", "%ecx", "%r8d", "%r9d"
+};
+static const char *argreg8[6] = {
+    "%dil", "%sil", "%dl", "%cl", "%r8b", "%r9b"
 };
 
 static void gen_expr(Node *n);
@@ -57,6 +64,11 @@ static int is_imm(Node *n)
 static int is_local(Node *n)
 {
     return n->kind == ND_VAR;
+}
+
+static int is_int_local(Node *n)
+{
+    return is_local(n) && n->ty && type_is_integer(n->ty);
 }
 
 static int is_zero(Node *n)
@@ -96,6 +108,8 @@ static void emit_load_slot(Type *ty, int offset)
 {
     if (type_is_char(ty))
         fprintf(o, "  movzbl %d(%%rbp), %%eax\n", offset);
+    else if (type_is_integer(ty))
+        fprintf(o, "  movslq %d(%%rbp), %%rax\n", offset);
     else
         fprintf(o, "  mov %d(%%rbp), %%rax\n", offset);
 }
@@ -104,14 +118,48 @@ static void emit_store_slot(Type *ty, int offset)
 {
     if (type_is_char(ty))
         fprintf(o, "  mov %%al, %d(%%rbp)\n", offset);
+    else if (type_is_integer(ty))
+        fprintf(o, "  mov %%eax, %d(%%rbp)\n", offset);
     else
         fprintf(o, "  mov %%rax, %d(%%rbp)\n", offset);
+}
+
+static void emit_var_rvalue(Node *n, const char *reg)
+{
+    assert(n->kind == ND_VAR);
+    if (n->var_decay)
+        fprintf(o, "  lea %d(%%rbp), %s\n", n->offset, reg);
+    else {
+        emit_load_slot(n->ty, n->offset);
+        if (strcmp(reg, "%rax") != 0)
+            fprintf(o, "  mov %%rax, %s\n", reg);
+    }
 }
 
 static void emit_load_local(Node *n)
 {
     assert(n->kind == ND_VAR);
-    emit_load_slot(n->ty, n->offset);
+    emit_var_rvalue(n, "%rax");
+}
+
+static int argreg_index(const char *reg64)
+{
+    for (int i = 0; i < 6; i++)
+        if (strcmp(reg64, argreg64[i]) == 0)
+            return i;
+    return 0;
+}
+
+static void emit_reg_to_slot(const char *reg64, Type *ty, int offset)
+{
+    int i = argreg_index(reg64);
+
+    if (type_is_char(ty))
+        fprintf(o, "  mov %s, %d(%%rbp)\n", argreg8[i], offset);
+    else if (type_is_integer(ty))
+        fprintf(o, "  mov %s, %d(%%rbp)\n", argreg32[i], offset);
+    else
+        fprintf(o, "  mov %s, %d(%%rbp)\n", reg64, offset);
 }
 
 static void emit_arg_to_reg(Node *n, const char *reg)
@@ -121,8 +169,7 @@ static void emit_arg_to_reg(Node *n, const char *reg)
         fprintf(o, "  mov $%ld, %s\n", n->val, reg);
         return;
     case ND_VAR:
-        emit_load_slot(n->ty, n->offset);
-        fprintf(o, "  mov %%rax, %s\n", reg);
+        emit_var_rvalue(n, reg);
         return;
     default:
         assert(0 && "not a direct argument");
@@ -137,7 +184,7 @@ static void emit_arg_to_stack(Node *n, int off)
         fprintf(o, "  mov %%rax, %d(%%rsp)\n", off);
         return;
     case ND_VAR:
-        emit_load_slot(n->ty, n->offset);
+        emit_var_rvalue(n, "%rax");
         fprintf(o, "  mov %%rax, %d(%%rsp)\n", off);
         return;
     default:
@@ -173,20 +220,24 @@ static void emit_setcc(BinOp op)
     fprintf(o, "  movzbq %%al, %%rax\n");
 }
 
-/* Typed value load/store: width comes from Type. Locals still live in
- * 8-byte slots; char uses the low byte only (unsigned, movzbl/movb). */
+/* Typed memory load/store at address in %rax; char is unsigned (movzbl). */
 static void emit_load(Type *ty)
 {
     if (type_is_char(ty))
         fprintf(o, "  movzbl (%%rax), %%eax\n");
+    else if (type_is_integer(ty))
+        fprintf(o, "  movslq (%%rax), %%rax\n");
     else
         fprintf(o, "  mov (%%rax), %%rax\n");
 }
 
+/* Store value register to address in %rdi (assignment / store through ptr). */
 static void emit_store(Type *ty)
 {
     if (type_is_char(ty))
         fprintf(o, "  mov %%al, (%%rdi)\n");
+    else if (type_is_integer(ty))
+        fprintf(o, "  mov %%eax, (%%rdi)\n");
     else
         fprintf(o, "  mov %%rax, (%%rdi)\n");
 }
@@ -274,6 +325,56 @@ static void gen_call(Node *n)
     /* return value is already in %rax */
 }
 
+static int ptr_elem_size(Type *ptr_ty)
+{
+    Type *elem = type_ptr_elem(ptr_ty);
+    return elem ? type_size(elem) : 1;
+}
+
+static int is_ptr_int_arith(BinOp op, Node *lhs, Node *rhs)
+{
+    if (op == OP_ADD)
+        return (type_is_pointer(lhs->ty) && type_is_integer(rhs->ty)) ||
+               (type_is_integer(lhs->ty) && type_is_pointer(rhs->ty));
+    if (op == OP_SUB)
+        return type_is_pointer(lhs->ty) && type_is_integer(rhs->ty);
+    return 0;
+}
+
+static void gen_ptr_int_arith(BinOp op, Node *lhs, Node *rhs)
+{
+    Node *ptr = type_is_pointer(lhs->ty) ? lhs : rhs;
+    Node *idx = type_is_pointer(lhs->ty) ? rhs : lhs;
+    int scale = ptr_elem_size(ptr->ty);
+
+    gen_expr(idx);
+    if (scale > 1)
+        fprintf(o, "  imul $%d, %%rax\n", scale);
+    spill();
+    gen_expr(ptr);
+    reload("%rdi");
+    if (op == OP_ADD)
+        fprintf(o, "  add %%rdi, %%rax\n");
+    else
+        fprintf(o, "  sub %%rdi, %%rax\n");
+}
+
+static void gen_ptr_diff(Node *lhs, Node *rhs)
+{
+    int scale = ptr_elem_size(lhs->ty);
+
+    gen_expr(rhs);
+    spill();
+    gen_expr(lhs);
+    reload("%rdi");
+    fprintf(o, "  sub %%rdi, %%rax\n");
+    if (scale > 1) {
+        fprintf(o, "  mov $%d, %%rcx\n", scale);
+        fprintf(o, "  cqo\n");
+        fprintf(o, "  idiv %%rcx\n");
+    }
+}
+
 static int fold_binop(BinOp op, Node *lhs, Node *rhs)
 {
     if (is_zero(rhs)) {
@@ -319,6 +420,11 @@ static int fold_binop(BinOp op, Node *lhs, Node *rhs)
     return 0;
 }
 
+static void emit_cltq(void)
+{
+    fprintf(o, "  cltq\n");
+}
+
 static int gen_binop_fast_rhs(BinOp op, Node *lhs, Node *rhs)
 {
     if (op == OP_DIV || op == OP_MOD)
@@ -331,13 +437,16 @@ static int gen_binop_fast_rhs(BinOp op, Node *lhs, Node *rhs)
         gen_expr(lhs);
         switch (op) {
         case OP_ADD:
-            fprintf(o, "  add $%ld, %%rax\n", rhs->val);
+            fprintf(o, "  add $%ld, %%eax\n", rhs->val);
+            emit_cltq();
             return 1;
         case OP_SUB:
-            fprintf(o, "  sub $%ld, %%rax\n", rhs->val);
+            fprintf(o, "  sub $%ld, %%eax\n", rhs->val);
+            emit_cltq();
             return 1;
         case OP_MUL:
-            fprintf(o, "  imul $%ld, %%rax\n", rhs->val);
+            fprintf(o, "  imul $%ld, %%eax\n", rhs->val);
+            emit_cltq();
             return 1;
         case OP_EQ:
         case OP_NE:
@@ -345,7 +454,7 @@ static int gen_binop_fast_rhs(BinOp op, Node *lhs, Node *rhs)
         case OP_LE:
         case OP_GT:
         case OP_GE:
-            fprintf(o, "  cmp $%ld, %%rax\n", rhs->val);
+            fprintf(o, "  cmp $%ld, %%eax\n", rhs->val);
             emit_setcc(op);
             return 1;
         default:
@@ -353,17 +462,20 @@ static int gen_binop_fast_rhs(BinOp op, Node *lhs, Node *rhs)
         }
     }
 
-    if (is_local(rhs)) {
+    if (is_int_local(rhs)) {
         gen_expr(lhs);
         switch (op) {
         case OP_ADD:
-            fprintf(o, "  add %d(%%rbp), %%rax\n", rhs->offset);
+            fprintf(o, "  addl %d(%%rbp), %%eax\n", rhs->offset);
+            emit_cltq();
             return 1;
         case OP_SUB:
-            fprintf(o, "  sub %d(%%rbp), %%rax\n", rhs->offset);
+            fprintf(o, "  subl %d(%%rbp), %%eax\n", rhs->offset);
+            emit_cltq();
             return 1;
         case OP_MUL:
-            fprintf(o, "  imul %d(%%rbp), %%rax\n", rhs->offset);
+            fprintf(o, "  imull %d(%%rbp), %%eax\n", rhs->offset);
+            emit_cltq();
             return 1;
         case OP_EQ:
         case OP_NE:
@@ -371,7 +483,7 @@ static int gen_binop_fast_rhs(BinOp op, Node *lhs, Node *rhs)
         case OP_LE:
         case OP_GT:
         case OP_GE:
-            fprintf(o, "  cmp %d(%%rbp), %%rax\n", rhs->offset);
+            fprintf(o, "  cmpl %d(%%rbp), %%eax\n", rhs->offset);
             emit_setcc(op);
             return 1;
         default:
@@ -394,14 +506,16 @@ static int gen_binop_commuted(BinOp op, Node *lhs, Node *rhs)
         gen_expr(rhs);
         switch (op) {
         case OP_ADD:
-            fprintf(o, "  add $%ld, %%rax\n", lhs->val);
+            fprintf(o, "  add $%ld, %%eax\n", lhs->val);
+            emit_cltq();
             return 1;
         case OP_MUL:
-            fprintf(o, "  imul $%ld, %%rax\n", lhs->val);
+            fprintf(o, "  imul $%ld, %%eax\n", lhs->val);
+            emit_cltq();
             return 1;
         case OP_EQ:
         case OP_NE:
-            fprintf(o, "  cmp $%ld, %%rax\n", lhs->val);
+            fprintf(o, "  cmp $%ld, %%eax\n", lhs->val);
             emit_setcc(op);
             return 1;
         default:
@@ -409,18 +523,20 @@ static int gen_binop_commuted(BinOp op, Node *lhs, Node *rhs)
         }
     }
 
-    if (is_local(lhs)) {
+    if (is_int_local(lhs)) {
         gen_expr(rhs);
         switch (op) {
         case OP_ADD:
-            fprintf(o, "  add %d(%%rbp), %%rax\n", lhs->offset);
+            fprintf(o, "  addl %d(%%rbp), %%eax\n", lhs->offset);
+            emit_cltq();
             return 1;
         case OP_MUL:
-            fprintf(o, "  imul %d(%%rbp), %%rax\n", lhs->offset);
+            fprintf(o, "  imull %d(%%rbp), %%eax\n", lhs->offset);
+            emit_cltq();
             return 1;
         case OP_EQ:
         case OP_NE:
-            fprintf(o, "  cmp %d(%%rbp), %%rax\n", lhs->offset);
+            fprintf(o, "  cmpl %d(%%rbp), %%eax\n", lhs->offset);
             emit_setcc(op);
             return 1;
         default:
@@ -431,12 +547,56 @@ static int gen_binop_commuted(BinOp op, Node *lhs, Node *rhs)
     return 0;
 }
 
+static int needs_i64_binop(Node *lhs, Node *rhs)
+{
+    return (is_imm(lhs) && !fits_i32(lhs->val)) ||
+           (is_imm(rhs) && !fits_i32(rhs->val));
+}
+
 static void gen_binop_slow(BinOp op, Node *lhs, Node *rhs)
 {
+    int is_int = type_is_integer(lhs->ty) && type_is_integer(rhs->ty);
+
     gen_expr(rhs);
     spill();
     gen_expr(lhs);
-    reload("%rdi"); /* %rax = lhs, %rdi = rhs */
+    reload("%rdi");
+
+    if (is_int && !needs_i64_binop(lhs, rhs)) {
+        switch (op) {
+        case OP_ADD:
+            fprintf(o, "  add %%edi, %%eax\n");
+            emit_cltq();
+            return;
+        case OP_SUB:
+            fprintf(o, "  sub %%edi, %%eax\n");
+            emit_cltq();
+            return;
+        case OP_MUL:
+            fprintf(o, "  imul %%edi, %%eax\n");
+            emit_cltq();
+            return;
+        case OP_DIV:
+            fprintf(o, "  cdq\n");
+            fprintf(o, "  idiv %%edi\n");
+            emit_cltq();
+            return;
+        case OP_MOD:
+            fprintf(o, "  cdq\n");
+            fprintf(o, "  idiv %%edi\n");
+            fprintf(o, "  movslq %%edx, %%rax\n");
+            return;
+        case OP_EQ:
+        case OP_NE:
+        case OP_LT:
+        case OP_LE:
+        case OP_GT:
+        case OP_GE:
+            fprintf(o, "  cmp %%edi, %%eax\n");
+            emit_setcc(op);
+            return;
+        }
+    }
 
     switch (op) {
     case OP_ADD:
@@ -471,12 +631,22 @@ static void gen_binop_slow(BinOp op, Node *lhs, Node *rhs)
 
 static void gen_binop(BinOp op, Node *lhs, Node *rhs)
 {
+    if (type_is_pointer(lhs->ty) && type_is_pointer(rhs->ty) && op == OP_SUB) {
+        gen_ptr_diff(lhs, rhs);
+        return;
+    }
+
+    if (is_ptr_int_arith(op, lhs, rhs)) {
+        gen_ptr_int_arith(op, lhs, rhs);
+        return;
+    }
+
     if (fold_binop(op, lhs, rhs))
         return;
 
     if (is_cmp(op) && is_zero(rhs)) {
         gen_expr(lhs);
-        fprintf(o, "  test %%rax, %%rax\n");
+        fprintf(o, "  cmpl $0, %%eax\n");
         emit_setcc(op);
         return;
     }
@@ -649,7 +819,7 @@ static void gen_function(Function *fn)
     int i = 0;
     for (Param *p = fn->params; p; p = p->next, i++) {
         if (i < 6)
-            fprintf(o, "  mov %s, %d(%%rbp)\n", argreg64[i], p->offset);
+            emit_reg_to_slot(argreg64[i], type_decay(p->ty), p->offset);
     }
 
     for (Node *s = fn->body; s; s = s->next)

@@ -1,6 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: MIT
 # Compile and run every example with xcc + gcc.
+# Files marked with "xcc-expect-error" are expected to fail xcc and only
+# print their diagnostics (see examples/errnop.c).
 set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
@@ -16,10 +18,29 @@ fi
 
 pass=0
 fail=0
+demo=0
+
+is_error_demo() {
+    grep -q 'xcc-expect-error' "$1"
+}
 
 for src in "$EXDIR"/*.c; do
     [ -e "$src" ] || continue
     name=$(basename "$src" .c)
+
+    if is_error_demo "$src"; then
+        if "$XCC" "$src" -o "$OUTDIR/$name.s" 2> "$OUTDIR/$name.err"; then
+            echo "FAIL $name (expected xcc compile error)"
+            fail=$((fail + 1))
+            continue
+        fi
+        echo "ok   $name -> expected compile failure ($(
+            grep -c ': error: ' "$OUTDIR/$name.err" || true
+        ) errors); diagnostics:"
+        sed 's/^/  /' "$OUTDIR/$name.err"
+        demo=$((demo + 1))
+        continue
+    fi
 
     if ! "$XCC" "$src" -o "$OUTDIR/$name.s" 2> "$OUTDIR/$name.err"; then
         echo "FAIL $name (xcc)"
@@ -45,5 +66,5 @@ for src in "$EXDIR"/*.c; do
 done
 
 echo "----"
-echo "$pass passed, $fail failed"
+echo "$pass runnable, $demo error demo(s), $fail failed"
 [ "$fail" -eq 0 ]
