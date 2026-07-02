@@ -3,6 +3,16 @@
 
 #include "type.h"
 
+static Node *fold_to_num(long v, Type *ty, SourceLoc loc)
+{
+    Node *n = node_num(v, loc);
+
+    n->ty = ty;
+    if (type_is_long(ty))
+        n->has_long_suffix = 1;
+    return n;
+}
+
 static int eval_binop(BinOp op, long a, long b, long *out)
 {
     switch (op) {
@@ -55,8 +65,7 @@ int cosfold_expr(Node **np)
         if (foldable_binop(n)) {
             long v;
             if (eval_binop(n->op, n->lhs->val, n->rhs->val, &v)) {
-                *np = node_num(v, n->loc);
-                (*np)->ty = n->ty;
+                *np = fold_to_num(v, n->ty, n->loc);
                 return 1;
             }
         }
@@ -65,8 +74,7 @@ int cosfold_expr(Node **np)
         changed |= cosfold_expr(&n->operand);
         if (n->operand && n->operand->kind == ND_NUM &&
             type_is_integer(n->ty)) {
-            *np = node_num(-n->operand->val, n->loc);
-            (*np)->ty = n->ty;
+            *np = fold_to_num(-n->operand->val, n->ty, n->loc);
             return 1;
         }
         return changed;
@@ -86,8 +94,10 @@ int cosfold_expr(Node **np)
             long v = n->operand->val;
             if (type_is_char(n->ty))
                 v &= 0xFF;
-            *np = node_num(v, n->loc);
-            (*np)->ty = n->ty;
+            else if (type_is_integer(n->ty) &&
+                     type_int_width(n->ty) == 4)
+                v = (int)v;
+            *np = fold_to_num(v, n->ty, n->loc);
             return 1;
         }
         return changed;

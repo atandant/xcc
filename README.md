@@ -30,25 +30,30 @@ make
 ./examples/build.sh
 ```
 
-## Status (v0.0.1.4)
+## Status (v0.0.1.5)
 
 The pipeline runs end to end (lex → parse → sema → codegen → `.s` → gcc) with
-a typed semantic layer and 190+ acceptance tests.
+a typed semantic layer and 310+ acceptance tests.
 
 | Supported | Not yet |
 | --- | --- |
-| `int`, `char`, `void`, pointers (`*`, `&`, dereference) | multi-dimensional arrays |
-| 1D arrays, `[]` subscript, `ptr ± int`, param decay | pointer arithmetic beyond `±` / `[]` |
+| `int`, `char`, `long`, `void`, pointers (`*`, `&`, dereference) | parenthesized declarators (`int (*p)[3]`) |
+| N-dimensional arrays, `[]` subscript, `ptr ± int/long`, param decay | pointer arithmetic beyond `±` / `[]` |
 | typed declarations, parameters, returns | `sizeof`, brace initializers |
-| casts `(type)expr`, `(void)expr` discard | `sizeof`, `long`, unsigned types |
+| casts `(type)expr`, `(void)expr` discard | unsigned types, `short`, `long long` |
 | function calls (prototyped arg checking, void `*` conversions) | structs, unions, enums, `typedef` |
 | `if` / `else`, `while`, `for`, blocks | preprocessor (`#include`, `#define`) |
 | `+ - * / %`, unary `-`, comparisons | multiple translation units |
 | pointer `==` / `!=` / ordering, truthiness, `p == 0` | `-W` CLI flags |
+| `L`/`l` literal suffixes; unsuffixed decimals → `int` or `long` | |
+| `int`/`long` promotions; `ptr - ptr` → `long` | |
 | warnings (`implicit` decl, unprototyped calls, `char` overflow, …) | |
 | `file:line:col` diagnostics, carets, `note:` spans, color (`auto`) | |
 
-> Locals use type-aware stack layout (`int` is 4 bytes, `char` is 1 byte).
+> Locals use type-aware stack layout (`char` 1 byte, `int` 4 bytes, `long` and
+> pointers 8 bytes). On x86-64 Linux (SysV LP64), `long` is 64 bits — the same
+> width as pointers.
+>
 > `auto` arrays are not zero-initialized (faithful C89).
 
 ## How it works
@@ -86,6 +91,7 @@ committed.
 - `0.0.1.2` — functions, parameters, calls (System V ABI) ✓
 - `0.0.1.3` — type system, pointers, `char`, `void *` ✓
 - `0.0.1.4` — 1D arrays, subscript, pointer arithmetic, layout fix ✓
+- `0.0.1.5` — `long` (LP64 64-bit), literal suffixes, promotions, `ptr - ptr` ✓
 - later — preprocessor, structs, and enough to compile real projects
 
 ## License

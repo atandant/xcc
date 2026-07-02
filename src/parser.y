@@ -25,7 +25,7 @@ Function *g_program = NULL;
 }
 
 %union {
-    long num;
+    struct { long val; int is_long; } num;
     char *str;
     Node *node;
     NodeList *list;
@@ -38,7 +38,7 @@ Function *g_program = NULL;
 
 %token <num> NUM
 %token <str> IDENT
-%token INT CHAR VOID RETURN IF ELSE WHILE FOR
+%token INT CHAR LONG VOID RETURN IF ELSE WHILE FOR
 %token EQ NE LE GE
 
 %type <node> expr expr_opt stmt
@@ -76,6 +76,7 @@ toplevel:
 type:
     INT                      { $$ = type_int(); }
   | CHAR                     { $$ = type_char(); }
+  | LONG                     { $$ = type_long(); }
   | VOID                     { $$ = type_void(); }
   | type '*'                 { $$ = type_ptr($1); }
   ;
@@ -92,7 +93,7 @@ declarator:
             if ($$.ndims >= MAX_DECL_DIMS) {
                 diag_error_at(LOC(@3), "too many array dimensions");
             } else {
-                $$.dims[$$.ndims] = $3;
+                $$.dims[$$.ndims] = $3.val;
                 $$.ndims++;
             }
         }
@@ -164,7 +165,8 @@ expr_opt:
   ;
 
 expr:
-    NUM                      { $$ = node_num($1, LOC(@1)); }
+    NUM                      { $$ = node_num($1.val, LOC(@1));
+                               $$->has_long_suffix = $1.is_long; }
   | IDENT                    { $$ = node_var($1, LOC(@1)); }
   | IDENT '(' arg_clause ')' { $$ = node_call($1, $3, LOC(@1)); }
   | expr '=' expr            { $$ = node_assign($1, $3, LOC(@2)); }

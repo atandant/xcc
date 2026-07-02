@@ -5,15 +5,17 @@
 #include <string.h>
 #include <stdio.h>
 
-/* char is 1 byte; int is 4 bytes; pointers are 8 on x86-64 SysV. */
+/* char is 1 byte; int is 4 bytes; long is 8 bytes on x86-64 LP64 SysV. */
 
-static Type ty_void = { TY_VOID, 0, 1, NULL, 0, NULL, NULL, 0, 0 };
-static Type ty_char = { TY_CHAR, 1, 1, NULL, 0, NULL, NULL, 0, 0 };
-static Type ty_int  = { TY_INT,  4, 4, NULL, 0, NULL, NULL, 0, 0 };
+static Type ty_void = { TY_VOID, 0, 0, 0, 1, NULL, 0, NULL, NULL, 0, 0 };
+static Type ty_char = { TY_INT, IW_CHAR, IS_SIGNED, 1, 1, NULL, 0, NULL, NULL, 0, 0 };
+static Type ty_int  = { TY_INT, IW_INT,  IS_SIGNED, 4, 4, NULL, 0, NULL, NULL, 0, 0 };
+static Type ty_long = { TY_INT, IW_LONG, IS_SIGNED, 8, 8, NULL, 0, NULL, NULL, 0, 0 };
 
 Type *type_void(void) { return &ty_void; }
 Type *type_char(void) { return &ty_char; }
 Type *type_int(void)  { return &ty_int; }
+Type *type_long(void) { return &ty_long; }
 
 Type *type_ptr(Type *base)
 {
@@ -53,11 +55,21 @@ Type *type_func(Type *ret, Type **params, int nparams, int prototyped)
 
 int type_is_void(Type *ty)    { return ty && ty->kind == TY_VOID; }
 
-int type_is_char(Type *ty)    { return ty && ty->kind == TY_CHAR; }
-
-int type_is_integer(Type *ty)
+int type_is_char(Type *ty)
 {
-    return ty && (ty->kind == TY_CHAR || ty->kind == TY_INT);
+    return ty && ty->kind == TY_INT && ty->width == IW_CHAR;
+}
+
+int type_is_long(Type *ty)
+{
+    return ty && ty->kind == TY_INT && ty->width == IW_LONG;
+}
+
+int type_is_integer(Type *ty) { return ty && ty->kind == TY_INT; }
+
+int type_is_signed(Type *ty)
+{
+    return ty && ty->kind == TY_INT && ty->sign == IS_SIGNED;
 }
 
 int type_is_pointer(Type *ty) { return ty && ty->kind == TY_PTR; }
@@ -85,9 +97,9 @@ int type_same(Type *a, Type *b)
 
     switch (a->kind) {
     case TY_VOID:
-    case TY_CHAR:
-    case TY_INT:
         return 1;
+    case TY_INT:
+        return a->width == b->width && a->sign == b->sign;
     case TY_PTR:
         return type_same(a->base, b->base);
     case TY_ARRAY:
@@ -145,8 +157,69 @@ int type_assignable(Type *dst, Type *src)
 
 /* ---- queries ---- */
 
-int type_size(Type *ty)  { return ty ? ty->size : 0; }
-int type_align(Type *ty) { return ty ? ty->align : 1; }
+int type_int_width(Type *ty)
+{
+    if (!ty || ty->kind != TY_INT)
+        return 0;
+
+    switch (ty->width) {
+    case IW_CHAR: return 1;
+    case IW_INT:  return 4;
+    case IW_LONG: return 8;
+    }
+    return 0;
+}
+
+int type_int_rank(Type *ty)
+{
+    if (!ty || ty->kind != TY_INT)
+        return 0;
+
+    switch (ty->width) {
+    case IW_CHAR: return 1;
+    case IW_INT:  return 2;
+    case IW_LONG: return 3;
+    }
+    return 0;
+}
+
+Type *type_int_promote(Type *ty)
+{
+    if (!ty || ty->kind != TY_INT)
+        return ty;
+    if (ty->width == IW_CHAR)
+        return type_int();
+    return ty;
+}
+
+Type *type_arith_convert(Type *a, Type *b)
+{
+    a = type_int_promote(a);
+    b = type_int_promote(b);
+    if (!a || !b || !type_is_integer(a) || !type_is_integer(b))
+        return type_int();
+    if (a->width == IW_LONG || b->width == IW_LONG)
+        return type_long();
+    return type_int();
+}
+
+int type_size(Type *ty)
+{
+    if (!ty)
+        return 0;
+    if (ty->kind == TY_INT)
+        return type_int_width(ty);
+    return ty->size;
+}
+
+int type_align(Type *ty)
+{
+    if (!ty)
+        return 1;
+    if (ty->kind == TY_INT)
+        return type_int_width(ty);
+    return ty->align;
+}
 
 Type *type_decay(Type *ty)
 {
@@ -177,8 +250,13 @@ const char *type_name(Type *ty)
 
     switch (ty->kind) {
     case TY_VOID: return "void";
-    case TY_CHAR: return "char";
-    case TY_INT:  return "int";
+    case TY_INT:
+        switch (ty->width) {
+        case IW_CHAR: return "char";
+        case IW_INT:  return "int";
+        case IW_LONG: return "long";
+        }
+        return "integer";
     case TY_PTR: {
         const char *inner = type_name(ty->base);
         size_t n = strlen(inner) + 3;

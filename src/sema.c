@@ -214,6 +214,17 @@ static int is_void_ptr_type(Type *ty)
 }
 
 /* C89 3.4 / 3.2.2.3: evaluate an integral constant expression (ICE). */
+static void ice_apply_cast(Type *dst, long *val)
+{
+    if (!dst || !val)
+        return;
+    if (type_is_char(dst))
+        *val &= 0xFF;
+    else if (type_is_integer(dst) && type_int_width(dst) == 4)
+        *val = (int)*val;
+    /* long and wider targets keep the full signed value */
+}
+
 static int ice_eval(Node *n, long *out)
 {
     long l, r;
@@ -233,6 +244,8 @@ static int ice_eval(Node *n, long *out)
         *out = -*out;
         return 1;
     case ND_BINOP:
+        if (!type_is_integer(n->ty))
+            return 0;
         if (!ice_eval(n->lhs, &l) || !ice_eval(n->rhs, &r))
             return 0;
         switch (n->op) {
@@ -257,8 +270,7 @@ static int ice_eval(Node *n, long *out)
             return 0;
         if (!ice_eval(n->operand, out))
             return 0;
-        if (type_is_char(n->cast_ty))
-            *out &= 0xFF;
+        ice_apply_cast(n->cast_ty, out);
         return 1;
     default:
         return 0;
@@ -438,11 +450,13 @@ static int check_arith_binop(Node *n)
     Type *r = n->rhs->ty;
 
     if (type_is_integer(l) && type_is_integer(r)) {
-        n->ty = type_int();
+        n->ty = type_arith_convert(l, r);
         return 1;
     }
 
     if (n->op == OP_ADD) {
+        /* C89 3.3.6: integer operand may be char, int, or long (after
+         * integral promotion for narrower types). */
         if (type_is_pointer(l) && type_is_integer(r)) {
             n->ty = l;
             return 1;
@@ -460,7 +474,7 @@ static int check_arith_binop(Node *n)
         }
         if (type_is_pointer(l) && type_is_pointer(r) &&
             type_compatible(l, r)) {
-            n->ty = type_int();
+            n->ty = type_long();
             return 1;
         }
     }
@@ -468,17 +482,47 @@ static int check_arith_binop(Node *n)
     return 0;
 }
 
+static void resolve_expr_inner(Node *n, ExprCtx ctx);
+
 /* Resolve names/offsets and assign a Type * (and lvalue flag) to every
- * expression node. On any error we still set a fallback type so later checks
- * don't dereference a NULL Type. */
+ * expression node, then apply array-to-pointer decay. C89 3.2.2.1: an array
+ * value used in an rvalue context is converted to a pointer to its first
+ * element. This is a general conversion, not a variable-only one, so it also
+ * fires for the intermediate array produced by `*(a + i)` when indexing a
+ * multi-dimensional array. A decayed array's value is its address, which
+ * codegen emits via gen_addr (keyed off var_decay). */
 static void resolve_expr_ctx(Node *n, ExprCtx ctx)
+{
+    if (!n)
+        return;
+
+    resolve_expr_inner(n, ctx);
+
+    if (ctx == CTX_RVALUE && type_is_array(n->ty)) {
+        n->ty = type_decay(n->ty);
+        n->is_lvalue = 0;
+        n->var_decay = 1;
+    }
+}
+
+/* On any error we still set a fallback type so later checks don't dereference
+ * a NULL Type. */
+static void resolve_expr_inner(Node *n, ExprCtx ctx)
 {
     if (!n)
         return;
 
     switch (n->kind) {
     case ND_NUM:
-        n->ty = type_int();
+        /* C89 3.1.5: an L/l suffix forces long; an unsuffixed decimal is int
+         * if it fits, otherwise long. (Overflow past signed long is caught by
+         * the lexer.) */
+        if (n->has_long_suffix)
+            n->ty = type_long();
+        else if (n->val >= -2147483647L - 1L && n->val <= 2147483647L)
+            n->ty = type_int();
+        else
+            n->ty = type_long();
         n->is_lvalue = 0;
         n->var_decay = 0;
         return;
@@ -493,16 +537,9 @@ static void resolve_expr_ctx(Node *n, ExprCtx ctx)
             n->is_lvalue = 0;
         } else {
             n->offset = off;
-            if (type_is_array(decl_ty) &&
-                (ctx == CTX_RVALUE)) {
-                n->ty = type_decay(decl_ty);
-                n->is_lvalue = 0;
-                n->var_decay = 1;
-            } else {
-                n->ty = decl_ty;
-                n->is_lvalue = (ctx != CTX_RVALUE) &&
-                               type_is_object(decl_ty);
-            }
+            n->ty = decl_ty;
+            /* Array decay (rvalue context) is applied by resolve_expr_ctx. */
+            n->is_lvalue = (ctx != CTX_RVALUE) && type_is_object(decl_ty);
         }
         return;
     }
@@ -621,7 +658,7 @@ static void resolve_expr_ctx(Node *n, ExprCtx ctx)
         n->var_decay = 0;
         if (!type_is_integer(n->operand->ty))
             diag_error_at(n->loc, "invalid operand to unary minus");
-        n->ty = type_int();
+        n->ty = type_int_promote(n->operand->ty);
         n->is_lvalue = 0;
         return;
     case ND_ADDR:

@@ -83,7 +83,7 @@ static int bind_get(int offset, long *out)
     return 0;
 }
 
-static int is_int_const(Node *n, long *out)
+static int is_integer_const(Node *n, long *out)
 {
     if (!n || n->kind != ND_NUM || !type_is_integer(n->ty))
         return 0;
@@ -216,6 +216,8 @@ static int prop_expr(Node **np, int rvalue, int allow_subst)
         type_is_integer(n->ty) && bind_get(n->offset, &v)) {
         *np = node_num(v, n->loc);
         (*np)->ty = n->ty;
+        if (type_is_long(n->ty))
+            (*np)->has_long_suffix = 1;
         return 1;
     }
 
@@ -241,7 +243,7 @@ static int prop_expr(Node **np, int rvalue, int allow_subst)
         changed |= prop_expr(&n->rhs, 1, allow_subst);
         if (allow_subst && n->lhs && n->lhs->kind == ND_VAR &&
             type_is_integer(n->lhs->ty)) {
-            if (is_int_const(n->rhs, &v))
+            if (is_integer_const(n->rhs, &v))
                 bind_set(n->lhs->offset, v);
             else
                 bind_clear_offset(n->lhs->offset);
@@ -280,7 +282,7 @@ static int prop_stmt(Node *s)
     case ND_DECL:
         changed |= prop_expr_rvalue(&s->init);
         if (type_is_integer(s->ty)) {
-            if (is_int_const(s->init, &v))
+            if (is_integer_const(s->init, &v))
                 bind_set(s->offset, v);
         }
         return changed;

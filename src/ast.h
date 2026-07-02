@@ -49,6 +49,7 @@ struct Node {
     int var_decay;     /* ND_VAR: 1 → address of array object (sema) */
 
     long val;          /* ND_NUM                                    */
+    int has_long_suffix; /* ND_NUM: literal had an L/l suffix (C89 3.1.5) */
     char *name;        /* ND_VAR, ND_DECL                           */
     int offset;        /* stack offset from %rbp (filled by sema)   */
 

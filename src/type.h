@@ -10,16 +10,27 @@
 
 typedef enum {
     TY_VOID,
-    TY_CHAR,
-    TY_INT,
+    TY_INT,     /* all integer types: char, int, long, later short/unsigned */
     TY_PTR,
     TY_ARRAY,
     TY_FUNC
 } TypeKind;
 
+typedef enum {
+    IW_CHAR,
+    IW_INT,
+    IW_LONG
+} IntWidth;
+
+typedef enum {
+    IS_SIGNED
+} IntSign;
+
 typedef struct Type Type;
 struct Type {
     TypeKind kind;
+    IntWidth width;    /* TY_INT: char / int / long                    */
+    IntSign sign;      /* TY_INT: signedness (unsigned later)          */
     int size;          /* object size in bytes (0 for void/func)        */
     int align;         /* alignment in bytes                            */
 
@@ -36,6 +47,7 @@ struct Type {
 Type *type_void(void);
 Type *type_char(void);
 Type *type_int(void);
+Type *type_long(void);
 
 /* Derived-type constructors (arena allocated). */
 Type *type_ptr(Type *base);
@@ -46,7 +58,9 @@ Type *type_func(Type *ret, Type **params, int nparams, int prototyped);
 int type_is_array(Type *ty);
 int type_is_void(Type *ty);
 int type_is_char(Type *ty);
+int type_is_long(Type *ty);
 int type_is_integer(Type *ty);
+int type_is_signed(Type *ty);
 int type_is_pointer(Type *ty);
 int type_is_scalar(Type *ty);
 int type_is_object(Type *ty);
@@ -59,6 +73,10 @@ int type_assignable(Type *dst, Type *src);
 /* Queries. */
 int type_size(Type *ty);
 int type_align(Type *ty);
+int type_int_width(Type *ty);
+int type_int_rank(Type *ty);
+Type *type_int_promote(Type *ty);
+Type *type_arith_convert(Type *a, Type *b);
 Type *type_decay(Type *ty);
 Type *type_array_elem(Type *ty);
 int type_array_count(Type *ty);

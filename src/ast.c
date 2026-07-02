@@ -237,7 +237,9 @@ Type *type_apply_declarator(Type *base, Declarator *d, SourceLoc loc)
         return base;
     }
 
-    for (i = 0; i < d->ndims; i++)
+    /* Build the type inside-out: the rightmost dimension is the innermost
+     * (element) array, so `int a[2][3]` is array[2] of array[3] of int. */
+    for (i = d->ndims - 1; i >= 0; i--)
         ty = type_array(ty, (int)d->dims[i]);
     return ty;
 }

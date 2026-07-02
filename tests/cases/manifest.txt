@@ -63,11 +63,21 @@ run|cast_char_promote_observable.c|44|
 run|cast_char_ptr_deref.c|200|
 run|cast_char_runtime.c|44|
 run|cast_char_to_int.c|65|
+run|cast_char_to_long.c|65|
 run|cast_int_noop.c|5|
 run|cast_int_to_char_trunc.c|44|
+run|cast_int_to_long.c|42|
+run|cast_int_to_long_expr.c|30|
+run|cast_int_to_long_neg.c|0|
+run|cast_long_in_arith.c|30|
+run|cast_long_roundtrip.c|100|
+run|cast_long_to_int.c|100|
+run|cast_long_to_int_narrow.c|2|
 run|cast_null_ptr_constant.c|1|
 run|cast_ptr_through_void_ptr.c|7|
 run|cast_ptr_to_int_hygiene.c|1|
+run|cast_ptr_to_long.c|0|
+run|cast_ptr_to_long_eq.c|1|
 run|cast_subscript_precedence.c|3|
 run|cast_void_discard.c|3|
 xcc-error|cast_void_operand_error.c|1|operand of cast has non-scalar type 'void'
@@ -98,6 +108,7 @@ xcc-error|error_addr_wrong_ptr_level.c|1|incompatible types assigning 'int *' to
 xcc-error|error_array_assign.c|1|incompatible types assigning 'int *' to 'int[2]'
 xcc-error|error_array_to_scalar.c|1|incompatible types assigning 'int *' to 'int'
 xcc-error|error_assign_int_to_pointer.c|1|incompatible types assigning 'int' to 'int *'
+xcc-error|error_assign_long_to_pointer.c|1|incompatible types assigning 'long' to 'int *'
 xcc-error|error_assign_pointer_to_int.c|1|incompatible types assigning 'int *' to 'int'
 xcc-error|error_block_scope_expired.c|1|use of undeclared identifier 'x'
 xcc-error|error_called_local.c|1|called object 'f' is not a function
@@ -110,6 +121,9 @@ xcc-error|error_conflicting_return_type.c|1|conflicting types for 'f'
 xcc-error|error_deref_int.c|1|cannot dereference non-pointer type 'int'
 xcc-error|error_deref_void_pointer.c|1|dereference of void pointer
 xcc-error|error_function_redefinition.c|1|redefinition of 'f'
+xcc-error|error_long_literal_overflow.c|1|integer constant out of range
+xcc-error|error_long_suffix_ll.c|1|invalid suffix on integer constant
+xcc-error|error_long_suffix_unsigned.c|1|invalid suffix on integer constant
 xcc-error|error_neg_array.c|1|invalid operand to unary minus
 xcc-error|error_non_lvalue_arith_assign.c|1|assignment to non-lvalue
 xcc-error|error_non_lvalue_assign.c|1|assignment to non-lvalue
@@ -145,6 +159,7 @@ run|for_omitted_cond_return.c|5|
 run|for_omitted_init.c|6|
 run|for_omitted_step.c|8|
 run|for_step_assignment_value.c|10|
+run|ice_long_zero_eq.c|1|
 run|if_block_then_else.c|13|
 run|if_condition_expression.c|8|
 run|if_dangling_else.c|4|
@@ -158,15 +173,66 @@ run|if_scope_shadow.c|5|
 run|large_immediate_slow_path.c|1|
 run|local_init.c|13|
 run|locals.c|12|
+run|long_arith_add.c|120|
+run|long_arith_div.c|5|
+run|long_arith_mul.c|42|
+run|long_arith_sub.c|50|
+run|long_assign_from_int.c|100|
+run|long_call_pass.c|7|
+run|long_call_return.c|77|
+run|long_chain.c|15|
+run|long_cmp_eq.c|1|
+run|long_cmp_lt.c|1|
+run|long_decl_local.c|99|
+run|long_for.c|10|
+run|long_index_array.c|8|
+run|long_index_assign.c|55|
+run|long_index_expr.c|6|
+run|long_index_for.c|15|
+run|long_index_while.c|10|
+run|long_int_boundary.c|47|
+run|long_literal_large_div2.c|4|
+run|long_literal_large_div.c|3|
+run|long_literal_mod.c|49|
+run|long_neg.c|42|
+run|long_param.c|55|
+run|long_promote_int_lhs.c|3|
+run|long_promote_int_rhs.c|3|
+run|long_ptr_char.c|90|
+run|long_ptr_minus.c|17|
+run|long_ptr_minus_var.c|33|
+run|long_ptr_plus.c|42|
+run|long_ptr_plus_var.c|11|
+run|long_ptr_rhs.c|15|
+run|long_ptr_subscript.c|99|
+run|long_return_fn.c|42|
+run|long_store_load.c|30|
+run|long_suffix_arith.c|123|
+run|long_suffix_L.c|42|
+run|long_suffix_lower_l.c|200|
+run|long_suffix_mixed.c|123|
+run|long_to_int_narrow.c|2|
+run|long_while.c|6|
 run|lvalue_reassign_chain.c|3|
 run|lvalue_var_is_lvalue.c|7|
 run|many_locals.c|27|
+run|md_2d_char.c|6|
+run|md_2d_explicit_deref.c|1|
+run|md_2d_loop_fill.c|18|
+run|md_2d_param_ptr_to_array.c|30|
+run|md_2d_param_var_index.c|8|
+run|md_2d_row_major.c|5|
+run|md_2d_store_load.c|7|
+run|md_2d_two_cells.c|12|
+run|md_2d_var_index.c|3|
+run|md_3d_store_load.c|9|
 run|mod_precedence.c|8|
 run|negative_div_mod.c|5|
 run|neg.c|3|
 run|nested_blocks_reuse_names.c|16|
 run|null_ptr_assign.c|1|
 run|null_ptr_assign_ice.c|1|
+run|null_ptr_assign_long_ice.c|1|
 run|null_ptr_assign_void_cast.c|1|
 run|null_ptr_call.c|0|
 run|null_ptr_init.c|0|
@@ -179,6 +245,9 @@ run|opt_fold_cmp_lt.c|1|
 run|opt_fold_cmp_ne.c|1|
 run|opt_fold_deep.c|10|
 run|opt_fold_div.c|25|
+run|opt_fold_long.c|120|
+run|opt_fold_long_div.c|3|
+run|opt_fold_long_mul.c|42|
 run|opt_fold_mod.c|2|
 run|opt_fold_mul.c|42|
 run|opt_fold_neg.c|8|
@@ -193,6 +262,8 @@ run|opt_prop_block.c|12|
 run|opt_prop_chain.c|1|
 run|opt_prop_expr.c|25|
 run|opt_prop_init.c|99|
+run|opt_prop_long.c|50|
+run|opt_prop_long_chain.c|15|
 run|opt_prop_multistmt.c|21|
 run|opt_prop_return_add.c|42|
 run|opt_prop_simple.c|50|
@@ -208,6 +279,15 @@ run|ptr_decl_double.c|5|
 run|ptr_decl_local.c|7|
 run|ptr_decl_param.c|0|
 run|ptr_decl_return.c|0|
+run|ptr_diff_long_adjacent.c|2|
+run|ptr_diff_long_array.c|3|
+run|ptr_diff_long_char_stride.c|5|
+run|ptr_diff_long_int_arr.c|5|
+run|ptr_diff_long_multi.c|3|
+run|ptr_diff_long_reverse.c|254|
+run|ptr_diff_long_same.c|0|
+run|ptr_diff_long_scaled.c|7|
+run|ptr_diff_long_stored.c|4|
 run|reassign.c|21|
 run|recursion_factorial.c|120|
 run|ret_const.c|42|

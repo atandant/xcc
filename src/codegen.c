@@ -104,24 +104,43 @@ static void emit_load_imm(long val)
         fprintf(o, "  mov $%ld, %%rax\n", val);
 }
 
+/* Bytes of the in-memory representation for a scalar: 1 (char), 4 (int),
+ * 8 (long / pointer). Drives every width-aware load/store below. */
+static int scalar_width(Type *ty)
+{
+    if (type_is_integer(ty))
+        return type_int_width(ty);   /* 1, 4, or 8 */
+    return 8;                        /* pointers (and any other scalar) */
+}
+
 static void emit_load_slot(Type *ty, int offset)
 {
-    if (type_is_char(ty))
+    switch (scalar_width(ty)) {
+    case 1:
         fprintf(o, "  movzbl %d(%%rbp), %%eax\n", offset);
-    else if (type_is_integer(ty))
+        return;
+    case 4:
         fprintf(o, "  movslq %d(%%rbp), %%rax\n", offset);
-    else
+        return;
+    default:
         fprintf(o, "  mov %d(%%rbp), %%rax\n", offset);
+        return;
+    }
 }
 
 static void emit_store_slot(Type *ty, int offset)
 {
-    if (type_is_char(ty))
+    switch (scalar_width(ty)) {
+    case 1:
         fprintf(o, "  mov %%al, %d(%%rbp)\n", offset);
-    else if (type_is_integer(ty))
+        return;
+    case 4:
         fprintf(o, "  mov %%eax, %d(%%rbp)\n", offset);
-    else
+        return;
+    default:
         fprintf(o, "  mov %%rax, %d(%%rbp)\n", offset);
+        return;
+    }
 }
 
 static void emit_var_rvalue(Node *n, const char *reg)
@@ -154,12 +173,17 @@ static void emit_reg_to_slot(const char *reg64, Type *ty, int offset)
 {
     int i = argreg_index(reg64);
 
-    if (type_is_char(ty))
+    switch (scalar_width(ty)) {
+    case 1:
         fprintf(o, "  mov %s, %d(%%rbp)\n", argreg8[i], offset);
-    else if (type_is_integer(ty))
+        return;
+    case 4:
         fprintf(o, "  mov %s, %d(%%rbp)\n", argreg32[i], offset);
-    else
+        return;
+    default:
         fprintf(o, "  mov %s, %d(%%rbp)\n", reg64, offset);
+        return;
+    }
 }
 
 static void emit_arg_to_reg(Node *n, const char *reg)
@@ -223,23 +247,33 @@ static void emit_setcc(BinOp op)
 /* Typed memory load/store at address in %rax; char is unsigned (movzbl). */
 static void emit_load(Type *ty)
 {
-    if (type_is_char(ty))
+    switch (scalar_width(ty)) {
+    case 1:
         fprintf(o, "  movzbl (%%rax), %%eax\n");
-    else if (type_is_integer(ty))
+        return;
+    case 4:
         fprintf(o, "  movslq (%%rax), %%rax\n");
-    else
+        return;
+    default:
         fprintf(o, "  mov (%%rax), %%rax\n");
+        return;
+    }
 }
 
 /* Store value register to address in %rdi (assignment / store through ptr). */
 static void emit_store(Type *ty)
 {
-    if (type_is_char(ty))
+    switch (scalar_width(ty)) {
+    case 1:
         fprintf(o, "  mov %%al, (%%rdi)\n");
-    else if (type_is_integer(ty))
+        return;
+    case 4:
         fprintf(o, "  mov %%eax, (%%rdi)\n");
-    else
+        return;
+    default:
         fprintf(o, "  mov %%rax, (%%rdi)\n");
+        return;
+    }
 }
 
 static void gen_addr(Node *n)
@@ -553,16 +587,28 @@ static int needs_i64_binop(Node *lhs, Node *rhs)
            (is_imm(rhs) && !fits_i32(rhs->val));
 }
 
-static void gen_binop_slow(BinOp op, Node *lhs, Node *rhs)
+/* Codegen width for an integer/pointer binop: 8 if either operand is a
+ * pointer or a long, else 4. char/int both compute in the 32-bit path
+ * (char is promoted to int). This decides 32-bit vs 64-bit lowering. */
+static int binop_width(Node *lhs, Node *rhs)
 {
-    int is_int = type_is_integer(lhs->ty) && type_is_integer(rhs->ty);
+    if (type_is_pointer(lhs->ty) || type_is_pointer(rhs->ty))
+        return 8;
+    if (type_is_long(lhs->ty) || type_is_long(rhs->ty))
+        return 8;
+    return 4;
+}
+
+static void gen_binop_slow(BinOp op, Node *lhs, Node *rhs, int w)
+{
+    int use32 = (w == 4) && !needs_i64_binop(lhs, rhs);
 
     gen_expr(rhs);
     spill();
     gen_expr(lhs);
     reload("%rdi");
 
-    if (is_int && !needs_i64_binop(lhs, rhs)) {
+    if (use32) {
         switch (op) {
         case OP_ADD:
             fprintf(o, "  add %%edi, %%eax\n");
@@ -644,24 +690,40 @@ static void gen_binop(BinOp op, Node *lhs, Node *rhs)
     if (fold_binop(op, lhs, rhs))
         return;
 
+    int w = binop_width(lhs, rhs);
+
     if (is_cmp(op) && is_zero(rhs)) {
         gen_expr(lhs);
-        fprintf(o, "  cmpl $0, %%eax\n");
+        if (w == 4)
+            fprintf(o, "  cmpl $0, %%eax\n");
+        else
+            fprintf(o, "  cmp $0, %%rax\n");
         emit_setcc(op);
         return;
     }
 
-    if (gen_binop_fast_rhs(op, lhs, rhs))
-        return;
+    /* The imm/local fast paths emit 32-bit ops; only use them at width 4. */
+    if (w == 4) {
+        if (gen_binop_fast_rhs(op, lhs, rhs))
+            return;
 
-    if (gen_binop_commuted(op, lhs, rhs))
-        return;
+        if (gen_binop_commuted(op, lhs, rhs))
+            return;
+    }
 
-    gen_binop_slow(op, lhs, rhs);
+    gen_binop_slow(op, lhs, rhs, w);
 }
 
 static void gen_expr(Node *n)
 {
+    /* A decayed array's rvalue is its address, not a loaded value. This
+     * covers both `a` (lea) and the intermediate `*(a + i)` of a multi-dim
+     * index (the pointer itself); gen_addr handles ND_VAR and ND_DEREF. */
+    if (n->var_decay) {
+        gen_addr(n);
+        return;
+    }
+
     switch (n->kind) {
     case ND_NUM:
         emit_load_imm(n->val);
@@ -693,7 +755,16 @@ static void gen_expr(Node *n)
             ;
         else if (type_is_char(n->ty) && !type_is_char(n->operand->ty))
             fprintf(o, "  movzbl %%al, %%eax\n");
-        else if (type_is_integer(n->ty) && type_is_pointer(n->operand->ty))
+        else if (type_is_long(n->ty) && type_is_integer(n->operand->ty) &&
+                 type_int_width(n->operand->ty) == 4)
+            emit_cltq();
+        else if (type_is_integer(n->ty) && type_int_width(n->ty) == 4 &&
+                 (type_is_pointer(n->operand->ty) ||
+                  (type_is_integer(n->operand->ty) &&
+                   type_int_width(n->operand->ty) == 8)))
+            /* Narrow a 64-bit value (pointer or long) to a 32-bit int,
+             * re-establishing the sign-extended-in-%rax invariant. A cast to
+             * long keeps the full %rax (D10). */
             fprintf(o, "  movslq %%eax, %%rax\n");
         return;
     case ND_ASSIGN:
