@@ -220,6 +220,8 @@ static void ice_apply_cast(Type *dst, long *val)
         return;
     if (type_is_char(dst))
         *val &= 0xFF;
+    else if (type_is_short(dst))
+        *val = (long)(short)*val;
     else if (type_is_integer(dst) && type_int_width(dst) == 4)
         *val = (int)*val;
     /* long and wider targets keep the full signed value */

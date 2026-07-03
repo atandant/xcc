@@ -45,6 +45,7 @@ static long scan_decimal(const char *text)
 
 "int"               { return INT; }
 "char"              { return CHAR; }
+"short"             { return SHORT; }
 "long"              { return LONG; }
 "void"              { return VOID; }
 "return"            { return RETURN; }

@@ -38,7 +38,7 @@ Function *g_program = NULL;
 
 %token <num> NUM
 %token <str> IDENT
-%token INT CHAR LONG VOID RETURN IF ELSE WHILE FOR
+%token INT CHAR SHORT LONG VOID RETURN IF ELSE WHILE FOR
 %token EQ NE LE GE
 
 %type <node> expr expr_opt stmt
@@ -76,7 +76,10 @@ toplevel:
 type:
     INT                      { $$ = type_int(); }
   | CHAR                     { $$ = type_char(); }
+  | SHORT                    { $$ = type_short(); }
+  | SHORT INT                { $$ = type_short(); }
   | LONG                     { $$ = type_long(); }
+  | LONG INT                 { $$ = type_long(); }
   | VOID                     { $$ = type_void(); }
   | type '*'                 { $$ = type_ptr($1); }
   ;

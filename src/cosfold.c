@@ -94,6 +94,8 @@ int cosfold_expr(Node **np)
             long v = n->operand->val;
             if (type_is_char(n->ty))
                 v &= 0xFF;
+            else if (type_is_short(n->ty))
+                v = (long)(short)v;
             else if (type_is_integer(n->ty) &&
                      type_int_width(n->ty) == 4)
                 v = (int)v;

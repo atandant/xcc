@@ -10,7 +10,7 @@
 
 typedef enum {
     TY_VOID,
-    TY_INT,     /* all integer types: char, int, long, later short/unsigned */
+    TY_INT,     /* all integer types: char, short, int, long; unsigned later */
     TY_PTR,
     TY_ARRAY,
     TY_FUNC
@@ -18,6 +18,7 @@ typedef enum {
 
 typedef enum {
     IW_CHAR,
+    IW_SHORT,
     IW_INT,
     IW_LONG
 } IntWidth;
@@ -29,7 +30,7 @@ typedef enum {
 typedef struct Type Type;
 struct Type {
     TypeKind kind;
-    IntWidth width;    /* TY_INT: char / int / long                    */
+    IntWidth width;    /* TY_INT: char / short / int / long              */
     IntSign sign;      /* TY_INT: signedness (unsigned later)          */
     int size;          /* object size in bytes (0 for void/func)        */
     int align;         /* alignment in bytes                            */
@@ -48,6 +49,7 @@ Type *type_void(void);
 Type *type_char(void);
 Type *type_int(void);
 Type *type_long(void);
+Type *type_short(void);
 
 /* Derived-type constructors (arena allocated). */
 Type *type_ptr(Type *base);
@@ -59,6 +61,7 @@ int type_is_array(Type *ty);
 int type_is_void(Type *ty);
 int type_is_char(Type *ty);
 int type_is_long(Type *ty);
+int type_is_short(Type *ty);
 int type_is_integer(Type *ty);
 int type_is_signed(Type *ty);
 int type_is_pointer(Type *ty);

@@ -69,6 +69,7 @@ run|cast_int_to_char_trunc.c|44|
 run|cast_int_to_long.c|42|
 run|cast_int_to_long_expr.c|30|
 run|cast_int_to_long_neg.c|0|
+run|cast_int_to_short_trunc.c|112|
 run|cast_long_in_arith.c|30|
 run|cast_long_roundtrip.c|100|
 run|cast_long_to_int.c|100|
@@ -191,6 +192,7 @@ run|long_index_expr.c|6|
 run|long_index_for.c|15|
 run|long_index_while.c|10|
 run|long_int_boundary.c|47|
+run|long_int_decl.c|42|
 run|long_literal_large_div2.c|4|
 run|long_literal_large_div.c|3|
 run|long_literal_mod.c|49|
@@ -293,6 +295,15 @@ run|recursion_factorial.c|120|
 run|ret_const.c|42|
 run|return_early.c|11|
 run|return_pointer_ok.c|0|
+run|short_array_store.c|77|
+run|short_call_return.c|42|
+run|short_decl_local.c|99|
+run|short_deref.c|33|
+run|short_int_decl.c|99|
+run|short_param.c|42|
+run|short_promote_add.c|150|
+run|short_store_load.c|30|
+run|short_truncate_store.c|112|
 run|sub_assoc.c|12|
 run|ty_char_param_from_int.c|65|
 run|ty_double_deref_store.c|8|

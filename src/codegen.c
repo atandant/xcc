@@ -12,8 +12,8 @@
  * temp area and an outgoing-argument area up front, so every `call` site is
  * already 16-byte aligned per the System V ABI.
  *
- * Note: char uses byte-wide load/store (movzbl/movb) into 8-byte stack slots.
- * int and pointers still use 8-byte word operations. */
+ * Note: char uses byte-wide load/store (movzbl/movb); short uses signed
+ * 16-bit load/store (movswl/movw). int and pointers use 4/8-byte paths. */
 
 static FILE *o;
 static const char *fname;
@@ -28,6 +28,9 @@ static const char *argreg64[6] = {
 };
 static const char *argreg32[6] = {
     "%edi", "%esi", "%edx", "%ecx", "%r8d", "%r9d"
+};
+static const char *argreg16[6] = {
+    "%di", "%si", "%dx", "%cx", "%r8w", "%r9w"
 };
 static const char *argreg8[6] = {
     "%dil", "%sil", "%dl", "%cl", "%r8b", "%r9b"
@@ -104,13 +107,21 @@ static void emit_load_imm(long val)
         fprintf(o, "  mov $%ld, %%rax\n", val);
 }
 
-/* Bytes of the in-memory representation for a scalar: 1 (char), 4 (int),
- * 8 (long / pointer). Drives every width-aware load/store below. */
+/* Bytes of the in-memory representation for a scalar: 1 (char), 2 (short),
+ * 4 (int), 8 (long / pointer). Drives every width-aware load/store below. */
 static int scalar_width(Type *ty)
 {
     if (type_is_integer(ty))
-        return type_int_width(ty);   /* 1, 4, or 8 */
+        return type_int_width(ty);   /* 1, 2, 4, or 8 */
     return 8;                        /* pointers (and any other scalar) */
+}
+
+static void emit_cltq(void);
+
+static void emit_truncate_to_short(void)
+{
+    fprintf(o, "  movswl %%ax, %%eax\n");
+    emit_cltq();
 }
 
 static void emit_load_slot(Type *ty, int offset)
@@ -118,6 +129,10 @@ static void emit_load_slot(Type *ty, int offset)
     switch (scalar_width(ty)) {
     case 1:
         fprintf(o, "  movzbl %d(%%rbp), %%eax\n", offset);
+        return;
+    case 2:
+        fprintf(o, "  movswl %d(%%rbp), %%eax\n", offset);
+        emit_cltq();
         return;
     case 4:
         fprintf(o, "  movslq %d(%%rbp), %%rax\n", offset);
@@ -133,6 +148,9 @@ static void emit_store_slot(Type *ty, int offset)
     switch (scalar_width(ty)) {
     case 1:
         fprintf(o, "  mov %%al, %d(%%rbp)\n", offset);
+        return;
+    case 2:
+        fprintf(o, "  mov %%ax, %d(%%rbp)\n", offset);
         return;
     case 4:
         fprintf(o, "  mov %%eax, %d(%%rbp)\n", offset);
@@ -176,6 +194,9 @@ static void emit_reg_to_slot(const char *reg64, Type *ty, int offset)
     switch (scalar_width(ty)) {
     case 1:
         fprintf(o, "  mov %s, %d(%%rbp)\n", argreg8[i], offset);
+        return;
+    case 2:
+        fprintf(o, "  mov %s, %d(%%rbp)\n", argreg16[i], offset);
         return;
     case 4:
         fprintf(o, "  mov %s, %d(%%rbp)\n", argreg32[i], offset);
@@ -251,6 +272,10 @@ static void emit_load(Type *ty)
     case 1:
         fprintf(o, "  movzbl (%%rax), %%eax\n");
         return;
+    case 2:
+        fprintf(o, "  movswl (%%rax), %%eax\n");
+        emit_cltq();
+        return;
     case 4:
         fprintf(o, "  movslq (%%rax), %%rax\n");
         return;
@@ -266,6 +291,9 @@ static void emit_store(Type *ty)
     switch (scalar_width(ty)) {
     case 1:
         fprintf(o, "  mov %%al, (%%rdi)\n");
+        return;
+    case 2:
+        fprintf(o, "  mov %%ax, (%%rdi)\n");
         return;
     case 4:
         fprintf(o, "  mov %%eax, (%%rdi)\n");
@@ -755,6 +783,8 @@ static void gen_expr(Node *n)
             ;
         else if (type_is_char(n->ty) && !type_is_char(n->operand->ty))
             fprintf(o, "  movzbl %%al, %%eax\n");
+        else if (type_is_short(n->ty) && !type_is_short(n->operand->ty))
+            emit_truncate_to_short();
         else if (type_is_long(n->ty) && type_is_integer(n->operand->ty) &&
                  type_int_width(n->operand->ty) == 4)
             emit_cltq();

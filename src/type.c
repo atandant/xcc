@@ -5,17 +5,19 @@
 #include <string.h>
 #include <stdio.h>
 
-/* char is 1 byte; int is 4 bytes; long is 8 bytes on x86-64 LP64 SysV. */
+/* char 1 byte; short 2 bytes; int 4 bytes; long 8 bytes on x86-64 LP64 SysV. */
 
-static Type ty_void = { TY_VOID, 0, 0, 0, 1, NULL, 0, NULL, NULL, 0, 0 };
-static Type ty_char = { TY_INT, IW_CHAR, IS_SIGNED, 1, 1, NULL, 0, NULL, NULL, 0, 0 };
-static Type ty_int  = { TY_INT, IW_INT,  IS_SIGNED, 4, 4, NULL, 0, NULL, NULL, 0, 0 };
-static Type ty_long = { TY_INT, IW_LONG, IS_SIGNED, 8, 8, NULL, 0, NULL, NULL, 0, 0 };
+static Type ty_void  = { TY_VOID, 0, 0, 0, 1, NULL, 0, NULL, NULL, 0, 0 };
+static Type ty_char  = { TY_INT, IW_CHAR,  IS_SIGNED, 1, 1, NULL, 0, NULL, NULL, 0, 0 };
+static Type ty_short = { TY_INT, IW_SHORT, IS_SIGNED, 2, 2, NULL, 0, NULL, NULL, 0, 0 };
+static Type ty_int   = { TY_INT, IW_INT,   IS_SIGNED, 4, 4, NULL, 0, NULL, NULL, 0, 0 };
+static Type ty_long  = { TY_INT, IW_LONG,  IS_SIGNED, 8, 8, NULL, 0, NULL, NULL, 0, 0 };
 
-Type *type_void(void) { return &ty_void; }
-Type *type_char(void) { return &ty_char; }
-Type *type_int(void)  { return &ty_int; }
-Type *type_long(void) { return &ty_long; }
+Type *type_void(void)  { return &ty_void; }
+Type *type_char(void)  { return &ty_char; }
+Type *type_short(void) { return &ty_short; }
+Type *type_int(void)   { return &ty_int; }
+Type *type_long(void)  { return &ty_long; }
 
 Type *type_ptr(Type *base)
 {
@@ -63,6 +65,11 @@ int type_is_char(Type *ty)
 int type_is_long(Type *ty)
 {
     return ty && ty->kind == TY_INT && ty->width == IW_LONG;
+}
+
+int type_is_short(Type *ty)
+{
+    return ty && ty->kind == TY_INT && ty->width == IW_SHORT;
 }
 
 int type_is_integer(Type *ty) { return ty && ty->kind == TY_INT; }
@@ -163,9 +170,10 @@ int type_int_width(Type *ty)
         return 0;
 
     switch (ty->width) {
-    case IW_CHAR: return 1;
-    case IW_INT:  return 4;
-    case IW_LONG: return 8;
+    case IW_CHAR:  return 1;
+    case IW_SHORT: return 2;
+    case IW_INT:   return 4;
+    case IW_LONG:  return 8;
     }
     return 0;
 }
@@ -176,9 +184,10 @@ int type_int_rank(Type *ty)
         return 0;
 
     switch (ty->width) {
-    case IW_CHAR: return 1;
-    case IW_INT:  return 2;
-    case IW_LONG: return 3;
+    case IW_CHAR:  return 1;
+    case IW_SHORT: return 2;
+    case IW_INT:   return 3;
+    case IW_LONG:  return 4;
     }
     return 0;
 }
@@ -187,7 +196,7 @@ Type *type_int_promote(Type *ty)
 {
     if (!ty || ty->kind != TY_INT)
         return ty;
-    if (ty->width == IW_CHAR)
+    if (ty->width == IW_CHAR || ty->width == IW_SHORT)
         return type_int();
     return ty;
 }
@@ -252,9 +261,10 @@ const char *type_name(Type *ty)
     case TY_VOID: return "void";
     case TY_INT:
         switch (ty->width) {
-        case IW_CHAR: return "char";
-        case IW_INT:  return "int";
-        case IW_LONG: return "long";
+        case IW_CHAR:  return "char";
+        case IW_SHORT: return "short";
+        case IW_INT:   return "int";
+        case IW_LONG:  return "long";
         }
         return "integer";
     case TY_PTR: {
