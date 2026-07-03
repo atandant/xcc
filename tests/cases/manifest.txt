@@ -107,7 +107,9 @@ xcc-error|error_addr_ptr_eq_int.c|1|comparison between pointer type 'int *' and 
 xcc-error|error_addr_ptr_ordering.c|1|invalid operands to relational operator
 xcc-error|error_addr_wrong_ptr_level.c|1|incompatible types assigning 'int *' to 'int * *'
 xcc-error|error_array_assign.c|1|incompatible types assigning 'int *' to 'int[2]'
+xcc-error|error_array_size_overflow.c|1|array size overflows
 xcc-error|error_array_to_scalar.c|1|incompatible types assigning 'int *' to 'int'
+xcc-error|error_array_zero_size.c|1|array size is missing or zero for 'a'
 xcc-error|error_assign_int_to_pointer.c|1|incompatible types assigning 'int' to 'int *'
 xcc-error|error_assign_long_to_pointer.c|1|incompatible types assigning 'long' to 'int *'
 xcc-error|error_assign_pointer_to_int.c|1|incompatible types assigning 'int *' to 'int'
@@ -208,6 +210,7 @@ run|long_ptr_plus_var.c|11|
 run|long_ptr_rhs.c|15|
 run|long_ptr_subscript.c|99|
 run|long_return_fn.c|42|
+run|long_stack_sum_8.c|8|
 run|long_store_load.c|30|
 run|long_suffix_arith.c|123|
 run|long_suffix_L.c|42|

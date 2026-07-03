@@ -2,6 +2,7 @@
 #include "sema.h"
 #include "diag.h"
 
+#include <limits.h>
 #include <string.h>
 
 #define MAX_LOCALS 1024
@@ -59,6 +60,10 @@ static FuncSym *find_func(const char *name)
 static FuncSym *add_func(char *name, Type *ty, int defined, int implicit,
                          SourceLoc loc)
 {
+    if (nfuncs >= MAX_FUNCS) {
+        diag_error_at(loc, "too many functions in translation unit");
+        return NULL;
+    }
     FuncSym *s = &funcs[nfuncs++];
     s->name = name;
     s->ty = ty;
@@ -78,7 +83,8 @@ static void register_func(Function *fn)
 {
     FuncSym *s = find_func(fn->name);
     if (!s) {
-        add_func(fn->name, fn->ty, fn->is_definition, 0, fn->loc);
+        if (!add_func(fn->name, fn->ty, fn->is_definition, 0, fn->loc))
+            return;
         if (fn->is_definition && !fn->ty->prototyped)
             diag_warn(W_OLD_STYLE_FUNCTION_DEFINITION, fn->loc,
                       "function '%s' defined without a prototype", fn->name);
@@ -109,12 +115,18 @@ static void register_func(Function *fn)
 
 static void enter_scope(void)
 {
+    if (nscopes >= MAX_SCOPES) {
+        diag_error("too many nested scopes");
+        return;
+    }
     scopes[nscopes].start_local = nlocals;
     nscopes++;
 }
 
 static void leave_scope(void)
 {
+    if (nscopes <= 0)
+        return;
     nscopes--;
     nlocals = scopes[nscopes].start_local;
 }
@@ -158,8 +170,10 @@ static int alloc_local(Type *ty)
     int size = type_size(ty);
     int align = type_align(ty);
 
-    if (size < 1)
+    if (size < 1) {
+        diag_error("invalid object size for local variable");
         size = 1;
+    }
     cur_offset -= size;
     if (align > 1)
         cur_offset = align_down(cur_offset, align);
@@ -181,6 +195,10 @@ static int lookup_loc_here(const char *name, SourceLoc *out_loc)
 
 static void bind_local(char *name, Type *ty, int offset, SourceLoc loc)
 {
+    if (nlocals >= MAX_LOCALS) {
+        diag_error_at(loc, "too many local variables in function");
+        return;
+    }
     locals[nlocals].name = name;
     locals[nlocals].ty = ty;
     locals[nlocals].offset = offset;
@@ -553,6 +571,9 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
         n->func_ty = NULL;
         n->is_lvalue = 0;
         n->var_decay = 0;
+        if (n->nargs > XCC_MAX_CALL_ARGS) {
+            diag_error_at(n->loc, "too many arguments in function call");
+        }
         for (Node *a = n->args; a; a = a->next)
             resolve_expr_ctx(a, CTX_RVALUE);
 
@@ -564,8 +585,9 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
             if (!s) {
                 s = add_func(n->name, type_func(type_int(), NULL, 0, 0), 0, 1,
                              n->loc);
-                diag_warn(W_IMPLICIT_FUNCTION_DECLARATION, n->loc,
-                          "implicit declaration of function '%s'", n->name);
+                if (s)
+                    diag_warn(W_IMPLICIT_FUNCTION_DECLARATION, n->loc,
+                              "implicit declaration of function '%s'", n->name);
             } else {
                 if (s->implicit)
                     diag_warn(W_IMPLICIT_FUNCTION_DECLARATION, n->loc,
@@ -598,8 +620,10 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
                     }
                 }
             }
-            n->func_ty = s->ty;
-            n->ty = s->ty->ret;
+            if (s) {
+                n->func_ty = s->ty;
+                n->ty = s->ty->ret;
+            }
         }
         return;
     }
@@ -744,6 +768,10 @@ static void resolve_stmt(Node *s)
             diag_error_at(s->loc,
                           "variable '%s' has non-object type '%s'",
                           s->name, type_name(s->ty));
+        if (type_is_array(s->ty) && type_array_count(s->ty) == 0)
+            diag_error_at(s->loc,
+                          "array size is missing or zero for '%s'",
+                          s->name);
         if (declared_here(s->name)) {
             SourceLoc prev;
             lookup_loc_here(s->name, &prev);
@@ -861,6 +889,18 @@ static int is_call_arg_direct(Node *n, int complex_after)
     return is_imm(n) || (is_local(n) && complex_after == 0);
 }
 
+/* Mirror codegen binop_width: 8 for pointer/long operands, else 4. */
+static int measure_binop_width(Node *lhs, Node *rhs)
+{
+    if (!lhs || !rhs)
+        return 4;
+    if (type_is_pointer(lhs->ty) || type_is_pointer(rhs->ty))
+        return 8;
+    if (type_is_long(lhs->ty) || type_is_long(rhs->ty))
+        return 8;
+    return 4;
+}
+
 static int measure_expr(Node *e)
 {
     if (!e)
@@ -873,10 +913,12 @@ static int measure_expr(Node *e)
     case ND_NEG:
     case ND_ADDR:
     case ND_DEREF:
+    case ND_CAST:
         return measure_expr(e->operand);
     case ND_BINOP: {
         int r = measure_expr(e->rhs);
         int l = measure_expr(e->lhs);
+        int w = measure_binop_width(e->lhs, e->rhs);
 
         if (is_zero(e->rhs)) {
             switch (e->op) {
@@ -909,15 +951,16 @@ static int measure_expr(Node *e)
         if (is_cmp(e->op) && is_zero(e->rhs))
             return l;
 
-        if (e->op != OP_DIV && e->op != OP_MOD) {
+        /* 32-bit fast paths avoid a rhs spill; 64-bit lowering always spills. */
+        if (w == 4 && e->op != OP_DIV && e->op != OP_MOD) {
             if (is_imm(e->rhs) && fits_i32(e->rhs->val))
                 return l;
             if (is_local(e->rhs))
                 return l;
         }
 
-        if (e->op == OP_ADD || e->op == OP_MUL ||
-            e->op == OP_EQ || e->op == OP_NE) {
+        if (w == 4 && (e->op == OP_ADD || e->op == OP_MUL ||
+                       e->op == OP_EQ || e->op == OP_NE)) {
             if (is_imm(e->lhs) && fits_i32(e->lhs->val))
                 return r;
             if (is_local(e->lhs))
@@ -1040,9 +1083,14 @@ static void sema_function(Function *fn)
     measure_stmt_list(fn->body);
 
     int locals_size = -cur_offset;
-    int frame = locals_size + 8 * cur_max_depth + cur_max_out;
+    long frame = (long)locals_size + 8L * cur_max_depth + cur_max_out;
+
+    if (frame < 0 || frame > INT_MAX - 15) {
+        diag_error_at(fn->loc, "stack frame for '%s' is too large", fn->name);
+        frame = locals_size;
+    }
     fn->locals_size = locals_size;
-    fn->stack_size = (frame + 15) & ~15;  /* 16-byte aligned frame */
+    fn->stack_size = (int)((frame + 15) & ~15);  /* 16-byte aligned frame */
 }
 
 void sema(Function *prog)

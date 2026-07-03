@@ -6,6 +6,7 @@
 #include "type.h"
 
 #define MAX_DECL_DIMS 16
+#define XCC_MAX_CALL_ARGS 4096
 
 typedef struct {
     char *name;

@@ -3,6 +3,8 @@
 #include "arena.h"
 #include "diag.h"
 
+#include <limits.h>
+
 static Node *new_node(NodeKind kind, SourceLoc loc)
 {
     Node *n = arena_alloc_zeroed(sizeof(Node));
@@ -239,7 +241,31 @@ Type *type_apply_declarator(Type *base, Declarator *d, SourceLoc loc)
 
     /* Build the type inside-out: the rightmost dimension is the innermost
      * (element) array, so `int a[2][3]` is array[2] of array[3] of int. */
-    for (i = d->ndims - 1; i >= 0; i--)
-        ty = type_array(ty, (int)d->dims[i]);
+    for (i = d->ndims - 1; i >= 0; i--) {
+        long dim = d->dims[i];
+        int count;
+        int esz;
+
+        if (dim == 0) {
+            /* `[]` on a parameter decays to a pointer before allocation. */
+            ty = type_array(ty, 0);
+            continue;
+        }
+        if (dim < 0) {
+            diag_error_at(loc, "array size is negative");
+            continue;
+        }
+        if (dim > INT_MAX) {
+            diag_error_at(loc, "array size is too large");
+            continue;
+        }
+        count = (int)dim;
+        esz = type_size(ty);
+        if (esz > 0 && count > INT_MAX / esz) {
+            diag_error_at(loc, "array size overflows");
+            continue;
+        }
+        ty = type_array(ty, count);
+    }
     return ty;
 }

@@ -67,6 +67,8 @@ static void bind_clear_offset(int offset)
 static void bind_set(int offset, long val)
 {
     bind_clear_offset(offset);
+    if (nbinds >= MAX_BINDS)
+        return;
     binds[nbinds].offset = offset;
     binds[nbinds].val = val;
     nbinds++;

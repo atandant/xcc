@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include "codegen.h"
 #include "type.h"
+#include "diag.h"
 
 #include <assert.h>
 #include <limits.h>
@@ -322,14 +323,16 @@ static void gen_addr(Node *n)
 
 static void gen_call(Node *n)
 {
-    enum { MAX_CALL_ARGS = 4096 };
-    int temp_slot[MAX_CALL_ARGS];
+    int temp_slot[XCC_MAX_CALL_ARGS];
     int base = depth;
     int i = 0;
     int ntemps = 0;
     int complex_after = 0;
 
-    assert(n->nargs <= MAX_CALL_ARGS);
+    if (n->nargs > XCC_MAX_CALL_ARGS) {
+        diag_fatal("internal error: too many call arguments");
+        return;
+    }
 
     for (Node *a = n->args; a; a = a->next)
         if (!is_direct_arg(a))
