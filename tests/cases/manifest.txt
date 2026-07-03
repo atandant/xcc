@@ -111,6 +111,7 @@ xcc-error|error_array_size_overflow.c|1|array size overflows
 xcc-error|error_array_to_scalar.c|1|incompatible types assigning 'int *' to 'int'
 xcc-error|error_array_zero_size.c|1|array size is missing or zero for 'a'
 xcc-error|error_assign_int_to_pointer.c|1|incompatible types assigning 'int' to 'int *'
+xcc-error|error_assign_long_overflow_ice.c|1|incompatible types assigning 'long' to 'int *'
 xcc-error|error_assign_long_to_pointer.c|1|incompatible types assigning 'long' to 'int *'
 xcc-error|error_assign_pointer_to_int.c|1|incompatible types assigning 'int *' to 'int'
 xcc-error|error_block_scope_expired.c|1|use of undeclared identifier 'x'
@@ -188,6 +189,7 @@ run|long_cmp_eq.c|1|
 run|long_cmp_lt.c|1|
 run|long_decl_local.c|99|
 run|long_for.c|10|
+run|long_ice_add_wrap.c|1|
 run|long_index_array.c|8|
 run|long_index_assign.c|55|
 run|long_index_expr.c|6|
@@ -250,9 +252,11 @@ run|opt_fold_cmp_lt.c|1|
 run|opt_fold_cmp_ne.c|1|
 run|opt_fold_deep.c|10|
 run|opt_fold_div.c|25|
+run|opt_fold_long_boundary.c|0|
 run|opt_fold_long.c|120|
 run|opt_fold_long_div.c|3|
 run|opt_fold_long_mul.c|42|
+run|opt_fold_long_mul_safe.c|42|
 run|opt_fold_mod.c|2|
 run|opt_fold_mul.c|42|
 run|opt_fold_neg.c|8|

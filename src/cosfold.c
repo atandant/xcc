@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include "cosfold.h"
 
+#include "intconst.h"
 #include "type.h"
 
 static Node *fold_to_num(long v, Type *ty, SourceLoc loc)
@@ -15,28 +16,7 @@ static Node *fold_to_num(long v, Type *ty, SourceLoc loc)
 
 static int eval_binop(BinOp op, long a, long b, long *out)
 {
-    switch (op) {
-    case OP_ADD: *out = a + b; return 1;
-    case OP_SUB: *out = a - b; return 1;
-    case OP_MUL: *out = a * b; return 1;
-    case OP_DIV:
-        if (b == 0)
-            return 0;
-        *out = a / b;
-        return 1;
-    case OP_MOD:
-        if (b == 0)
-            return 0;
-        *out = a % b;
-        return 1;
-    case OP_EQ:  *out = a == b; return 1;
-    case OP_NE:  *out = a != b; return 1;
-    case OP_LT:  *out = a < b;  return 1;
-    case OP_LE:  *out = a <= b; return 1;
-    case OP_GT:  *out = a > b;  return 1;
-    case OP_GE:  *out = a >= b; return 1;
-    }
-    return 0;
+    return int_const_binop(op, a, b, out);
 }
 
 static int foldable_binop(Node *n)
@@ -74,8 +54,11 @@ int cosfold_expr(Node **np)
         changed |= cosfold_expr(&n->operand);
         if (n->operand && n->operand->kind == ND_NUM &&
             type_is_integer(n->ty)) {
-            *np = fold_to_num(-n->operand->val, n->ty, n->loc);
-            return 1;
+            long v;
+            if (int_const_neg(n->operand->val, &v)) {
+                *np = fold_to_num(v, n->ty, n->loc);
+                return 1;
+            }
         }
         return changed;
     case ND_ADDR:

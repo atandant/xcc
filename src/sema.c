@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include "sema.h"
 #include "diag.h"
+#include "intconst.h"
 
 #include <limits.h>
 #include <string.h>
@@ -261,30 +262,13 @@ static int ice_eval(Node *n, long *out)
     case ND_NEG:
         if (!ice_eval(n->operand, out))
             return 0;
-        *out = -*out;
-        return 1;
+        return int_const_neg(*out, out);
     case ND_BINOP:
         if (!type_is_integer(n->ty))
             return 0;
         if (!ice_eval(n->lhs, &l) || !ice_eval(n->rhs, &r))
             return 0;
-        switch (n->op) {
-        case OP_ADD: *out = l + r; return 1;
-        case OP_SUB: *out = l - r; return 1;
-        case OP_MUL: *out = l * r; return 1;
-        case OP_DIV:
-            if (r == 0)
-                return 0;
-            *out = l / r;
-            return 1;
-        case OP_MOD:
-            if (r == 0)
-                return 0;
-            *out = l % r;
-            return 1;
-        default:
-            return 0;
-        }
+        return int_const_binop(n->op, l, r, out);
     case ND_CAST:
         if (!n->cast_ty || !type_is_integer(n->cast_ty))
             return 0;
