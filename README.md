@@ -40,7 +40,7 @@ a typed semantic layer and 310+ acceptance tests.
 | `int`, `char`, `long`, `void`, pointers (`*`, `&`, dereference) | parenthesized declarators (`int (*p)[3]`) |
 | N-dimensional arrays, `[]` subscript, `ptr ± int/long`, param decay | pointer arithmetic beyond `±` / `[]` |
 | typed declarations, parameters, returns | `sizeof`, brace initializers |
-| casts `(type)expr`, `(void)expr` discard | unsigned types, `short`, `long long` |
+| casts `(type)expr`, `(void)expr` discard | unsigned types, `short`|
 | function calls (prototyped arg checking, void `*` conversions) | structs, unions, enums, `typedef` |
 | `if` / `else`, `while`, `for`, blocks | preprocessor (`#include`, `#define`) |
 | `+ - * / %`, unary `-`, comparisons | multiple translation units |
