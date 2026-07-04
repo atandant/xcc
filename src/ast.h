@@ -52,7 +52,7 @@ struct Node {
     long val;          /* ND_NUM                                    */
     int has_long_suffix; /* ND_NUM: literal had an L/l suffix (C89 3.1.5) */
     char *name;        /* ND_VAR, ND_DECL                           */
-    int offset;        /* stack offset from %rbp (filled by sema)   */
+    int offset;        /* stack offset from frame pointer (sema)     */
 
     BinOp op;          /* ND_BINOP                                  */
     Node *lhs, *rhs;   /* ND_BINOP, ND_ASSIGN                       */
@@ -76,7 +76,7 @@ typedef struct Param Param;
 struct Param {
     char *name;
     Type *ty;          /* parameter type                            */
-    int offset;        /* stack offset from %rbp (filled by sema)   */
+    int offset;        /* stack offset from frame pointer (sema)     */
     Param *next;
 };
 
@@ -87,6 +87,11 @@ typedef struct {
     int count;
     int prototyped;
 } ParamClause;
+
+typedef struct {
+    int offset;
+    int address_taken;
+} FrameLocal;
 
 typedef struct Function Function;
 struct Function {
@@ -99,8 +104,9 @@ struct Function {
     Type *ty;          /* full TY_FUNC type for this function         */
     int is_definition; /* 1 if it has a body; 0 if just a prototype   */
     Node *body;        /* linked list of statements (NULL for decl)  */
-    int stack_size;    /* total frame bytes, 16-aligned (sema)       */
-    int locals_size;   /* locals + spilled reg params (sema)         */
+    int locals_size;   /* named locals + spilled reg-param homes (sema) */
+    FrameLocal *frame_locals;
+    int nframe_locals;
     Function *next;    /* next function in the translation unit       */
 };
 

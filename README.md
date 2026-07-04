@@ -30,10 +30,11 @@ make
 ./examples/build.sh
 ```
 
-## Status (v0.0.1.5)
+## Status (v0.0.1.6)
 
-The pipeline runs end to end (lex → parse → sema → codegen → `.s` → gcc) with
-a typed semantic layer and 310+ acceptance tests.
+The pipeline runs end to end (lex → parse → sema → lower → liveness →
+regalloc → emit → `.s` → gcc) with a typed semantic layer and 340+ acceptance
+tests.
 
 | Supported | Not yet |
 | --- | --- |
@@ -67,11 +68,22 @@ a typed semantic layer and 310+ acceptance tests.
                                                   function table)
                                                    │
                                                    ▼
-                                      codegen ──▶ x86-64 .s ──▶ gcc ──▶ binary
+                                      lower ──▶ LIR
+                                                   │
+                                                   ▼
+                                      liveness ──▶ regalloc (linear scan)
+                                                   │
+                                                   ▼
+                                      emit_x86 ──▶ x86-64 .s ──▶ gcc ──▶ binary
 ```
 
 The parser builds AST nodes and attaches parsed types to declarations. **sema**
-owns type checking; codegen reads typed nodes and emits load/store/compare.
+owns type checking. **lower** builds LIR with virtual registers; **liveness**
+and **regalloc** assign registers or spill slots; **emit_x86** prints AT&T
+assembly. Scalar locals and parameters that are not address-taken may live in
+registers across loops; arrays and address-taken locals stay on the stack.
+
+Debug flags: `--emit-lir` (LIR before allocation), `--emit-lir-alloc` (after).
 
 ## Build & test
 
@@ -92,6 +104,7 @@ committed.
 - `0.0.1.3` — type system, pointers, `char`, `void *` ✓
 - `0.0.1.4` — 1D arrays, subscript, pointer arithmetic, layout fix ✓
 - `0.0.1.5` — `long` (LP64 64-bit), literal suffixes, promotions, `ptr - ptr` ✓
+- `0.0.1.6` — LIR lowering, liveness, linear-scan register allocation ✓
 - later — preprocessor, structs, and enough to compile real projects
 
 ## License

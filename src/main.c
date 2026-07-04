@@ -10,6 +10,10 @@
 #include "copts.h"
 #include "codegen.h"
 #include "arena.h"
+#include "lower.h"
+#include "lir.h"
+#include "liveness.h"
+#include "target.h"
 
 extern FILE *yyin;
 int yyparse(void);
@@ -25,7 +29,9 @@ static void usage(FILE *f)
         "  file        C source file, or - / omitted for stdin\n"
         "  -o out      output assembly file, or - / omitted for stdout\n"
         "  --help      show this help\n"
-        "  --version   show version\n");
+        "  --version   show version\n"
+        "  --emit-lir  dump lowered LIR to stdout (debug)\n"
+        "  --emit-lir-alloc  dump LIR live intervals (debug)\n");
 }
 
 static char **load_source_lines(FILE *f, int *out_nlines)
@@ -57,6 +63,8 @@ int main(int argc, char **argv)
 {
     const char *inpath = NULL;
     const char *outpath = NULL;
+    int emit_lir = 0;
+    int emit_lir_alloc = 0;
     char **source_lines = NULL;
     int nsource_lines = 0;
     int from_file = 0;
@@ -68,6 +76,10 @@ int main(int argc, char **argv)
         } else if (strcmp(argv[i], "--version") == 0) {
             printf("xcc 0.0.1\n");
             return 0;
+        } else if (strcmp(argv[i], "--emit-lir") == 0) {
+            emit_lir = 1;
+        } else if (strcmp(argv[i], "--emit-lir-alloc") == 0) {
+            emit_lir_alloc = 1;
         } else if (strcmp(argv[i], "-o") == 0) {
             if (i + 1 >= argc) {
                 diag_error("-o requires an argument");
@@ -116,6 +128,28 @@ int main(int argc, char **argv)
         return 1;
 
     copts_optimize(g_program);
+
+    if (emit_lir || emit_lir_alloc) {
+        for (Function *fn = g_program; fn; fn = fn->next) {
+            if (!fn->is_definition)
+                continue;
+            LirFn *lf = lower_function(fn);
+            if (emit_lir_alloc) {
+                Liveness lv;
+                liveness_compute(lf, &X86_SYSV, &lv);
+                liveness_dump(lf, &lv, &X86_SYSV, stdout);
+            } else {
+                lir_dump_fn(lf, stdout);
+            }
+            fputc('\n', stdout);
+        }
+        if (from_file) {
+            free(source_lines);
+            fclose(yyin);
+        }
+        arena_free_all();
+        return 0;
+    }
 
     FILE *out = stdout;
     if (outpath && strcmp(outpath, "-") != 0) {

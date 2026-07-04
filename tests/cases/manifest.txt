@@ -299,6 +299,15 @@ run|ptr_diff_long_scaled.c|7|
 run|ptr_diff_long_stored.c|4|
 run|reassign.c|21|
 run|recursion_factorial.c|120|
+run|regalloc_addr_taken_stays_mem.c|7|
+run|regalloc_array_stays_mem.c|42|
+run|regalloc_call_across_live.c|10|
+run|regalloc_expr_temps.c|36|
+run|regalloc_loop_accum.c|10|
+run|regalloc_nested_call_args.c|24|
+run|regalloc_promote_loop.c|10|
+run|regalloc_promote_param.c|6|
+run|regalloc_spill_pressure.c|21|
 run|ret_const.c|42|
 run|return_early.c|11|
 run|return_pointer_ok.c|0|

@@ -2,7 +2,6 @@
 #include "sema.h"
 #include "sema_scope.h"
 #include "sema_functab.h"
-#include "sema_frame.h"
 #include "diag.h"
 #include "intconst.h"
 
@@ -475,6 +474,8 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
         n->var_decay = 0;
         if (!expr_is_lvalue(n->operand))
             diag_error_at(n->loc, "cannot take address of non-lvalue");
+        if (n->operand->kind == ND_VAR)
+            scope_mark_address_taken(n->operand->name);
         n->ty = type_ptr(n->operand->ty);
         n->is_lvalue = 0;
         return;
@@ -638,7 +639,7 @@ static void sema_function(Function *fn)
 
     /* Parameters become the outermost locals. The first six live in argument
      * registers and get spilled into negative slots; the rest are passed on
-     * the stack and referenced in place at positive offsets (16(%rbp)...). */
+     * the stack and referenced in place at positive frame-pointer offsets. */
     int i = 0;
     for (Param *p = fn->params; p; p = p->next, i++) {
         Type *pty = type_decay(p->ty);
@@ -657,20 +658,16 @@ static void sema_function(Function *fn)
     }
 
     resolve_stmt_list(fn->body);
+    scope_export_frame_locals(&fn->frame_locals, &fn->nframe_locals);
     leave_scope();
 
-    int max_depth, max_out;
-    sema_measure_frame(fn->body, &max_depth, &max_out);
-
     int locals_size = scope_frame_size();
-    long frame = (long)locals_size + 8L * max_depth + max_out;
 
-    if (frame < 0 || frame > INT_MAX - 15) {
+    if (locals_size < 0 || locals_size > INT_MAX - 15) {
         diag_error_at(fn->loc, "stack frame for '%s' is too large", fn->name);
-        frame = locals_size;
+        locals_size = 0;
     }
     fn->locals_size = locals_size;
-    fn->stack_size = (int)((frame + 15) & ~15);  /* 16-byte aligned frame */
 }
 
 void sema(Function *prog)

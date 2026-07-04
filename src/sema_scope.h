@@ -5,8 +5,8 @@
 #include "ast.h"
 
 /* Per-function local environment: a stack of nested scopes holding named
- * objects, plus the downward-growing %rbp offsets assigned to them. sema owns
- * this state for the function currently being resolved. */
+ * objects, plus the downward-growing frame-pointer offsets assigned to them.
+ * sema owns this state for the function currently being resolved. */
 
 /* Begin a fresh function frame (clears all scopes, locals, and offsets). */
 void scope_reset(void);
@@ -34,5 +34,9 @@ int scope_add_local(char *name, Type *ty, SourceLoc loc);
 
 /* Bytes of stack reserved for locals so far (non-negative). */
 int scope_frame_size(void);
+
+void scope_mark_address_taken(const char *name);
+int scope_offset_address_taken(int offset);
+void scope_export_frame_locals(FrameLocal **out, int *out_n);
 
 #endif /* XCC_SEMA_SCOPE_H */

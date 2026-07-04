@@ -10,8 +10,9 @@ BIN   = xcc
 
 # Hand-written sources
 SRCS = src/main.c src/arena.c src/ast.c src/type.c src/diag.c src/sema.c \
-       src/sema_scope.c src/sema_functab.c src/sema_frame.c \
-       src/intconst.c src/cosfold.c src/cosprop.c src/copts.c src/codegen.c
+       src/sema_scope.c src/sema_functab.c \
+       src/intconst.c src/cosfold.c src/cosprop.c src/copts.c src/codegen.c \
+       src/lir.c src/lower.c src/liveness.c src/regalloc.c src/emit_x86.c
 OBJS = $(patsubst src/%.c,$(BUILD)/%.o,$(SRCS))
 
 # Generated sources (bison/flex) - compiled with warnings off

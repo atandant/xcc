@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include "sema_scope.h"
 #include "diag.h"
+#include "arena.h"
 
 #include <string.h>
 
@@ -12,6 +13,7 @@ typedef struct {
     Type *ty;
     int offset;
     SourceLoc loc;
+    int address_taken;
 } Local;
 
 typedef struct {
@@ -22,7 +24,7 @@ static Local locals[MAX_LOCALS];
 static Scope scopes[MAX_SCOPES];
 static int nlocals;
 static int nscopes;
-static int cur_offset; /* grows downward from %rbp, in bytes */
+static int cur_offset; /* grows downward from the frame pointer, in bytes */
 
 void scope_reset(void)
 {
@@ -121,7 +123,38 @@ void scope_bind(char *name, Type *ty, int offset, SourceLoc loc)
     locals[nlocals].ty = ty;
     locals[nlocals].offset = offset;
     locals[nlocals].loc = loc;
+    locals[nlocals].address_taken = 0;
     nlocals++;
+}
+
+void scope_mark_address_taken(const char *name)
+{
+    for (int i = nlocals - 1; i >= 0; i--) {
+        if (strcmp(locals[i].name, name) == 0) {
+            locals[i].address_taken = 1;
+            return;
+        }
+    }
+}
+
+int scope_offset_address_taken(int offset)
+{
+    for (int i = 0; i < nlocals; i++) {
+        if (locals[i].offset == offset)
+            return locals[i].address_taken;
+    }
+    return 0;
+}
+
+void scope_export_frame_locals(FrameLocal **out, int *out_n)
+{
+    FrameLocal *fl = arena_alloc((size_t)nlocals * sizeof(*fl));
+    for (int i = 0; i < nlocals; i++) {
+        fl[i].offset = locals[i].offset;
+        fl[i].address_taken = locals[i].address_taken;
+    }
+    *out = fl;
+    *out_n = nlocals;
 }
 
 int scope_add_local(char *name, Type *ty, SourceLoc loc)
