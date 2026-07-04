@@ -33,7 +33,7 @@ Function *g_program = NULL;
     ParamClause *pclause;
     Function *func;
     Type *type;
-    Declarator decl;
+    Declarator *decl;
 }
 
 %token <num> NUM
@@ -46,8 +46,9 @@ Function *g_program = NULL;
 %type <param> param_list param
 %type <pclause> param_clause
 %type <func> toplevel
-%type <type> type
-%type <decl> declarator
+%type <type> type specifier cast_type
+%type <decl> declarator direct_declarator abstract_declarator
+                                  abstract_declarator_opt direct_abstract_declarator
 
 %right '='
 %left EQ NE
@@ -72,8 +73,8 @@ toplevel:
         { $$ = func_new($2, $4, $1, 0, NULL, LOC(@2)); }
   ;
 
-/* Type specifier with optional pointer declarator. */
-type:
+/* Base type specifier (no declarator). */
+specifier:
     INT                      { $$ = type_int(); }
   | CHAR                     { $$ = type_char(); }
   | SHORT                    { $$ = type_short(); }
@@ -81,35 +82,52 @@ type:
   | LONG                     { $$ = type_long(); }
   | LONG INT                 { $$ = type_long(); }
   | VOID                     { $$ = type_void(); }
+  ;
+
+/* Function return types may still use a trailing `*` prefix. */
+type:
+    specifier                { $$ = $1; }
   | type '*'                 { $$ = type_ptr($1); }
   ;
 
+cast_type:
+    specifier abstract_declarator_opt
+        { $$ = type_apply_declarator($1, $2, LOC(@1)); }
+  ;
+
 declarator:
+    '*' declarator           { $$ = declarator_ptr($2); }
+  | direct_declarator
+  ;
+
+direct_declarator:
     IDENT
-        {
-            $$.name = $1;
-            $$.ndims = 0;
-        }
-  | declarator '[' NUM ']'
-        {
-            $$ = $1;
-            if ($$.ndims >= MAX_DECL_DIMS) {
-                diag_error_at(LOC(@3), "too many array dimensions");
-            } else {
-                $$.dims[$$.ndims] = $3.val;
-                $$.ndims++;
-            }
-        }
-  | declarator '[' ']'
-        {
-            $$ = $1;
-            if ($$.ndims >= MAX_DECL_DIMS) {
-                diag_error_at(LOC(@3), "too many array dimensions");
-            } else {
-                $$.dims[$$.ndims] = 0;
-                $$.ndims++;
-            }
-        }
+        { $$ = declarator_ident($1); }
+  | '(' declarator ')'
+        { $$ = declarator_paren_group($2); }
+  | direct_declarator '[' NUM ']'
+        { $$ = declarator_add_dim($1, $3.val, declarator_was_paren($1)); }
+  | direct_declarator '[' ']'
+        { $$ = declarator_add_dim($1, 0, declarator_was_paren($1)); }
+  ;
+
+abstract_declarator_opt:
+    /* empty */              { $$ = declarator_empty(); }
+  | abstract_declarator
+  ;
+
+abstract_declarator:
+    '*' abstract_declarator_opt  { $$ = declarator_ptr($2); }
+  | direct_abstract_declarator
+  ;
+
+direct_abstract_declarator:
+    '(' abstract_declarator ')'
+        { $$ = declarator_paren_group($2); }
+  | direct_abstract_declarator '[' NUM ']'
+        { $$ = declarator_add_dim($1, $3.val, declarator_was_paren($1)); }
+  | direct_abstract_declarator '[' ']'
+        { $$ = declarator_add_dim($1, 0, declarator_was_paren($1)); }
   ;
 
 param_clause:
@@ -130,12 +148,12 @@ param_list:
   ;
 
 param:
-    type declarator
+    specifier declarator
         {
-            Type *ty = type_apply_declarator($1, &$2, LOC(@1));
-            $$ = param_append(NULL, ty, $2.name);
+            Type *ty = type_apply_declarator($1, $2, LOC(@1));
+            $$ = param_append(NULL, ty, declarator_name($2));
         }
-  | type
+  | specifier
         { $$ = param_append(NULL, $1, NULL); }
   ;
 
@@ -147,10 +165,16 @@ stmt_list:
 stmt:
     RETURN expr ';'          { $$ = node_return($2, LOC(@1)); }
   | RETURN ';'               { $$ = node_return(NULL, LOC(@1)); }
-  | type declarator ';'
-        { $$ = node_decl($2.name, type_apply_declarator($1, &$2, LOC(@1)), NULL, LOC(@1)); }
-  | type declarator '=' expr ';'
-        { $$ = node_decl($2.name, type_apply_declarator($1, &$2, LOC(@1)), $4, LOC(@1)); }
+  | specifier declarator ';'
+        {
+            Type *ty = type_apply_declarator($1, $2, LOC(@1));
+            $$ = node_decl(declarator_name($2), ty, NULL, LOC(@1));
+        }
+  | specifier declarator '=' expr ';'
+        {
+            Type *ty = type_apply_declarator($1, $2, LOC(@1));
+            $$ = node_decl(declarator_name($2), ty, $4, LOC(@1));
+        }
   | IF '(' expr ')' stmt %prec IFX
                               { $$ = node_if($3, $5, NULL, LOC(@1)); }
   | IF '(' expr ')' stmt ELSE stmt
@@ -187,7 +211,7 @@ expr:
   | '-' expr %prec UMINUS    { $$ = node_neg($2, LOC(@1)); }
   | '&' expr %prec UMINUS    { $$ = node_addr($2, LOC(@1)); }
   | '*' expr %prec UMINUS    { $$ = node_deref($2, LOC(@1)); }
-  | '(' type ')' expr %prec UMINUS
+  | '(' cast_type ')' expr %prec UMINUS
                              { $$ = node_cast($2, $4, LOC(@1)); }
   | expr '[' expr ']'
         { $$ = node_deref(node_binop(OP_ADD, $1, $3, LOC(@2)), LOC(@2)); }

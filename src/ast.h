@@ -8,11 +8,17 @@
 #define MAX_DECL_DIMS 16
 #define XCC_MAX_CALL_ARGS 4096
 
-typedef struct {
+typedef struct Declarator Declarator;
+struct Declarator {
     char *name;
-    int ndims;
-    long dims[MAX_DECL_DIMS];
-} Declarator;
+    int nptr;
+    int ndims_suffix;
+    long dims_suffix[MAX_DECL_DIMS];
+    int ndims_paren_outer;
+    long dims_paren_outer[MAX_DECL_DIMS];
+    int was_paren;     /* `(` declarator `)` with no following `[]` yet */
+    Declarator *inner; /* set when `[]` immediately follows `( declarator )` */
+};
 
 typedef enum {
     ND_NUM,        /* integer literal              */
@@ -135,6 +141,15 @@ ParamClause *param_clause(Param *head, int prototyped);
 Function *func_new(char *name, ParamClause *pc, Type *ret_ty,
                    int is_definition, Node *body, SourceLoc loc);
 Function *func_append(Function *list, Function *f);
+
+Declarator *declarator_empty(void);
+Declarator *declarator_ident(char *name);
+Declarator *declarator_ptr(Declarator *d);
+Declarator *declarator_add_dim(Declarator *d, long dim, int after_paren);
+Declarator *declarator_paren_group(Declarator *d);
+Declarator *declarator_paren_outer(Declarator *d, long dim);
+int declarator_was_paren(const Declarator *d);
+char *declarator_name(const Declarator *d);
 Type *type_apply_declarator(Type *base, Declarator *d, SourceLoc loc);
 
 #endif /* XCC_AST_H */

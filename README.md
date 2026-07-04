@@ -38,14 +38,15 @@ tests.
 
 | Supported | Not yet |
 | --- | --- |
-| `int`, `char`, `long`, `void`, pointers (`*`, `&`, dereference) | parenthesized declarators (`int (*p)[3]`) |
-| N-dimensional arrays, `[]` subscript, `ptr ± int/long`, param decay | pointer arithmetic beyond `±` / `[]` |
-| typed declarations, parameters, returns | `sizeof`, brace initializers |
-| casts `(type)expr`, `(void)expr` discard | unsigned types, `short`|
-| function calls (prototyped arg checking, void `*` conversions) | structs, unions, enums, `typedef` |
-| `if` / `else`, `while`, `for`, blocks | preprocessor (`#include`, `#define`) |
-| `+ - * / %`, unary `-`, comparisons | multiple translation units |
-| pointer `==` / `!=` / ordering, truthiness, `p == 0` | `-W` CLI flags |
+| `int`, `char`, `long`, `void`, pointers (`*`, `&`, dereference) | `sizeof`, brace initializers |
+| parenthesized declarators (`int (*p)[3]`), casts (`(int (*)[3])`) | arrays of pointers (`int *p[3]`) |
+| N-dimensional arrays, `[]` subscript, `ptr ± int/long`, `ptr - ptr`, param decay | unsigned types |
+| typed declarations, parameters, returns | structs, unions, enums, `typedef` |
+| casts `(type)expr`, `(void)expr` discard | function pointers |
+| function calls (prototyped arg checking, void `*` conversions) | preprocessor (`#include`, `#define`) |
+| `if` / `else`, `while`, `for`, blocks | multiple translation units |
+| `+ - * / %`, unary `-`, comparisons | `-W` CLI flags |
+| pointer `==` / `!=` / ordering, truthiness, `p == 0` | |
 | `L`/`l` literal suffixes; unsuffixed decimals → `int` or `long` | |
 | `int`/`long` promotions; `ptr - ptr` → `long` | |
 | warnings (`implicit` decl, unprototyped calls, `char` overflow, …) | |

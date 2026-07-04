@@ -136,6 +136,7 @@ xcc-error|error_non_lvalue_cmp_assign.c|1|assignment to non-lvalue
 xcc-error|error_non_lvalue_neg_assign.c|1|assignment to non-lvalue
 xcc-error|error_param_redefinition.c|1|redefinition of parameter 'x'
 xcc-error|error_parse_missing_semicolon.c|1|syntax error, unexpected RETURN
+xcc-error|error_pd_ptr_array_ambig.c|1|array declarator not allowed on pointer type
 xcc-error|error_ptr_mul_int.c|1|invalid operands to arithmetic operator
 xcc-error|error_ptr_plus_ptr.c|1|invalid operands to arithmetic operator
 xcc-error|error_redeclaration.c|1|redeclaration of 'a'
@@ -279,6 +280,17 @@ run|opt_prop_simple.c|50|
 run|param_seventh_stack_arg.c|7|
 run|param_shadow_block.c|8|
 run|paren_grouping.c|25|
+run|pa_row_deref_subscript.c|7|
+run|pa_row_ptr_diff.c|1|
+run|pa_row_ptr_plus_deref.c|4|
+run|pa_row_relational.c|1|
+run|pd_assign_rows.c|11|
+run|pd_cast_row_ptr.c|3|
+run|pd_chain_subscript.c|5|
+run|pd_decl_local.c|30|
+run|pd_param_row.c|6|
+run|pd_row_ptr_diff_named.c|1|
+run|pd_star_paren_subscript.c|9|
 run|pointer_arg_roundtrip.c|5|
 run|pointer_condition_ok.c|5|
 run|pointer_return_roundtrip.c|13|

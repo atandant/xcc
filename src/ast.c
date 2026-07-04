@@ -229,43 +229,159 @@ Function *func_append(Function *list, Function *f)
     return list;
 }
 
-Type *type_apply_declarator(Type *base, Declarator *d, SourceLoc loc)
+Declarator *declarator_empty(void)
+{
+    return arena_alloc_zeroed(sizeof(Declarator));
+}
+
+Declarator *declarator_ident(char *name)
+{
+    Declarator *d = declarator_empty();
+    d->name = name;
+    return d;
+}
+
+Declarator *declarator_ptr(Declarator *d)
+{
+    d->nptr++;
+    return d;
+}
+
+static int decl_add_suffix_dim(Declarator *d, long dim, SourceLoc loc)
+{
+    if (d->ndims_suffix >= MAX_DECL_DIMS) {
+        diag_error_at(loc, "too many array dimensions");
+        return 0;
+    }
+    d->dims_suffix[d->ndims_suffix++] = dim;
+    return 1;
+}
+
+Declarator *declarator_suffix(Declarator *d, long dim)
+{
+    (void)decl_add_suffix_dim(d, dim, (SourceLoc){ 0, 0 });
+    return d;
+}
+
+Declarator *declarator_add_dim(Declarator *d, long dim, int after_paren)
+{
+    if (after_paren)
+        return declarator_paren_outer(d, dim);
+    if (d->ndims_paren_outer > 0) {
+        if (d->ndims_paren_outer >= MAX_DECL_DIMS)
+            return d;
+        d->dims_paren_outer[d->ndims_paren_outer++] = dim;
+        return d;
+    }
+    return declarator_suffix(d, dim);
+}
+
+Declarator *declarator_paren_group(Declarator *d)
+{
+    Declarator *wrap = declarator_empty();
+    wrap->inner = d;
+    wrap->was_paren = 1;
+    return wrap;
+}
+
+Declarator *declarator_paren_outer(Declarator *d, long dim)
+{
+    Declarator *wrap = declarator_empty();
+    wrap->inner = d->inner;
+    wrap->dims_paren_outer[0] = dim;
+    wrap->ndims_paren_outer = 1;
+    return wrap;
+}
+
+int declarator_was_paren(const Declarator *d)
+{
+    return d && d->was_paren;
+}
+
+char *declarator_name(const Declarator *d)
+{
+    for (const Declarator *cur = d; cur; cur = cur->inner) {
+        if (cur->name)
+            return cur->name;
+    }
+    return NULL;
+}
+
+static Type *make_array_dim(Type *ty, long dim, SourceLoc loc)
+{
+    int count;
+    int esz;
+
+    if (dim == 0) {
+        /* `[]` on a parameter decays to a pointer before allocation. */
+        return type_array(ty, 0);
+    }
+    if (dim < 0) {
+        diag_error_at(loc, "array size is negative");
+        return ty;
+    }
+    if (dim > INT_MAX) {
+        diag_error_at(loc, "array size is too large");
+        return ty;
+    }
+    count = (int)dim;
+    esz = type_size(ty);
+    if (esz > 0 && count > INT_MAX / esz) {
+        diag_error_at(loc, "array size overflows");
+        return ty;
+    }
+    return type_array(ty, count);
+}
+
+static int declarator_has_suffix_arrays(const Declarator *d)
+{
+    if (!d)
+        return 0;
+    if (d->ndims_suffix > 0)
+        return 1;
+    return declarator_has_suffix_arrays(d->inner);
+}
+
+static Type *apply_decl_leaf(Type *base, const Declarator *d, SourceLoc loc)
 {
     Type *ty = base;
     int i;
 
-    if (type_is_pointer(base) && d->ndims > 0) {
+    for (i = 0; i < d->nptr; i++)
+        ty = type_ptr(ty);
+    for (i = d->ndims_suffix - 1; i >= 0; i--)
+        ty = make_array_dim(ty, d->dims_suffix[i], loc);
+    return ty;
+}
+
+Type *type_apply_declarator(Type *base, Declarator *d, SourceLoc loc)
+{
+    Type *ty;
+    int i;
+
+    if (!d)
+        return base;
+
+    if (type_is_pointer(base) && declarator_has_suffix_arrays(d)) {
         diag_error_at(loc, "array declarator not allowed on pointer type");
         return base;
     }
 
-    /* Build the type inside-out: the rightmost dimension is the innermost
-     * (element) array, so `int a[2][3]` is array[2] of array[3] of int. */
-    for (i = d->ndims - 1; i >= 0; i--) {
-        long dim = d->dims[i];
-        int count;
-        int esz;
-
-        if (dim == 0) {
-            /* `[]` on a parameter decays to a pointer before allocation. */
-            ty = type_array(ty, 0);
-            continue;
-        }
-        if (dim < 0) {
-            diag_error_at(loc, "array size is negative");
-            continue;
-        }
-        if (dim > INT_MAX) {
-            diag_error_at(loc, "array size is too large");
-            continue;
-        }
-        count = (int)dim;
-        esz = type_size(ty);
-        if (esz > 0 && count > INT_MAX / esz) {
-            diag_error_at(loc, "array size overflows");
-            continue;
-        }
-        ty = type_array(ty, count);
+    if (d->nptr > 0 && d->ndims_suffix > 0) {
+        diag_error_at(loc, "array declarator not allowed on pointer type");
+        return base;
     }
-    return ty;
+
+    if (d->inner && d->ndims_paren_outer > 0) {
+        /* `int (*p)[3]`: outer `[]` binds to the base before the inner `*`. */
+        ty = base;
+        for (i = d->ndims_paren_outer - 1; i >= 0; i--)
+            ty = make_array_dim(ty, d->dims_paren_outer[i], loc);
+        return apply_decl_leaf(ty, d->inner, loc);
+    }
+
+    if (d->was_paren && d->inner)
+        return apply_decl_leaf(base, d->inner, loc);
+
+    return apply_decl_leaf(base, d, loc);
 }
