@@ -25,7 +25,7 @@ Function *g_program = NULL;
 }
 
 %union {
-    struct { long val; int is_long; int is_hex; } num;
+    struct { long val; int is_long; int is_hex; int is_octal; } num;
     char *str;
     Node *node;
     NodeList *list;
@@ -38,7 +38,7 @@ Function *g_program = NULL;
 
 %token <num> NUM
 %token <str> IDENT
-%token INT CHAR SHORT LONG VOID UNSIGNED RETURN IF ELSE WHILE FOR
+%token INT CHAR SHORT LONG VOID UNSIGNED SIGNED RETURN IF ELSE WHILE FOR
 %token EQ NE LE GE
 
 %type <node> expr expr_opt stmt
@@ -93,6 +93,13 @@ specifier:
   | UNSIGNED SHORT INT       { $$ = type_unsigned_short(); }
   | SHORT UNSIGNED           { $$ = type_unsigned_short(); }
   | SHORT UNSIGNED INT       { $$ = type_unsigned_short(); }
+  | SIGNED                   { $$ = type_int(); }
+  | SIGNED INT               { $$ = type_int(); }
+  | SIGNED CHAR              { $$ = type_signed_char(); }
+  | SIGNED SHORT             { $$ = type_short(); }
+  | SIGNED SHORT INT         { $$ = type_short(); }
+  | SIGNED LONG              { $$ = type_long(); }
+  | SIGNED LONG INT          { $$ = type_long(); }
   ;
 
 /* Function return types may still use a trailing `*` prefix. */
@@ -205,7 +212,8 @@ expr_opt:
 expr:
     NUM                      { $$ = node_num($1.val, LOC(@1));
                                $$->has_long_suffix = $1.is_long;
-                               $$->is_hex_literal = $1.is_hex; }
+                               $$->is_hex_literal = $1.is_hex;
+                               $$->is_octal_literal = $1.is_octal; }
   | IDENT                    { $$ = node_var($1, LOC(@1)); }
   | IDENT '(' arg_clause ')' { $$ = node_call($1, $3, LOC(@1)); }
   | expr '=' expr            { $$ = node_assign($1, $3, LOC(@2)); }

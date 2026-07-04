@@ -51,7 +51,9 @@ static void ice_apply_cast(Type *dst, long *val)
     }
     if (type_is_plain_char(dst))
         *val &= 0xFF;
-    else if (type_is_char(dst))
+    else if (type_is_signed_char(dst))
+        *val = (long)(signed char)*val;
+    else if (type_is_unsigned_char(dst))
         *val &= 0xFF;
     else if (type_is_short(dst))
         *val = (long)(short)*val;
@@ -339,12 +341,14 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
 
     switch (n->kind) {
     case ND_NUM:
-        /* C89 3.1.5: an L/l suffix forces long; hex uses unsigned typing;
+        /* C89 3.1.5: an L/l suffix forces long; hex/octal use unsigned typing;
          * unsuffixed decimal is int if it fits, otherwise long. */
         if (n->has_long_suffix)
             n->ty = type_long();
         else if (n->is_hex_literal)
             n->ty = type_classify_hex_constant((unsigned long)n->val);
+        else if (n->is_octal_literal)
+            n->ty = type_classify_octal_constant((unsigned long)n->val);
         else if (n->val >= -2147483647L - 1L && n->val <= 2147483647L)
             n->ty = type_int();
         else

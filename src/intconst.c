@@ -173,5 +173,4 @@ int int_const_binop_ty(BinOp op, long a, long b, Type *ty, long *out)
     return 1;
 }
 
-/* UNDEFER: ICE/cosfold folding for mixed signed/unsigned without sema result ty. */
 /* UNDEFER: reject unsigned constant overflow past unsigned long range. */

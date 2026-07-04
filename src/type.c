@@ -10,6 +10,7 @@
 
 static Type ty_void          = { TY_VOID, 0, 0,          0, 1, NULL, 0, NULL, NULL, 0, 0 };
 static Type ty_char          = { TY_INT, IW_CHAR,  IS_SIGNED,   1, 1, NULL, 0, NULL, NULL, 0, 0 };
+static Type ty_schar         = { TY_INT, IW_CHAR,  IS_SIGNED,   1, 1, NULL, 0, NULL, NULL, 0, 0 };
 static Type ty_uchar         = { TY_INT, IW_CHAR,  IS_UNSIGNED, 1, 1, NULL, 0, NULL, NULL, 0, 0 };
 static Type ty_short         = { TY_INT, IW_SHORT, IS_SIGNED,   2, 2, NULL, 0, NULL, NULL, 0, 0 };
 static Type ty_ushort        = { TY_INT, IW_SHORT, IS_UNSIGNED, 2, 2, NULL, 0, NULL, NULL, 0, 0 };
@@ -23,6 +24,7 @@ Type *type_char(void)           { return &ty_char; }
 Type *type_short(void)          { return &ty_short; }
 Type *type_int(void)            { return &ty_int; }
 Type *type_long(void)           { return &ty_long; }
+Type *type_signed_char(void)    { return &ty_schar; }
 Type *type_unsigned_char(void)  { return &ty_uchar; }
 Type *type_unsigned_short(void) { return &ty_ushort; }
 Type *type_unsigned_int(void)   { return &ty_uint; }
@@ -68,13 +70,23 @@ int type_is_void(Type *ty)    { return ty && ty->kind == TY_VOID; }
 
 int type_is_plain_char(Type *ty)
 {
-    return ty && ty->kind == TY_INT && ty->width == IW_CHAR &&
-           ty->sign == IS_SIGNED;
+    return ty == &ty_char;
+}
+
+int type_is_signed_char(Type *ty)
+{
+    return ty == &ty_schar;
+}
+
+int type_is_unsigned_char(Type *ty)
+{
+    return ty == &ty_uchar;
 }
 
 int type_is_char(Type *ty)
 {
-    return ty && ty->kind == TY_INT && ty->width == IW_CHAR;
+    return type_is_plain_char(ty) || type_is_signed_char(ty) ||
+           type_is_unsigned_char(ty);
 }
 
 int type_is_long(Type *ty)
@@ -126,6 +138,11 @@ int type_same(Type *a, Type *b)
     case TY_VOID:
         return 1;
     case TY_INT:
+        if (type_is_char(a) || type_is_char(b)) {
+            if (!type_is_char(a) || !type_is_char(b))
+                return 0;
+            return a == b;
+        }
         return a->width == b->width && a->sign == b->sign;
     case TY_PTR:
         return type_same(a->base, b->base);
@@ -270,7 +287,7 @@ Type *type_arith_convert(Type *a, Type *b)
     return type_unsigned_same_width(signed_ty);
 }
 
-/* C89 3.1.5: hexadecimal constant typing (no suffix). */
+/* C89 3.1.5: hexadecimal/octal constant typing (no suffix). */
 Type *type_classify_hex_constant(unsigned long v)
 {
     if (v <= (unsigned long)INT_MAX)
@@ -280,6 +297,11 @@ Type *type_classify_hex_constant(unsigned long v)
     if (v <= (unsigned long)LONG_MAX)
         return type_long();
     return type_unsigned_long();
+}
+
+Type *type_classify_octal_constant(unsigned long v)
+{
+    return type_classify_hex_constant(v);
 }
 
 int type_size(Type *ty)
@@ -341,6 +363,8 @@ const char *type_name(Type *ty)
     switch (ty->kind) {
     case TY_VOID: return "void";
     case TY_INT: {
+        if (type_is_signed_char(ty))
+            return "signed char";
         const char *base = int_base_name(ty);
         if (type_is_unsigned(ty)) {
             size_t n = strlen(base) + 10;
@@ -410,7 +434,5 @@ const char *type_func_sig(Type *ty)
 }
 
 /* UNDEFER: U/u and UL/ul literal suffixes (C99). */
-/* UNDEFER: signed char as a distinct type from plain char. */
-/* UNDEFER: octal constant typing (C89 3.1.5). */
 /* UNDEFER: -Wsign-compare / narrowing unsigned-to-signed assignment warnings. */
 /* UNDEFER: full unsigned short ZEXT cast path in lower (CONV_ZEXT16). */

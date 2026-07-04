@@ -26,7 +26,9 @@ static long cast_fold_value(long v, Type *ty)
             return (long)(unsigned int)v;
         return (long)(unsigned long)v;
     }
-    if (type_is_char(ty))
+    if (type_is_signed_char(ty))
+        return (long)(signed char)(unsigned char)v;
+    if (type_is_plain_char(ty) || type_is_unsigned_char(ty))
         return (long)((unsigned long)v & 0xFFUL);
     if (type_is_short(ty))
         return (long)(short)v;
@@ -35,26 +37,71 @@ static long cast_fold_value(long v, Type *ty)
     return v;
 }
 
-static int is_cmp_op(BinOp op)
+static long int_promote_literal_value(long v, Type *ty)
 {
-    return op == OP_EQ || op == OP_NE || op == OP_LT || op == OP_LE ||
-           op == OP_GT || op == OP_GE;
+    Type *promoted = type_int_promote(ty);
+
+    if (promoted == ty)
+        return v;
+
+    if (type_is_unsigned(ty)) {
+        int w = type_int_width(ty);
+        unsigned long uv = (unsigned long)v;
+
+        if (w == 1)
+            uv &= 0xFFUL;
+        else if (w == 2)
+            uv &= 0xFFFFUL;
+        return (long)uv;
+    }
+    if (type_is_signed_char(ty))
+        return (long)(signed char)(unsigned char)v;
+    if (type_is_plain_char(ty) || type_is_unsigned_char(ty))
+        return (long)((unsigned char)v);
+    if (type_is_short(ty))
+        return (long)(short)v;
+    return v;
 }
 
-static Type *fold_binop_ty(Node *n)
+static int fold_literal_operand(Node *n, long *out, Type **out_ty)
 {
-    if (is_cmp_op(n->op))
-        return type_arith_convert(n->lhs->ty, n->rhs->ty);
-    return n->ty;
+    if (!n || !out || !out_ty)
+        return 0;
+
+    if (n->kind == ND_NUM) {
+        *out = n->val;
+        *out_ty = n->ty;
+        return 1;
+    }
+    if (n->kind == ND_CAST && n->operand && n->operand->kind == ND_NUM &&
+        type_is_integer(n->ty)) {
+        *out = cast_fold_value(n->operand->val, n->ty);
+        *out_ty = n->ty;
+        return 1;
+    }
+    return 0;
+}
+
+static Type *fold_binop_ty(Node *n, Type *lty, Type *rty)
+{
+    Type *la = type_int_promote(lty);
+    Type *rb = type_int_promote(rty);
+
+    (void)n;
+    return type_arith_convert(la, rb);
 }
 
 static int foldable_binop(Node *n)
 {
+    long lv, rv;
+    Type *lty, *rty;
+
     if (!n || n->kind != ND_BINOP)
         return 0;
     if (!n->lhs || !n->rhs)
         return 0;
-    if (n->lhs->kind != ND_NUM || n->rhs->kind != ND_NUM)
+    if (!fold_literal_operand(n->lhs, &lv, &lty) ||
+        !fold_literal_operand(n->rhs, &rv, &rty))
         return 0;
     return type_is_integer(n->ty);
 }
@@ -68,18 +115,28 @@ int cosfold_expr(Node **np)
         return 0;
 
     switch (n->kind) {
-    case ND_BINOP:
+    case ND_BINOP: {
+        long lv, rv;
+        Type *lty, *rty;
+
         changed |= cosfold_expr(&n->lhs);
         changed |= cosfold_expr(&n->rhs);
-        if (foldable_binop(n)) {
+        if (foldable_binop(n) &&
+            fold_literal_operand(n->lhs, &lv, &lty) &&
+            fold_literal_operand(n->rhs, &rv, &rty)) {
             long v;
-            Type *fty = fold_binop_ty(n);
-            if (int_const_binop_ty(n->op, n->lhs->val, n->rhs->val, fty, &v)) {
+            Type *fty;
+
+            lv = int_promote_literal_value(lv, lty);
+            rv = int_promote_literal_value(rv, rty);
+            fty = fold_binop_ty(n, lty, rty);
+            if (int_const_binop_ty(n->op, lv, rv, fty, &v)) {
                 *np = fold_to_num(v, n->ty, n->loc);
                 return 1;
             }
         }
         return changed;
+    }
     case ND_NEG:
         changed |= cosfold_expr(&n->operand);
         if (n->operand && n->operand->kind == ND_NUM &&
@@ -179,6 +236,3 @@ int cosfold_function(Function *fn)
         return 0;
     return fold_stmt_list(fn->body);
 }
-
-/* UNDEFER: fold mixed signed/unsigned binops when only literals differ in ty. */
-/* UNDEFER: fold unsigned char/short promotions before the operation. */

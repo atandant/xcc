@@ -51,6 +51,7 @@ Type *type_char(void);
 Type *type_int(void);
 Type *type_long(void);
 Type *type_short(void);
+Type *type_signed_char(void);
 Type *type_unsigned_char(void);
 Type *type_unsigned_short(void);
 Type *type_unsigned_int(void);
@@ -64,8 +65,10 @@ Type *type_func(Type *ret, Type **params, int nparams, int prototyped);
 /* Predicates. */
 int type_is_array(Type *ty);
 int type_is_void(Type *ty);
-int type_is_plain_char(Type *ty);   /* plain `char`, not unsigned/signed char */
-int type_is_char(Type *ty);         /* any char width (plain or unsigned) */
+int type_is_plain_char(Type *ty);   /* plain `char` only */
+int type_is_signed_char(Type *ty);  /* `signed char` only */
+int type_is_unsigned_char(Type *ty); /* `unsigned char` only */
+int type_is_char(Type *ty);         /* any char width */
 int type_is_long(Type *ty);         /* any long width */
 int type_is_short(Type *ty);        /* any short width */
 int type_is_integer(Type *ty);
@@ -88,6 +91,7 @@ int type_int_rank(Type *ty);
 Type *type_int_promote(Type *ty);
 Type *type_arith_convert(Type *a, Type *b);
 Type *type_classify_hex_constant(unsigned long v);
+Type *type_classify_octal_constant(unsigned long v);
 Type *type_decay(Type *ty);
 Type *type_array_elem(Type *ty);
 int type_array_count(Type *ty);

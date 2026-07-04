@@ -49,6 +49,7 @@ typedef enum {
 
 typedef enum {
     CONV_ZEXT8,
+    CONV_SEXT8,
     CONV_SEXT16,
     CONV_SEXT32_64,
     CONV_TRUNC_LO32,

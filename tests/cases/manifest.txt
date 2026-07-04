@@ -134,6 +134,7 @@ xcc-error|error_non_lvalue_assign.c|1|assignment to non-lvalue
 xcc-error|error_non_lvalue_call_assign.c|1|assignment to non-lvalue
 xcc-error|error_non_lvalue_cmp_assign.c|1|assignment to non-lvalue
 xcc-error|error_non_lvalue_neg_assign.c|1|assignment to non-lvalue
+xcc-error|error_octal_stray8.c|1|invalid digit in octal constant
 xcc-error|error_param_redefinition.c|1|redefinition of parameter 'x'
 xcc-error|error_parse_missing_semicolon.c|1|syntax error, unexpected RETURN
 xcc-error|error_pd_ptr_array_ambig.c|1|array declarator not allowed on pointer type
@@ -245,6 +246,9 @@ run|null_ptr_assign_void_cast.c|1|
 run|null_ptr_call.c|0|
 run|null_ptr_init.c|0|
 run|null_ptr_return.c|1|
+run|octal_literal_012.c|10|
+run|octal_literal_add.c|3|
+run|octal_unsigned_int.c|255|
 run|opt_fold_add.c|30|
 run|opt_fold_chain.c|10|
 run|opt_fold_cmp_eq.c|1|
@@ -258,17 +262,22 @@ run|opt_fold_long.c|120|
 run|opt_fold_long_div.c|3|
 run|opt_fold_long_mul.c|42|
 run|opt_fold_long_mul_safe.c|42|
+run|opt_fold_mixed_hex_dec.c|36|
+run|opt_fold_mixed_promote.c|50|
 run|opt_fold_mod.c|2|
 run|opt_fold_mul.c|42|
 run|opt_fold_neg.c|8|
 run|opt_fold_nested.c|20|
+run|opt_fold_octal_add.c|13|
 run|opt_fold_one.c|88|
 run|opt_fold_prop_add.c|15|
 run|opt_fold_prop.c|100|
+run|opt_fold_schar_cast.c|56|
 run|opt_fold_sub.c|63|
 run|opt_fold_u_add.c|30|
 run|opt_fold_u_cast_uchar.c|44|
 run|opt_fold_u_chain.c|20|
+run|opt_fold_uchar_add.c|1|
 run|opt_fold_u_cmp_eq.c|1|
 run|opt_fold_u_cmp_gt.c|1|
 run|opt_fold_u_cmp_lt.c|1|
@@ -277,7 +286,9 @@ run|opt_fold_u_hex.c|48|
 run|opt_fold_u_mod.c|4|
 run|opt_fold_u_mul.c|42|
 run|opt_fold_u_neg.c|251|
+run|opt_fold_ushort_add.c|1|
 run|opt_fold_u_sub.c|33|
+run|opt_fold_u_wrap_add.c|0|
 run|opt_fold_zero.c|0|
 run|opt_prop_assign.c|20|
 run|opt_prop_block.c|12|
@@ -335,6 +346,9 @@ run|regalloc_spill_pressure.c|21|
 run|ret_const.c|42|
 run|return_early.c|11|
 run|return_pointer_ok.c|0|
+run|schar_load_neg.c|255|
+run|schar_promote_neg.c|255|
+run|schar_vs_plain.c|200|
 run|short_array_store.c|77|
 run|short_call_return.c|42|
 run|short_decl_local.c|99|
@@ -372,6 +386,7 @@ run|u_param.c|99|
 run|u_return_fn.c|11|
 run|u_uchar.c|200|
 run|u_ushort.c|42|
+run|u_ushort_large.c|1|
 run|u_while_count.c|3|
 run|void_function_bare_return.c|3|
 run|void_param_no_args.c|9|

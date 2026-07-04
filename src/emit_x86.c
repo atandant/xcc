@@ -335,7 +335,10 @@ static void emit_load_fp_slot(EmitCtx *c, Operand mem, int bytes, LirSign sgn)
     long off = mem.u.mem.disp;
     switch (bytes) {
     case 1:
-        fprintf(c->out, "  movzbl %ld(%%rbp), %%eax\n", off);
+        if (sgn == LIR_SGN_S)
+            fprintf(c->out, "  movsbl %ld(%%rbp), %%eax\n", off);
+        else
+            fprintf(c->out, "  movzbl %ld(%%rbp), %%eax\n", off);
         return;
     case 2:
         if (sgn == LIR_SGN_S)
@@ -511,7 +514,10 @@ static void emit_instr(EmitCtx *c, Instr *ins)
             load_mem_addr(c, ins->a, "%r10");
             switch (ins->aux) {
             case 1:
-                fprintf(c->out, "  movzbl (%%r10), %%eax\n");
+                if (ins->sgn == LIR_SGN_S)
+                    fprintf(c->out, "  movsbl (%%r10), %%eax\n");
+                else
+                    fprintf(c->out, "  movzbl (%%r10), %%eax\n");
                 break;
             case 2:
                 if (ins->sgn == LIR_SGN_S)
@@ -748,6 +754,9 @@ static void emit_instr(EmitCtx *c, Instr *ins)
         switch (ins->conv) {
         case CONV_ZEXT8:
             fprintf(c->out, "  movzbl %%al, %%eax\n");
+            break;
+        case CONV_SEXT8:
+            fprintf(c->out, "  movsbl %%al, %%eax\n");
             break;
         case CONV_SEXT16:
             fprintf(c->out, "  movswl %%ax, %%eax\n");

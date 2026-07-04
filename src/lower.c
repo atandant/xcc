@@ -234,7 +234,7 @@ static void emit_widen_to_rax(LowerCtx *c, int v, Type *ty)
         return;
     if (type_is_char(ty))
         return;
-    if (type_is_short(ty)) {
+    if (type_is_short(ty) && type_is_signed(ty)) {
         int t = fresh(c);
         emit(c, (Instr){
             .op = LIR_CONV, .dst = t, .a = lir_vreg(v), .conv = CONV_SEXT16 });
@@ -328,7 +328,8 @@ static void lower_cast_into(LowerCtx *c, int dst, Node *n)
 
     if (type_is_char(to) && !type_is_char(from)) {
         emit(c, (Instr){
-            .op = LIR_CONV, .dst = dst, .a = lir_vreg(dst), .conv = CONV_ZEXT8 });
+            .op = LIR_CONV, .dst = dst, .a = lir_vreg(dst),
+            .conv = type_is_signed_char(to) ? CONV_SEXT8 : CONV_ZEXT8 });
         return;
     }
     if (type_is_short(to) && type_is_unsigned(to) && !type_is_short(from))
