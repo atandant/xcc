@@ -8,6 +8,9 @@
 #include <limits.h>
 #include <string.h>
 
+/* UNDEFER: -Wnarrowing for unsigned-to-signed assignment with out-of-range constants. */
+/* UNDEFER: reject comparisons between pointers and unsigned integers (stricter C89). */
+
 /* return-statement context for the function being resolved */
 static Type *cur_ret_ty;
 static const char *cur_fname;
@@ -35,13 +38,26 @@ static void ice_apply_cast(Type *dst, long *val)
 {
     if (!dst || !val)
         return;
-    if (type_is_char(dst))
+    if (type_is_unsigned(dst)) {
+        int w = type_int_width(dst);
+        if (w == 1)
+            *val &= 0xFF;
+        else if (w == 2)
+            *val &= 0xFFFF;
+        else if (w == 4)
+            *val = (long)(unsigned int)*val;
+        /* unsigned long keeps low 64 bits in long representation */
+        return;
+    }
+    if (type_is_plain_char(dst))
+        *val &= 0xFF;
+    else if (type_is_char(dst))
         *val &= 0xFF;
     else if (type_is_short(dst))
         *val = (long)(short)*val;
     else if (type_is_integer(dst) && type_int_width(dst) == 4)
         *val = (int)*val;
-    /* long and wider targets keep the full signed value */
+    /* long and wider signed targets keep the full signed value */
 }
 
 static int ice_eval(Node *n, long *out)
@@ -60,13 +76,20 @@ static int ice_eval(Node *n, long *out)
     case ND_NEG:
         if (!ice_eval(n->operand, out))
             return 0;
-        return int_const_neg(*out, out);
+        return int_const_neg_ty(*out, n->ty, out);
     case ND_BINOP:
         if (!type_is_integer(n->ty))
             return 0;
         if (!ice_eval(n->lhs, &l) || !ice_eval(n->rhs, &r))
             return 0;
-        return int_const_binop(n->op, l, r, out);
+        {
+            Type *bty = n->ty;
+            if (is_eq_op(n->op) ||
+                n->op == OP_LT || n->op == OP_LE ||
+                n->op == OP_GT || n->op == OP_GE)
+                bty = type_arith_convert(n->lhs->ty, n->rhs->ty);
+            return int_const_binop_ty(n->op, l, r, bty, out);
+        }
     case ND_CAST:
         if (!n->cast_ty || !type_is_integer(n->cast_ty))
             return 0;
@@ -121,7 +144,7 @@ static void warn_value_conversion(SourceLoc loc, Type *dst, Node *src)
     if (!dst || !src || !src->ty)
         return;
 
-    if (type_is_char(dst) && type_is_integer(src->ty) && !type_is_char(src->ty)) {
+    if (type_is_plain_char(dst) && type_is_integer(src->ty) && !type_is_char(src->ty)) {
         if (src->kind == ND_NUM) {
             if (src->val < 0 || src->val > 255)
                 diag_warn(W_INT_TO_CHAR_OVERFLOW, loc,
@@ -316,11 +339,12 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
 
     switch (n->kind) {
     case ND_NUM:
-        /* C89 3.1.5: an L/l suffix forces long; an unsuffixed decimal is int
-         * if it fits, otherwise long. (Overflow past signed long is caught by
-         * the lexer.) */
+        /* C89 3.1.5: an L/l suffix forces long; hex uses unsigned typing;
+         * unsuffixed decimal is int if it fits, otherwise long. */
         if (n->has_long_suffix)
             n->ty = type_long();
+        else if (n->is_hex_literal)
+            n->ty = type_classify_hex_constant((unsigned long)n->val);
         else if (n->val >= -2147483647L - 1L && n->val <= 2147483647L)
             n->ty = type_int();
         else

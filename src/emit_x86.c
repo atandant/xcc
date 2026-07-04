@@ -267,6 +267,21 @@ static const char *jcc_for(LirCond cc)
     return "je";
 }
 
+static const char *jcc_for_sign(LirCond cc, LirSign sgn)
+{
+    if (sgn == LIR_SGN_U) {
+        switch (cc) {
+        case CC_EQ: return "je";
+        case CC_NE: return "jne";
+        case CC_LT: return "jb";
+        case CC_LE: return "jbe";
+        case CC_GT: return "ja";
+        case CC_GE: return "jae";
+        }
+    }
+    return jcc_for(cc);
+}
+
 static const char *setcc_for(LirCond cc)
 {
     switch (cc) {
@@ -278,6 +293,21 @@ static const char *setcc_for(LirCond cc)
     case CC_GE: return "setge";
     }
     return "sete";
+}
+
+static const char *setcc_for_sign(LirCond cc, LirSign sgn)
+{
+    if (sgn == LIR_SGN_U) {
+        switch (cc) {
+        case CC_EQ: return "sete";
+        case CC_NE: return "setne";
+        case CC_LT: return "setb";
+        case CC_LE: return "setbe";
+        case CC_GT: return "seta";
+        case CC_GE: return "setae";
+        }
+    }
+    return setcc_for(cc);
 }
 
 static void emit_store_mem(EmitCtx *c, Operand mem, LirWidth w, int bytes)
@@ -300,7 +330,7 @@ static void emit_store_mem(EmitCtx *c, Operand mem, LirWidth w, int bytes)
     }
 }
 
-static void emit_load_fp_slot(EmitCtx *c, Operand mem, int bytes)
+static void emit_load_fp_slot(EmitCtx *c, Operand mem, int bytes, LirSign sgn)
 {
     long off = mem.u.mem.disp;
     switch (bytes) {
@@ -308,7 +338,10 @@ static void emit_load_fp_slot(EmitCtx *c, Operand mem, int bytes)
         fprintf(c->out, "  movzbl %ld(%%rbp), %%eax\n", off);
         return;
     case 2:
-        fprintf(c->out, "  movswl %ld(%%rbp), %%eax\n", off);
+        if (sgn == LIR_SGN_S)
+            fprintf(c->out, "  movswl %ld(%%rbp), %%eax\n", off);
+        else
+            fprintf(c->out, "  movzwl %ld(%%rbp), %%eax\n", off);
         return;
     case 4:
         fprintf(c->out, "  movslq %ld(%%rbp), %%rax\n", off);
@@ -473,7 +506,7 @@ static void emit_instr(EmitCtx *c, Instr *ins)
 
     case LIR_LOAD:
         if (ins->a.kind == OPND_MEM && ins->a.u.mem.base == LIR_FP) {
-            emit_load_fp_slot(c, ins->a, ins->aux);
+            emit_load_fp_slot(c, ins->a, ins->aux, ins->sgn);
         } else {
             load_mem_addr(c, ins->a, "%r10");
             switch (ins->aux) {
@@ -481,7 +514,10 @@ static void emit_instr(EmitCtx *c, Instr *ins)
                 fprintf(c->out, "  movzbl (%%r10), %%eax\n");
                 break;
             case 2:
-                fprintf(c->out, "  movswl (%%r10), %%eax\n");
+                if (ins->sgn == LIR_SGN_S)
+                    fprintf(c->out, "  movswl (%%r10), %%eax\n");
+                else
+                    fprintf(c->out, "  movzwl (%%r10), %%eax\n");
                 break;
             case 4:
                 fprintf(c->out, "  movslq (%%r10), %%rax\n");
@@ -584,15 +620,23 @@ static void emit_instr(EmitCtx *c, Instr *ins)
     case LIR_MOD: {
         LirWidth w = ins->w;
         load_operand(c, ins->a, "%rax", w);
-        if (w == LIR_W4)
+        if (ins->sgn == LIR_SGN_U) {
+            if (w == LIR_W4)
+                fprintf(c->out, "  xor %%edx, %%edx\n");
+            else
+                fprintf(c->out, "  xor %%rdx, %%rdx\n");
+        } else if (w == LIR_W4) {
             fprintf(c->out, "  cdq\n");
-        else
+        } else {
             fprintf(c->out, "  cqo\n");
+        }
         load_operand(c, ins->b, "%rdi", w);
         if (w == LIR_W4)
-            fprintf(c->out, "  idiv %%edi\n");
+            fprintf(c->out, "  %s %%edi\n",
+                    ins->sgn == LIR_SGN_U ? "div" : "idiv");
         else
-            fprintf(c->out, "  idiv %%rdi\n");
+            fprintf(c->out, "  %sq %%rdi\n",
+                    ins->sgn == LIR_SGN_U ? "div" : "idiv");
         if (ins->op == LIR_MOD) {
             if (w == LIR_W4)
                 fprintf(c->out, "  movslq %%edx, %%rax\n");
@@ -638,7 +682,7 @@ static void emit_instr(EmitCtx *c, Instr *ins)
                 fprintf(c->out, "  cmpl %d(%%rbp), %s\n", off_b, reg32_name(s0));
             else
                 fprintf(c->out, "  cmpq %d(%%rbp), %s\n", off_b, reg64_name(s0));
-            fprintf(c->out, "  %s %%al\n", setcc_for(ins->cc));
+            fprintf(c->out, "  %s %%al\n", setcc_for_sign(ins->cc, ins->sgn));
             fprintf(c->out, "  movzbq %%al, %%rax\n");
             store_vreg_slot(c, ins->dst, "%rax");
             return;
@@ -651,7 +695,7 @@ static void emit_instr(EmitCtx *c, Instr *ins)
         else
             fprintf(c->out, "  cmp %s, %s\n",
                     reg64_name(s1), reg64_name(s0));
-        fprintf(c->out, "  %s %%al\n", setcc_for(ins->cc));
+        fprintf(c->out, "  %s %%al\n", setcc_for_sign(ins->cc, ins->sgn));
         fprintf(c->out, "  movzbq %%al, %%rax\n");
         store_vreg_slot(c, ins->dst, "%rax");
         return;
@@ -667,7 +711,7 @@ static void emit_instr(EmitCtx *c, Instr *ins)
                 fprintf(c->out, "  cmpl %d(%%rbp), %s\n", off_b, reg32_name(s0));
             else
                 fprintf(c->out, "  cmpq %d(%%rbp), %s\n", off_b, reg64_name(s0));
-            fprintf(c->out, "  %s ", jcc_for(ins->cc));
+            fprintf(c->out, "  %s ", jcc_for_sign(ins->cc, ins->sgn));
             emit_label_ref(c, ins->label);
             fprintf(c->out, "\n");
             return;
@@ -680,7 +724,7 @@ static void emit_instr(EmitCtx *c, Instr *ins)
         else
             fprintf(c->out, "  cmp %s, %s\n",
                     reg64_name(s1), reg64_name(s0));
-        fprintf(c->out, "  %s ", jcc_for(ins->cc));
+        fprintf(c->out, "  %s ", jcc_for_sign(ins->cc, ins->sgn));
         emit_label_ref(c, ins->label);
         fprintf(c->out, "\n");
         return;

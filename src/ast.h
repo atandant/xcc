@@ -57,6 +57,7 @@ struct Node {
 
     long val;          /* ND_NUM                                    */
     int has_long_suffix; /* ND_NUM: literal had an L/l suffix (C89 3.1.5) */
+    int is_hex_literal;  /* ND_NUM: 0x/0X constant (C89 3.1.5 typing) */
     char *name;        /* ND_VAR, ND_DECL                           */
     int offset;        /* stack offset from frame pointer (sema)     */
 

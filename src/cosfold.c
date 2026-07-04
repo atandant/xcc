@@ -14,9 +14,38 @@ static Node *fold_to_num(long v, Type *ty, SourceLoc loc)
     return n;
 }
 
-static int eval_binop(BinOp op, long a, long b, long *out)
+static long cast_fold_value(long v, Type *ty)
 {
-    return int_const_binop(op, a, b, out);
+    if (type_is_unsigned(ty)) {
+        int w = type_int_width(ty);
+        if (w == 1)
+            return (long)((unsigned long)v & 0xFFUL);
+        if (w == 2)
+            return (long)((unsigned long)v & 0xFFFFUL);
+        if (w == 4)
+            return (long)(unsigned int)v;
+        return (long)(unsigned long)v;
+    }
+    if (type_is_char(ty))
+        return (long)((unsigned long)v & 0xFFUL);
+    if (type_is_short(ty))
+        return (long)(short)v;
+    if (type_is_integer(ty) && type_int_width(ty) == 4)
+        return (long)(int)v;
+    return v;
+}
+
+static int is_cmp_op(BinOp op)
+{
+    return op == OP_EQ || op == OP_NE || op == OP_LT || op == OP_LE ||
+           op == OP_GT || op == OP_GE;
+}
+
+static Type *fold_binop_ty(Node *n)
+{
+    if (is_cmp_op(n->op))
+        return type_arith_convert(n->lhs->ty, n->rhs->ty);
+    return n->ty;
 }
 
 static int foldable_binop(Node *n)
@@ -44,7 +73,8 @@ int cosfold_expr(Node **np)
         changed |= cosfold_expr(&n->rhs);
         if (foldable_binop(n)) {
             long v;
-            if (eval_binop(n->op, n->lhs->val, n->rhs->val, &v)) {
+            Type *fty = fold_binop_ty(n);
+            if (int_const_binop_ty(n->op, n->lhs->val, n->rhs->val, fty, &v)) {
                 *np = fold_to_num(v, n->ty, n->loc);
                 return 1;
             }
@@ -55,7 +85,7 @@ int cosfold_expr(Node **np)
         if (n->operand && n->operand->kind == ND_NUM &&
             type_is_integer(n->ty)) {
             long v;
-            if (int_const_neg(n->operand->val, &v)) {
+            if (int_const_neg_ty(n->operand->val, n->ty, &v)) {
                 *np = fold_to_num(v, n->ty, n->loc);
                 return 1;
             }
@@ -70,18 +100,11 @@ int cosfold_expr(Node **np)
     case ND_CAST:
         changed |= cosfold_expr(&n->operand);
         /* Fold a cast of a constant to a constant of the target type.
-         * (char) reduces modulo 256 (unsigned-byte model); (void) has no
-         * value, so it is left for codegen to discard. */
+         * Plain (char) reduces modulo 256 (unsigned-byte model); (void) has
+         * no value, so it is left for codegen to discard. */
         if (n->operand && n->operand->kind == ND_NUM &&
             !type_is_void(n->ty)) {
-            long v = n->operand->val;
-            if (type_is_char(n->ty))
-                v &= 0xFF;
-            else if (type_is_short(n->ty))
-                v = (long)(short)v;
-            else if (type_is_integer(n->ty) &&
-                     type_int_width(n->ty) == 4)
-                v = (int)v;
+            long v = cast_fold_value(n->operand->val, n->ty);
             *np = fold_to_num(v, n->ty, n->loc);
             return 1;
         }
@@ -156,3 +179,6 @@ int cosfold_function(Function *fn)
         return 0;
     return fold_stmt_list(fn->body);
 }
+
+/* UNDEFER: fold mixed signed/unsigned binops when only literals differ in ty. */
+/* UNDEFER: fold unsigned char/short promotions before the operation. */

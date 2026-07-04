@@ -2,22 +2,31 @@
 #include "type.h"
 #include "arena.h"
 
+#include <limits.h>
 #include <string.h>
 #include <stdio.h>
 
 /* char 1 byte; short 2 bytes; int 4 bytes; long 8 bytes on x86-64 LP64 SysV. */
 
-static Type ty_void  = { TY_VOID, 0, 0, 0, 1, NULL, 0, NULL, NULL, 0, 0 };
-static Type ty_char  = { TY_INT, IW_CHAR,  IS_SIGNED, 1, 1, NULL, 0, NULL, NULL, 0, 0 };
-static Type ty_short = { TY_INT, IW_SHORT, IS_SIGNED, 2, 2, NULL, 0, NULL, NULL, 0, 0 };
-static Type ty_int   = { TY_INT, IW_INT,   IS_SIGNED, 4, 4, NULL, 0, NULL, NULL, 0, 0 };
-static Type ty_long  = { TY_INT, IW_LONG,  IS_SIGNED, 8, 8, NULL, 0, NULL, NULL, 0, 0 };
+static Type ty_void          = { TY_VOID, 0, 0,          0, 1, NULL, 0, NULL, NULL, 0, 0 };
+static Type ty_char          = { TY_INT, IW_CHAR,  IS_SIGNED,   1, 1, NULL, 0, NULL, NULL, 0, 0 };
+static Type ty_uchar         = { TY_INT, IW_CHAR,  IS_UNSIGNED, 1, 1, NULL, 0, NULL, NULL, 0, 0 };
+static Type ty_short         = { TY_INT, IW_SHORT, IS_SIGNED,   2, 2, NULL, 0, NULL, NULL, 0, 0 };
+static Type ty_ushort        = { TY_INT, IW_SHORT, IS_UNSIGNED, 2, 2, NULL, 0, NULL, NULL, 0, 0 };
+static Type ty_int           = { TY_INT, IW_INT,   IS_SIGNED,   4, 4, NULL, 0, NULL, NULL, 0, 0 };
+static Type ty_uint          = { TY_INT, IW_INT,   IS_UNSIGNED, 4, 4, NULL, 0, NULL, NULL, 0, 0 };
+static Type ty_long          = { TY_INT, IW_LONG,  IS_SIGNED,   8, 8, NULL, 0, NULL, NULL, 0, 0 };
+static Type ty_ulong         = { TY_INT, IW_LONG,  IS_UNSIGNED, 8, 8, NULL, 0, NULL, NULL, 0, 0 };
 
-Type *type_void(void)  { return &ty_void; }
-Type *type_char(void)  { return &ty_char; }
-Type *type_short(void) { return &ty_short; }
-Type *type_int(void)   { return &ty_int; }
-Type *type_long(void)  { return &ty_long; }
+Type *type_void(void)           { return &ty_void; }
+Type *type_char(void)           { return &ty_char; }
+Type *type_short(void)          { return &ty_short; }
+Type *type_int(void)            { return &ty_int; }
+Type *type_long(void)           { return &ty_long; }
+Type *type_unsigned_char(void)  { return &ty_uchar; }
+Type *type_unsigned_short(void) { return &ty_ushort; }
+Type *type_unsigned_int(void)   { return &ty_uint; }
+Type *type_unsigned_long(void)  { return &ty_ulong; }
 
 Type *type_ptr(Type *base)
 {
@@ -57,6 +66,12 @@ Type *type_func(Type *ret, Type **params, int nparams, int prototyped)
 
 int type_is_void(Type *ty)    { return ty && ty->kind == TY_VOID; }
 
+int type_is_plain_char(Type *ty)
+{
+    return ty && ty->kind == TY_INT && ty->width == IW_CHAR &&
+           ty->sign == IS_SIGNED;
+}
+
 int type_is_char(Type *ty)
 {
     return ty && ty->kind == TY_INT && ty->width == IW_CHAR;
@@ -77,6 +92,11 @@ int type_is_integer(Type *ty) { return ty && ty->kind == TY_INT; }
 int type_is_signed(Type *ty)
 {
     return ty && ty->kind == TY_INT && ty->sign == IS_SIGNED;
+}
+
+int type_is_unsigned(Type *ty)
+{
+    return ty && ty->kind == TY_INT && ty->sign == IS_UNSIGNED;
 }
 
 int type_is_pointer(Type *ty) { return ty && ty->kind == TY_PTR; }
@@ -192,6 +212,20 @@ int type_int_rank(Type *ty)
     return 0;
 }
 
+static Type *type_unsigned_same_width(Type *ty)
+{
+    switch (ty->width) {
+    case IW_CHAR:  return type_unsigned_char();
+    case IW_SHORT: return type_unsigned_short();
+    case IW_INT:   return type_unsigned_int();
+    case IW_LONG:  return type_unsigned_long();
+    }
+    return type_unsigned_int();
+}
+
+/* C89 3.2.1.1 integral promotion: narrow integers promote to int when int can
+ * represent every value of the original type; otherwise unsigned int.
+ * On LP64 xcc, int holds every char/short value (signed or unsigned). */
 Type *type_int_promote(Type *ty)
 {
     if (!ty || ty->kind != TY_INT)
@@ -201,15 +235,51 @@ Type *type_int_promote(Type *ty)
     return ty;
 }
 
+/* C89 3.3.8 usual arithmetic conversions. */
 Type *type_arith_convert(Type *a, Type *b)
 {
+    Type *ua;
+    Type *ub;
+    Type *signed_ty;
+    Type *unsigned_ty;
+    int rank_u;
+    int rank_s;
+
     a = type_int_promote(a);
     b = type_int_promote(b);
     if (!a || !b || !type_is_integer(a) || !type_is_integer(b))
         return type_int();
-    if (a->width == IW_LONG || b->width == IW_LONG)
+
+    if (type_is_signed(a) == type_is_signed(b)) {
+        if (type_int_rank(a) >= type_int_rank(b))
+            return a;
+        return b;
+    }
+
+    signed_ty = type_is_signed(a) ? a : b;
+    unsigned_ty = type_is_signed(a) ? b : a;
+    rank_s = type_int_rank(signed_ty);
+    rank_u = type_int_rank(unsigned_ty);
+
+    if (rank_u > rank_s)
+        return unsigned_ty;
+    if (rank_s > rank_u)
+        return signed_ty;
+
+    /* Same rank, mixed sign (e.g. int vs unsigned int). */
+    return type_unsigned_same_width(signed_ty);
+}
+
+/* C89 3.1.5: hexadecimal constant typing (no suffix). */
+Type *type_classify_hex_constant(unsigned long v)
+{
+    if (v <= (unsigned long)INT_MAX)
+        return type_int();
+    if (v <= (unsigned long)UINT_MAX)
+        return type_unsigned_int();
+    if (v <= (unsigned long)LONG_MAX)
         return type_long();
-    return type_int();
+    return type_unsigned_long();
 }
 
 int type_size(Type *ty)
@@ -252,6 +322,17 @@ Type *type_ptr_elem(Type *ty)
     return type_is_pointer(ty) ? ty->base : NULL;
 }
 
+static const char *int_base_name(Type *ty)
+{
+    switch (ty->width) {
+    case IW_CHAR:  return "char";
+    case IW_SHORT: return "short";
+    case IW_INT:   return "int";
+    case IW_LONG:  return "long";
+    }
+    return "integer";
+}
+
 const char *type_name(Type *ty)
 {
     if (!ty)
@@ -259,14 +340,16 @@ const char *type_name(Type *ty)
 
     switch (ty->kind) {
     case TY_VOID: return "void";
-    case TY_INT:
-        switch (ty->width) {
-        case IW_CHAR:  return "char";
-        case IW_SHORT: return "short";
-        case IW_INT:   return "int";
-        case IW_LONG:  return "long";
+    case TY_INT: {
+        const char *base = int_base_name(ty);
+        if (type_is_unsigned(ty)) {
+            size_t n = strlen(base) + 10;
+            char *buf = arena_alloc(n);
+            snprintf(buf, n, "unsigned %s", base);
+            return buf;
         }
-        return "integer";
+        return base;
+    }
     case TY_PTR: {
         const char *inner = type_name(ty->base);
         size_t n = strlen(inner) + 3;
@@ -325,3 +408,9 @@ const char *type_func_sig(Type *ty)
     snprintf(buf + pos, n - (size_t)pos, ")");
     return buf;
 }
+
+/* UNDEFER: U/u and UL/ul literal suffixes (C99). */
+/* UNDEFER: signed char as a distinct type from plain char. */
+/* UNDEFER: octal constant typing (C89 3.1.5). */
+/* UNDEFER: -Wsign-compare / narrowing unsigned-to-signed assignment warnings. */
+/* UNDEFER: full unsigned short ZEXT cast path in lower (CONV_ZEXT16). */

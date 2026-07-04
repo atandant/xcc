@@ -10,7 +10,7 @@
 
 typedef enum {
     TY_VOID,
-    TY_INT,     /* all integer types: char, short, int, long; unsigned later */
+    TY_INT,     /* char, short, int, long; signed and unsigned variants */
     TY_PTR,
     TY_ARRAY,
     TY_FUNC
@@ -24,14 +24,15 @@ typedef enum {
 } IntWidth;
 
 typedef enum {
-    IS_SIGNED
+    IS_SIGNED,
+    IS_UNSIGNED
 } IntSign;
 
 typedef struct Type Type;
 struct Type {
     TypeKind kind;
     IntWidth width;    /* TY_INT: char / short / int / long              */
-    IntSign sign;      /* TY_INT: signedness (unsigned later)          */
+    IntSign sign;      /* TY_INT: signedness                             */
     int size;          /* object size in bytes (0 for void/func)        */
     int align;         /* alignment in bytes                            */
 
@@ -39,7 +40,7 @@ struct Type {
     int count;         /* TY_ARRAY: element count (constant)            */
 
     Type *ret;         /* TY_FUNC: return type                          */
-    Type **params;     /* TY_FUNC: parameter types                      */
+    Type **params;     /* TY_FUNC: parameter type                       */
     int nparams;       /* TY_FUNC: parameter count                      */
     int prototyped;    /* TY_FUNC: 0 = bare () unspecified args          */
 };
@@ -50,6 +51,10 @@ Type *type_char(void);
 Type *type_int(void);
 Type *type_long(void);
 Type *type_short(void);
+Type *type_unsigned_char(void);
+Type *type_unsigned_short(void);
+Type *type_unsigned_int(void);
+Type *type_unsigned_long(void);
 
 /* Derived-type constructors (arena allocated). */
 Type *type_ptr(Type *base);
@@ -59,11 +64,13 @@ Type *type_func(Type *ret, Type **params, int nparams, int prototyped);
 /* Predicates. */
 int type_is_array(Type *ty);
 int type_is_void(Type *ty);
-int type_is_char(Type *ty);
-int type_is_long(Type *ty);
-int type_is_short(Type *ty);
+int type_is_plain_char(Type *ty);   /* plain `char`, not unsigned/signed char */
+int type_is_char(Type *ty);         /* any char width (plain or unsigned) */
+int type_is_long(Type *ty);         /* any long width */
+int type_is_short(Type *ty);        /* any short width */
 int type_is_integer(Type *ty);
 int type_is_signed(Type *ty);
+int type_is_unsigned(Type *ty);
 int type_is_pointer(Type *ty);
 int type_is_scalar(Type *ty);
 int type_is_object(Type *ty);
@@ -80,6 +87,7 @@ int type_int_width(Type *ty);
 int type_int_rank(Type *ty);
 Type *type_int_promote(Type *ty);
 Type *type_arith_convert(Type *a, Type *b);
+Type *type_classify_hex_constant(unsigned long v);
 Type *type_decay(Type *ty);
 Type *type_array_elem(Type *ty);
 int type_array_count(Type *ty);

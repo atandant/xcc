@@ -36,7 +36,7 @@ typedef enum {
 
 typedef enum { LIR_W4, LIR_W8 } LirWidth;
 
-typedef enum { LIR_SGN_Z, LIR_SGN_S } LirSign;
+typedef enum { LIR_SGN_Z, LIR_SGN_S, LIR_SGN_U } LirSign;
 
 typedef enum {
     CC_EQ,

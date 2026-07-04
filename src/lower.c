@@ -202,7 +202,23 @@ static LirWidth store_lir_width(Type *ty)
 
 static LirSign load_sign(Type *ty)
 {
-    return type_is_char(ty) ? LIR_SGN_Z : LIR_SGN_S;
+    if (type_is_plain_char(ty) || type_is_unsigned(ty))
+        return LIR_SGN_Z;
+    return LIR_SGN_S;
+}
+
+static LirSign arith_sign(Type *ty)
+{
+    if (ty && type_is_unsigned(ty))
+        return LIR_SGN_U;
+    return LIR_SGN_S;
+}
+
+static LirSign binop_sign(Node *lhs, Node *rhs, Type *res_ty, BinOp op)
+{
+    if (is_cmp(op))
+        return arith_sign(type_arith_convert(lhs->ty, rhs->ty));
+    return arith_sign(res_ty);
 }
 
 static LirWidth load_lir_width(Type *ty)
@@ -315,7 +331,9 @@ static void lower_cast_into(LowerCtx *c, int dst, Node *n)
             .op = LIR_CONV, .dst = dst, .a = lir_vreg(dst), .conv = CONV_ZEXT8 });
         return;
     }
-    if (type_is_short(to) && !type_is_short(from)) {
+    if (type_is_short(to) && type_is_unsigned(to) && !type_is_short(from))
+        return;
+    if (type_is_short(to) && type_is_signed(to) && !type_is_short(from)) {
         emit(c, (Instr){
             .op = LIR_CONV, .dst = dst, .a = lir_vreg(dst), .conv = CONV_SEXT16 });
         emit(c, (Instr){
@@ -324,6 +342,12 @@ static void lower_cast_into(LowerCtx *c, int dst, Node *n)
     }
     if (type_is_long(to) && type_is_integer(from) &&
         type_int_width(from) == 4) {
+        if (type_is_unsigned(to)) {
+            emit(c, (Instr){
+                .op = LIR_CONV, .dst = dst, .a = lir_vreg(dst),
+                .conv = CONV_TRUNC_LO32 });
+            return;
+        }
         emit(c, (Instr){
             .op = LIR_CONV, .dst = dst, .a = lir_vreg(dst), .conv = CONV_SEXT32_64 });
         return;
@@ -387,7 +411,8 @@ static void lower_ptr_int_arith(LowerCtx *c, int dst, BinOp op,
     }
 }
 
-static void lower_setcc(LowerCtx *c, int dst, BinOp op, int lhs, int rhs, int w)
+static void lower_setcc(LowerCtx *c, int dst, BinOp op, int lhs, int rhs,
+                        int w, LirSign sgn)
 {
     emit(c, (Instr){
         .op = LIR_SETCC,
@@ -396,10 +421,12 @@ static void lower_setcc(LowerCtx *c, int dst, BinOp op, int lhs, int rhs, int w)
         .b = lir_vreg(rhs),
         .w = (LirWidth)w,
         .cc = binop_cc(op),
+        .sgn = sgn,
     });
 }
 
-static void lower_binop(LowerCtx *c, int dst, BinOp op, Node *lhs, Node *rhs)
+static void lower_binop(LowerCtx *c, int dst, BinOp op, Node *lhs, Node *rhs,
+                        Type *res_ty)
 {
     if (type_is_pointer(lhs->ty) && type_is_pointer(rhs->ty) && op == OP_SUB) {
         lower_ptr_diff(c, dst, lhs, rhs);
@@ -415,32 +442,38 @@ static void lower_binop(LowerCtx *c, int dst, BinOp op, Node *lhs, Node *rhs)
     int vl = lower_expr(c, lhs);
     vl = protect_home_before(c, vl, rhs);
     int vr = lower_expr(c, rhs);
+    LirSign sgn = binop_sign(lhs, rhs, res_ty, op);
 
     if (is_cmp(op) && rhs->kind == ND_NUM && rhs->val == 0) {
-        lower_setcc(c, dst, op, vl, vr, w);
+        lower_setcc(c, dst, op, vl, vr, w, sgn);
         return;
     }
 
     switch (op) {
     case OP_ADD:
         emit(c, (Instr){
-            .op = LIR_ADD, .dst = dst, .a = lir_vreg(vl), .b = lir_vreg(vr), .w = (LirWidth)w });
+            .op = LIR_ADD, .dst = dst, .a = lir_vreg(vl), .b = lir_vreg(vr),
+            .w = (LirWidth)w });
         return;
     case OP_SUB:
         emit(c, (Instr){
-            .op = LIR_SUB, .dst = dst, .a = lir_vreg(vl), .b = lir_vreg(vr), .w = (LirWidth)w });
+            .op = LIR_SUB, .dst = dst, .a = lir_vreg(vl), .b = lir_vreg(vr),
+            .w = (LirWidth)w });
         return;
     case OP_MUL:
         emit(c, (Instr){
-            .op = LIR_MUL, .dst = dst, .a = lir_vreg(vl), .b = lir_vreg(vr), .w = (LirWidth)w });
+            .op = LIR_MUL, .dst = dst, .a = lir_vreg(vl), .b = lir_vreg(vr),
+            .w = (LirWidth)w });
         return;
     case OP_DIV:
         emit(c, (Instr){
-            .op = LIR_DIV, .dst = dst, .a = lir_vreg(vl), .b = lir_vreg(vr), .w = (LirWidth)w });
+            .op = LIR_DIV, .dst = dst, .a = lir_vreg(vl), .b = lir_vreg(vr),
+            .w = (LirWidth)w, .sgn = sgn });
         return;
     case OP_MOD:
         emit(c, (Instr){
-            .op = LIR_MOD, .dst = dst, .a = lir_vreg(vl), .b = lir_vreg(vr), .w = (LirWidth)w });
+            .op = LIR_MOD, .dst = dst, .a = lir_vreg(vl), .b = lir_vreg(vr),
+            .w = (LirWidth)w, .sgn = sgn });
         return;
     case OP_EQ:
     case OP_NE:
@@ -448,7 +481,7 @@ static void lower_binop(LowerCtx *c, int dst, BinOp op, Node *lhs, Node *rhs)
     case OP_LE:
     case OP_GT:
     case OP_GE:
-        lower_setcc(c, dst, op, vl, vr, w);
+        lower_setcc(c, dst, op, vl, vr, w, sgn);
         return;
     }
 }
@@ -577,7 +610,7 @@ static int lower_expr(LowerCtx *c, Node *n)
     }
     case ND_BINOP: {
         int dst = fresh(c);
-        lower_binop(c, dst, n->op, n->lhs, n->rhs);
+        lower_binop(c, dst, n->op, n->lhs, n->rhs, n->ty);
         return dst;
     }
     default:
@@ -599,6 +632,7 @@ static void lower_cond_branch(LowerCtx *c, Node *cond, int false_label)
             .b = lir_vreg(vr),
             .w = (LirWidth)w,
             .cc = false_branch_cc(cond->op),
+            .sgn = binop_sign(cond->lhs, cond->rhs, cond->ty, cond->op),
             .label = false_label,
         });
         return;

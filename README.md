@@ -33,21 +33,22 @@ make
 ## Status (v0.0.1.6)
 
 The pipeline runs end to end (lex → parse → sema → lower → liveness →
-regalloc → emit → `.s` → gcc) with a typed semantic layer and 340+ acceptance
+regalloc → emit → `.s` → gcc) with a typed semantic layer and 380+ acceptance
 tests.
 
 | Supported | Not yet |
 | --- | --- |
 | `int`, `char`, `long`, `void`, pointers (`*`, `&`, dereference) | `sizeof`, brace initializers |
-| parenthesized declarators (`int (*p)[3]`), casts (`(int (*)[3])`) | arrays of pointers (`int *p[3]`) |
-| N-dimensional arrays, `[]` subscript, `ptr ± int/long`, `ptr - ptr`, param decay | unsigned types |
-| typed declarations, parameters, returns | structs, unions, enums, `typedef` |
-| casts `(type)expr`, `(void)expr` discard | function pointers |
-| function calls (prototyped arg checking, void `*` conversions) | preprocessor (`#include`, `#define`) |
-| `if` / `else`, `while`, `for`, blocks | multiple translation units |
-| `+ - * / %`, unary `-`, comparisons | `-W` CLI flags |
+| `unsigned` (`char`/`short`/`int`/`long`), usual arithmetic conversions | arrays of pointers (`int *p[3]`) |
+| parenthesized declarators (`int (*p)[3]`), casts (`(int (*)[3])`) | structs, unions, enums, `typedef` |
+| N-dimensional arrays, `[]` subscript, `ptr ± int/long`, `ptr - ptr`, param decay | function pointers |
+| typed declarations, parameters, returns | preprocessor (`#include`, `#define`) |
+| casts `(type)expr`, `(void)expr` discard | multiple translation units |
+| function calls (prototyped arg checking, void `*` conversions) | `-W` CLI flags |
+| `if` / `else`, `while`, `for`, blocks | |
+| `+ - * / %`, unary `-`, comparisons (signed and unsigned) | |
 | pointer `==` / `!=` / ordering, truthiness, `p == 0` | |
-| `L`/`l` literal suffixes; unsuffixed decimals → `int` or `long` | |
+| `L`/`l` literal suffixes; `0x` hex literals (C89 typing) | |
 | `int`/`long` promotions; `ptr - ptr` → `long` | |
 | warnings (`implicit` decl, unprototyped calls, `char` overflow, …) | |
 | `file:line:col` diagnostics, carets, `note:` spans, color (`auto`) | |
@@ -55,6 +56,10 @@ tests.
 > Locals use type-aware stack layout (`char` 1 byte, `int` 4 bytes, `long` and
 > pointers 8 bytes). On x86-64 Linux (SysV LP64), `long` is 64 bits — the same
 > width as pointers.
+>
+> Plain `char` loads as an unsigned byte (0–255); use `unsigned char` when you
+> need an unsigned type in expressions. `U`/`u` literal suffixes are not supported
+> (C99); use `0x` constants or casts instead.
 >
 > `auto` arrays are not zero-initialized (faithful C89).
 
