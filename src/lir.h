@@ -50,7 +50,9 @@ typedef enum {
 typedef enum {
     CONV_ZEXT8,
     CONV_SEXT8,
+    CONV_ZEXT16,
     CONV_SEXT16,
+    CONV_ZEXT32,     /* zero-extend low 32 bits to 64 (unsigned widen) */
     CONV_SEXT32_64,
     CONV_TRUNC_LO32,
 } ConvKind;

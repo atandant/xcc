@@ -171,27 +171,34 @@ static LirCond false_branch_cc(BinOp op)
 
 static int binop_width(Node *lhs, Node *rhs)
 {
-    if (type_is_pointer(lhs->ty) || type_is_pointer(rhs->ty))
+    TypeScalarInfo li;
+    TypeScalarInfo ri;
+
+    if (type_scalar_info(lhs->ty, &li) && li.width == 8)
         return LIR_W8;
-    if (type_is_long(lhs->ty) || type_is_long(rhs->ty))
+    if (type_scalar_info(rhs->ty, &ri) && ri.width == 8)
         return LIR_W8;
     return LIR_W4;
 }
 
 static LirWidth expr_width(Node *n)
 {
+    TypeScalarInfo si;
+
     if (!n || !n->ty)
         return LIR_W4;
-    if (type_is_pointer(n->ty) || type_is_long(n->ty))
+    if (type_scalar_info(n->ty, &si) && si.width == 8)
         return LIR_W8;
     return LIR_W4;
 }
 
 static int store_width_bytes(Type *ty)
 {
-    if (type_is_integer(ty))
-        return type_int_width(ty);
-    return 8;
+    TypeScalarInfo si;
+
+    if (type_scalar_info(ty, &si))
+        return si.width;
+    return 0;
 }
 
 static LirWidth store_lir_width(Type *ty)
@@ -202,14 +209,18 @@ static LirWidth store_lir_width(Type *ty)
 
 static LirSign load_sign(Type *ty)
 {
-    if (type_is_plain_char(ty) || type_is_unsigned(ty))
+    TypeScalarInfo si;
+
+    if (type_scalar_info(ty, &si) && si.is_integer && !si.is_signed)
         return LIR_SGN_Z;
     return LIR_SGN_S;
 }
 
 static LirSign arith_sign(Type *ty)
 {
-    if (ty && type_is_unsigned(ty))
+    TypeScalarInfo si;
+
+    if (type_scalar_info(ty, &si) && si.is_integer && !si.is_signed)
         return LIR_SGN_U;
     return LIR_SGN_S;
 }
@@ -223,7 +234,9 @@ static LirSign binop_sign(Node *lhs, Node *rhs, Type *res_ty, BinOp op)
 
 static LirWidth load_lir_width(Type *ty)
 {
-    if (type_is_long(ty) || type_is_pointer(ty))
+    TypeScalarInfo si;
+
+    if (type_scalar_info(ty, &si) && si.width == 8)
         return LIR_W8;
     return LIR_W4;
 }
@@ -234,7 +247,7 @@ static void emit_widen_to_rax(LowerCtx *c, int v, Type *ty)
         return;
     if (type_is_char(ty))
         return;
-    if (type_is_short(ty) && type_is_signed(ty)) {
+    if (type_is_short(ty) && load_sign(ty) == LIR_SGN_S) {
         int t = fresh(c);
         emit(c, (Instr){
             .op = LIR_CONV, .dst = t, .a = lir_vreg(v), .conv = CONV_SEXT16 });
@@ -273,6 +286,13 @@ static int ptr_elem_size(Type *ptr_ty)
 {
     Type *elem = type_ptr_elem(ptr_ty);
     return elem ? type_size(elem) : 1;
+}
+
+/* x86-64 add/sub/cmp/imul immediates are sign-extended imm32, so a constant
+   may be used in place only when it fits a signed 32-bit field. */
+static int fits_imm32(long v)
+{
+    return v >= -2147483647L - 1 && v <= 2147483647L;
 }
 
 static int is_ptr_int_arith(BinOp op, Node *lhs, Node *rhs)
@@ -315,6 +335,24 @@ static int lower_addr(LowerCtx *c, Node *n)
     }
 }
 
+static void emit_conv(LowerCtx *c, int dst, ConvKind k)
+{
+    emit(c, (Instr){ .op = LIR_CONV, .dst = dst, .a = lir_vreg(dst), .conv = k });
+}
+
+/*
+ * Canonical integer cast (C89 6.2.1.2 conversions).
+ *
+ * A value of type T is `value mod 2^(width_of_T)` reinterpreted with T's
+ * signedness.  Operationally this is a single decision keyed on the
+ * destination width/signedness (for narrowing or same-width casts) or on the
+ * source signedness (when widening to 64 bits), which is what this function
+ * encodes as one table instead of the previous scattered special cases.
+ *
+ * CONV op reach reminder: ZEXT8/ZEXT16/ZEXT32/SEXT16 already extend to the full
+ * 64-bit register; SEXT8 and SEXT32_64 only reach 32 and 64 respectively, so a
+ * signed byte widened to 64 bits is composed as SEXT8 then SEXT32_64.
+ */
 static void lower_cast_into(LowerCtx *c, int dst, Node *n)
 {
     int v = lower_expr(c, n->operand);
@@ -326,41 +364,58 @@ static void lower_cast_into(LowerCtx *c, int dst, Node *n)
     if (type_is_void(to))
         return;
 
-    if (type_is_char(to) && !type_is_char(from)) {
-        emit(c, (Instr){
-            .op = LIR_CONV, .dst = dst, .a = lir_vreg(dst),
-            .conv = type_is_signed_char(to) ? CONV_SEXT8 : CONV_ZEXT8 });
+    TypeScalarInfo di;
+    TypeScalarInfo si;
+    if (!type_scalar_info(to, &di) || !type_scalar_info(from, &si))
         return;
-    }
-    if (type_is_short(to) && type_is_unsigned(to) && !type_is_short(from))
+
+    int dw = di.width;
+    int ds = di.is_signed;
+    int sw = si.width;
+    int ss = si.is_signed;
+
+    /* No representation change. */
+    if (dw == sw && ds == ss)
         return;
-    if (type_is_short(to) && type_is_signed(to) && !type_is_short(from)) {
-        emit(c, (Instr){
-            .op = LIR_CONV, .dst = dst, .a = lir_vreg(dst), .conv = CONV_SEXT16 });
-        emit(c, (Instr){
-            .op = LIR_CONV, .dst = dst, .a = lir_vreg(dst), .conv = CONV_SEXT32_64 });
-        return;
-    }
-    if (type_is_long(to) && type_is_integer(from) &&
-        type_int_width(from) == 4) {
-        if (type_is_unsigned(to)) {
-            emit(c, (Instr){
-                .op = LIR_CONV, .dst = dst, .a = lir_vreg(dst),
-                .conv = CONV_TRUNC_LO32 });
+
+    if (dw >= 8) {
+        /* Widen to 64 bits preserving the source value (per source sign). */
+        if (sw >= 8)
             return;
+        if (sw == 4) {
+            emit_conv(c, dst, ss ? CONV_SEXT32_64 : CONV_ZEXT32);
+        } else if (sw == 2) {
+            emit_conv(c, dst, ss ? CONV_SEXT16 : CONV_ZEXT16);
+        } else {
+            if (ss) {
+                emit_conv(c, dst, CONV_SEXT8);
+                emit_conv(c, dst, CONV_SEXT32_64);
+            } else {
+                emit_conv(c, dst, CONV_ZEXT8);
+            }
         }
-        emit(c, (Instr){
-            .op = LIR_CONV, .dst = dst, .a = lir_vreg(dst), .conv = CONV_SEXT32_64 });
         return;
     }
-    if (type_is_integer(to) && type_int_width(to) == 4 &&
-        (type_is_pointer(from) ||
-         (type_is_integer(from) && type_int_width(from) == 8))) {
-        emit(c, (Instr){
-            .op = LIR_CONV, .dst = dst, .a = lir_vreg(dst), .conv = CONV_TRUNC_LO32 });
-        emit(c, (Instr){
-            .op = LIR_CONV, .dst = dst, .a = lir_vreg(dst), .conv = CONV_SEXT32_64 });
+
+    if (dw == 4) {
+        /* Truncate to 32 bits then re-canonicalise per destination sign.
+           A signed int from a <=32-bit source is already canonical. */
+        if (sw >= 8)
+            emit_conv(c, dst, ds ? CONV_SEXT32_64 : CONV_ZEXT32);
+        else if (ds && sw == 4)
+            emit_conv(c, dst, CONV_SEXT32_64);
+        else if (!ds)
+            emit_conv(c, dst, CONV_ZEXT32);
+        return;
     }
+
+    if (dw == 2) {
+        emit_conv(c, dst, ds ? CONV_SEXT16 : CONV_ZEXT16);
+        return;
+    }
+
+    /* dw == 1 */
+    emit_conv(c, dst, ds ? CONV_SEXT8 : CONV_ZEXT8);
 }
 
 static void lower_ptr_diff(LowerCtx *c, int dst, Node *lhs, Node *rhs)
@@ -392,11 +447,9 @@ static void lower_ptr_int_arith(LowerCtx *c, int dst, BinOp op,
     int vp = lower_expr(c, ptr);
 
     if (scale > 1) {
-        int vs = fresh(c);
-        emit(c, (Instr){ .op = LIR_MOVI, .dst = vs, .a = lir_imm(scale) });
         int t = fresh(c);
         emit(c, (Instr){
-            .op = LIR_MUL, .dst = t, .a = lir_vreg(vi), .b = lir_vreg(vs), .w = LIR_W8 });
+            .op = LIR_MUL, .dst = t, .a = lir_vreg(vi), .b = lir_imm(scale), .w = LIR_W8 });
         vi = t;
     }
 
@@ -412,14 +465,14 @@ static void lower_ptr_int_arith(LowerCtx *c, int dst, BinOp op,
     }
 }
 
-static void lower_setcc(LowerCtx *c, int dst, BinOp op, int lhs, int rhs,
+static void lower_setcc(LowerCtx *c, int dst, BinOp op, int lhs, Operand rhs,
                         int w, LirSign sgn)
 {
     emit(c, (Instr){
         .op = LIR_SETCC,
         .dst = dst,
         .a = lir_vreg(lhs),
-        .b = lir_vreg(rhs),
+        .b = rhs,
         .w = (LirWidth)w,
         .cc = binop_cc(op),
         .sgn = sgn,
@@ -442,38 +495,43 @@ static void lower_binop(LowerCtx *c, int dst, BinOp op, Node *lhs, Node *rhs,
     int w = binop_width(lhs, rhs);
     int vl = lower_expr(c, lhs);
     vl = protect_home_before(c, vl, rhs);
-    int vr = lower_expr(c, rhs);
     LirSign sgn = binop_sign(lhs, rhs, res_ty, op);
 
-    if (is_cmp(op) && rhs->kind == ND_NUM && rhs->val == 0) {
-        lower_setcc(c, dst, op, vl, vr, w, sgn);
-        return;
-    }
+    /* Fold a constant right operand into an immediate for add/sub/mul and the
+       comparisons; div/mod need the divisor in a register, so keep those in a
+       vreg. */
+    int imm_ok = rhs->kind == ND_NUM && fits_imm32(rhs->val) &&
+                 op != OP_DIV && op != OP_MOD;
+    Operand rb;
+    if (imm_ok)
+        rb = lir_imm(rhs->val);
+    else
+        rb = lir_vreg(lower_expr(c, rhs));
 
     switch (op) {
     case OP_ADD:
         emit(c, (Instr){
-            .op = LIR_ADD, .dst = dst, .a = lir_vreg(vl), .b = lir_vreg(vr),
+            .op = LIR_ADD, .dst = dst, .a = lir_vreg(vl), .b = rb,
             .w = (LirWidth)w });
         return;
     case OP_SUB:
         emit(c, (Instr){
-            .op = LIR_SUB, .dst = dst, .a = lir_vreg(vl), .b = lir_vreg(vr),
+            .op = LIR_SUB, .dst = dst, .a = lir_vreg(vl), .b = rb,
             .w = (LirWidth)w });
         return;
     case OP_MUL:
         emit(c, (Instr){
-            .op = LIR_MUL, .dst = dst, .a = lir_vreg(vl), .b = lir_vreg(vr),
+            .op = LIR_MUL, .dst = dst, .a = lir_vreg(vl), .b = rb,
             .w = (LirWidth)w });
         return;
     case OP_DIV:
         emit(c, (Instr){
-            .op = LIR_DIV, .dst = dst, .a = lir_vreg(vl), .b = lir_vreg(vr),
+            .op = LIR_DIV, .dst = dst, .a = lir_vreg(vl), .b = rb,
             .w = (LirWidth)w, .sgn = sgn });
         return;
     case OP_MOD:
         emit(c, (Instr){
-            .op = LIR_MOD, .dst = dst, .a = lir_vreg(vl), .b = lir_vreg(vr),
+            .op = LIR_MOD, .dst = dst, .a = lir_vreg(vl), .b = rb,
             .w = (LirWidth)w, .sgn = sgn });
         return;
     case OP_EQ:
@@ -482,7 +540,7 @@ static void lower_binop(LowerCtx *c, int dst, BinOp op, Node *lhs, Node *rhs,
     case OP_LE:
     case OP_GT:
     case OP_GE:
-        lower_setcc(c, dst, op, vl, vr, w, sgn);
+        lower_setcc(c, dst, op, vl, rb, w, sgn);
         return;
     }
 }
@@ -626,11 +684,15 @@ static void lower_cond_branch(LowerCtx *c, Node *cond, int false_label)
         int w = binop_width(cond->lhs, cond->rhs);
         int vl = lower_expr(c, cond->lhs);
         vl = protect_home_before(c, vl, cond->rhs);
-        int vr = lower_expr(c, cond->rhs);
+        Operand rb;
+        if (cond->rhs->kind == ND_NUM && fits_imm32(cond->rhs->val))
+            rb = lir_imm(cond->rhs->val);
+        else
+            rb = lir_vreg(lower_expr(c, cond->rhs));
         emit(c, (Instr){
             .op = LIR_BR,
             .a = lir_vreg(vl),
-            .b = lir_vreg(vr),
+            .b = rb,
             .w = (LirWidth)w,
             .cc = false_branch_cc(cond->op),
             .sgn = binop_sign(cond->lhs, cond->rhs, cond->ty, cond->op),

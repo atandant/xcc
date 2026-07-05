@@ -34,34 +34,6 @@ static int is_void_ptr_type(Type *ty)
 }
 
 /* C89 3.4 / 3.2.2.3: evaluate an integral constant expression (ICE). */
-static void ice_apply_cast(Type *dst, long *val)
-{
-    if (!dst || !val)
-        return;
-    if (type_is_unsigned(dst)) {
-        int w = type_int_width(dst);
-        if (w == 1)
-            *val &= 0xFF;
-        else if (w == 2)
-            *val &= 0xFFFF;
-        else if (w == 4)
-            *val = (long)(unsigned int)*val;
-        /* unsigned long keeps low 64 bits in long representation */
-        return;
-    }
-    if (type_is_plain_char(dst))
-        *val &= 0xFF;
-    else if (type_is_signed_char(dst))
-        *val = (long)(signed char)*val;
-    else if (type_is_unsigned_char(dst))
-        *val &= 0xFF;
-    else if (type_is_short(dst))
-        *val = (long)(short)*val;
-    else if (type_is_integer(dst) && type_int_width(dst) == 4)
-        *val = (int)*val;
-    /* long and wider signed targets keep the full signed value */
-}
-
 static int ice_eval(Node *n, long *out)
 {
     long l, r;
@@ -97,7 +69,7 @@ static int ice_eval(Node *n, long *out)
             return 0;
         if (!ice_eval(n->operand, out))
             return 0;
-        ice_apply_cast(n->cast_ty, out);
+        *out = type_convert_const(*out, n->cast_ty);
         return 1;
     default:
         return 0;

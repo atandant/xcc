@@ -196,7 +196,9 @@ static const char *conv_name(ConvKind k)
     switch (k) {
     case CONV_ZEXT8:     return "zext8";
     case CONV_SEXT8:     return "sext8";
+    case CONV_ZEXT16:    return "zext16";
     case CONV_SEXT16:    return "sext16";
+    case CONV_ZEXT32:    return "zext32";
     case CONV_SEXT32_64: return "sext32_64";
     case CONV_TRUNC_LO32: return "trunc_lo32";
     }

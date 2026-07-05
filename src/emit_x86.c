@@ -203,6 +203,12 @@ static void load_mem_addr(EmitCtx *c, Operand mem, const char *reg)
         return;
     }
 
+    if (mem.u.mem.index == LIR_NO_IDX && mem.u.mem.disp == 0) {
+        /* base + 0: load the base directly into the target register. */
+        emit_vreg_slot(c, mem.u.mem.base, reg);
+        return;
+    }
+
     emit_vreg_slot(c, mem.u.mem.base, "%r10");
     if (mem.u.mem.index == LIR_NO_IDX) {
         fprintf(c->out, "  lea %ld(%%r10), %s\n", mem.u.mem.disp, reg);
@@ -308,6 +314,69 @@ static const char *setcc_for_sign(LirCond cc, LirSign sgn)
         }
     }
     return setcc_for(cc);
+}
+
+/* Returns a register name holding operand `a` for use as the cmp/test
+   destination.  If `a` is already in a physical register it is used in place;
+   otherwise it is loaded into `scratch`. */
+static const char *cmp_lhs_reg(EmitCtx *c, Operand op, LirWidth w, int scratch)
+{
+    int phys = -1;
+    if (op.kind == OPND_VREG)
+        phys = c->alloc->vreg_reg[op.u.vreg];
+    else if (op.kind == OPND_PHYS)
+        phys = op.u.phys;
+
+    if (phys >= 0)
+        return x86_reg_name_lir(phys, w);
+
+    load_operand(c, op, reg64_name(scratch), w);
+    return x86_reg_name_lir(scratch, w);
+}
+
+/* Emits a `cmp`/`test` comparing a against b (flags reflect a - b), keeping
+   operands in place where possible instead of funnelling through scratch. */
+static void emit_cmp(EmitCtx *c, Operand a, Operand b, LirWidth w)
+{
+    int s0 = c->td->scratch0;
+    int s1 = c->td->scratch1;
+
+    /* Comparison against zero collapses to `test`, avoiding materializing 0. */
+    if (b.kind == OPND_IMM && b.u.imm == 0) {
+        const char *ar = cmp_lhs_reg(c, a, w, s0);
+        fprintf(c->out, "  test %s, %s\n", ar, ar);
+        return;
+    }
+
+    const char *ar = cmp_lhs_reg(c, a, w, s0);
+
+    if (b.kind == OPND_IMM) {
+        fprintf(c->out, "  cmp $%ld, %s\n", b.u.imm, ar);
+        return;
+    }
+
+    int bphys = -1;
+    if (b.kind == OPND_VREG)
+        bphys = c->alloc->vreg_reg[b.u.vreg];
+    else if (b.kind == OPND_PHYS)
+        bphys = b.u.phys;
+
+    if (bphys >= 0) {
+        fprintf(c->out, "  cmp %s, %s\n", x86_reg_name_lir(bphys, w), ar);
+        return;
+    }
+
+    if (b.kind == OPND_VREG) {
+        int off = c->alloc->vreg_off[b.u.vreg];
+        if (w == LIR_W4)
+            fprintf(c->out, "  cmpl %d(%%rbp), %s\n", off, ar);
+        else
+            fprintf(c->out, "  cmpq %d(%%rbp), %s\n", off, ar);
+        return;
+    }
+
+    load_operand(c, b, reg64_name(s1), w);
+    fprintf(c->out, "  cmp %s, %s\n", x86_reg_name_lir(s1, w), ar);
 }
 
 static void emit_store_mem(EmitCtx *c, Operand mem, LirWidth w, int bytes)
@@ -443,9 +512,8 @@ static void emit_binop_into(EmitCtx *c, Instr *ins, int dst_phys, LirWidth w,
 
 static void emit_arg_reg_store(EmitCtx *c, int phys, Type *ty, int offset)
 {
-    int w = 8;
-    if (type_is_integer(ty))
-        w = type_int_width(ty);
+    TypeScalarInfo si;
+    int w = type_scalar_info(ty, &si) ? si.width : 8;
 
     switch (w) {
     case 1:
@@ -680,27 +748,7 @@ static void emit_instr(EmitCtx *c, Instr *ins)
     }
 
     case LIR_SETCC: {
-        LirWidth w = ins->w;
-        int off_b = spilled_vreg_off(c, ins->b);
-        if (off_b != INT_MAX) {
-            load_operand(c, ins->a, reg64_name(s0), w);
-            if (w == LIR_W4)
-                fprintf(c->out, "  cmpl %d(%%rbp), %s\n", off_b, reg32_name(s0));
-            else
-                fprintf(c->out, "  cmpq %d(%%rbp), %s\n", off_b, reg64_name(s0));
-            fprintf(c->out, "  %s %%al\n", setcc_for_sign(ins->cc, ins->sgn));
-            fprintf(c->out, "  movzbq %%al, %%rax\n");
-            store_vreg_slot(c, ins->dst, "%rax");
-            return;
-        }
-        load_operand(c, ins->a, reg64_name(s0), w);
-        load_operand(c, ins->b, reg64_name(s1), w);
-        if (w == LIR_W4)
-            fprintf(c->out, "  cmp %s, %s\n",
-                    reg32_name(s1), reg32_name(s0));
-        else
-            fprintf(c->out, "  cmp %s, %s\n",
-                    reg64_name(s1), reg64_name(s0));
+        emit_cmp(c, ins->a, ins->b, ins->w);
         fprintf(c->out, "  %s %%al\n", setcc_for_sign(ins->cc, ins->sgn));
         fprintf(c->out, "  movzbq %%al, %%rax\n");
         store_vreg_slot(c, ins->dst, "%rax");
@@ -709,27 +757,7 @@ static void emit_instr(EmitCtx *c, Instr *ins)
 
     case LIR_BR: {
         invalidate_rax(c);
-        LirWidth w = ins->w;
-        int off_b = spilled_vreg_off(c, ins->b);
-        if (off_b != INT_MAX) {
-            load_operand(c, ins->a, reg64_name(s0), w);
-            if (w == LIR_W4)
-                fprintf(c->out, "  cmpl %d(%%rbp), %s\n", off_b, reg32_name(s0));
-            else
-                fprintf(c->out, "  cmpq %d(%%rbp), %s\n", off_b, reg64_name(s0));
-            fprintf(c->out, "  %s ", jcc_for_sign(ins->cc, ins->sgn));
-            emit_label_ref(c, ins->label);
-            fprintf(c->out, "\n");
-            return;
-        }
-        load_operand(c, ins->a, reg64_name(s0), w);
-        load_operand(c, ins->b, reg64_name(s1), w);
-        if (w == LIR_W4)
-            fprintf(c->out, "  cmp %s, %s\n",
-                    reg32_name(s1), reg32_name(s0));
-        else
-            fprintf(c->out, "  cmp %s, %s\n",
-                    reg64_name(s1), reg64_name(s0));
+        emit_cmp(c, ins->a, ins->b, ins->w);
         fprintf(c->out, "  %s ", jcc_for_sign(ins->cc, ins->sgn));
         emit_label_ref(c, ins->label);
         fprintf(c->out, "\n");
@@ -758,9 +786,15 @@ static void emit_instr(EmitCtx *c, Instr *ins)
         case CONV_SEXT8:
             fprintf(c->out, "  movsbl %%al, %%eax\n");
             break;
+        case CONV_ZEXT16:
+            fprintf(c->out, "  movzwl %%ax, %%eax\n");
+            break;
         case CONV_SEXT16:
             fprintf(c->out, "  movswl %%ax, %%eax\n");
             fprintf(c->out, "  cltq\n");
+            break;
+        case CONV_ZEXT32:
+            fprintf(c->out, "  mov %%eax, %%eax\n");
             break;
         case CONV_SEXT32_64:
             fprintf(c->out, "  cltq\n");

@@ -45,6 +45,20 @@ struct Type {
     int prototyped;    /* TY_FUNC: 0 = bare () unspecified args          */
 };
 
+typedef struct {
+    int width;      /* bytes: 1, 2, 4, 8 */
+    int is_signed;  /* xcc treats plain char as unsigned-byte */
+    int rank;       /* C integer conversion rank */
+} TypeIntInfo;
+
+typedef struct {
+    int width;      /* machine representation width in bytes */
+    int is_signed;  /* meaningful for integer scalars */
+    int rank;       /* integer rank, or 0 for pointers */
+    int is_integer;
+    int is_pointer;
+} TypeScalarInfo;
+
 /* Builtin singleton constructors. */
 Type *type_void(void);
 Type *type_char(void);
@@ -88,6 +102,11 @@ int type_size(Type *ty);
 int type_align(Type *ty);
 int type_int_width(Type *ty);
 int type_int_rank(Type *ty);
+int type_int_info(Type *ty, TypeIntInfo *out);
+int type_scalar_info(Type *ty, TypeScalarInfo *out);
+/* Applies a C89 integer conversion of value `v` to integer type `ty`
+   (truncate mod 2^width, reinterpret with ty's signedness). */
+long type_convert_const(long v, Type *ty);
 Type *type_int_promote(Type *ty);
 Type *type_arith_convert(Type *a, Type *b);
 Type *type_classify_hex_constant(unsigned long v);

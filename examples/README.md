@@ -14,6 +14,7 @@ binary.
 | `gcd.c`          | `gcd(48, 18)`                        | 6         |
 | `pointer_swap.c` | Swap via `int *`, return `x + y`     | 30        |
 | `bsort.c`        | Bubble sort `int[5]`, return `a[0]`  | 3         |
+| `star_bfs.c`     | BFS best path, decimal-coded nodes   | 15        |
 | `warnex.c`       | Warning demo (compiles; see stderr)  | 42        |
 
 `warnex.c` is a **deliberately sloppy** C89 program: it triggers many default

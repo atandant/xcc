@@ -203,29 +203,116 @@ int type_assignable(Type *dst, Type *src)
 
 int type_int_width(Type *ty)
 {
-    if (!ty || ty->kind != TY_INT)
-        return 0;
+    TypeIntInfo info;
+    return type_int_info(ty, &info) ? info.width : 0;
+}
 
-    switch (ty->width) {
-    case IW_CHAR:  return 1;
-    case IW_SHORT: return 2;
-    case IW_INT:   return 4;
-    case IW_LONG:  return 8;
+static long sign_extend_masked(unsigned long v, int bits)
+{
+    unsigned long mask;
+    unsigned long sign;
+
+    if (bits >= 8 * (int)sizeof(long))
+        return (long)v;
+
+    mask = (1UL << bits) - 1;
+    sign = 1UL << (bits - 1);
+    v &= mask;
+    if (v & sign)
+        return -(long)((~v & mask) + 1);
+    return (long)v;
+}
+
+long type_convert_const(long v, Type *ty)
+{
+    TypeIntInfo info;
+    int bits;
+    unsigned long uv;
+
+    if (!type_int_info(ty, &info))
+        return v;
+
+    bits = info.width * 8;
+    uv = (unsigned long)v;
+
+    if (!info.is_signed) {
+        if (info.width >= 8)
+            return (long)uv;
+        return (long)(uv & ((1UL << bits) - 1));
     }
-    return 0;
+
+    return sign_extend_masked(uv, bits);
 }
 
 int type_int_rank(Type *ty)
 {
+    TypeIntInfo info;
+    return type_int_info(ty, &info) ? info.rank : 0;
+}
+
+int type_int_info(Type *ty, TypeIntInfo *out)
+{
     if (!ty || ty->kind != TY_INT)
         return 0;
 
+    if (out)
+        out->is_signed = type_is_signed(ty) && !type_is_plain_char(ty);
+
     switch (ty->width) {
-    case IW_CHAR:  return 1;
-    case IW_SHORT: return 2;
-    case IW_INT:   return 3;
-    case IW_LONG:  return 4;
+    case IW_CHAR:
+        if (out) {
+            out->width = 1;
+            out->rank = 1;
+        }
+        return 1;
+    case IW_SHORT:
+        if (out) {
+            out->width = 2;
+            out->rank = 2;
+        }
+        return 1;
+    case IW_INT:
+        if (out) {
+            out->width = 4;
+            out->rank = 3;
+        }
+        return 1;
+    case IW_LONG:
+        if (out) {
+            out->width = 8;
+            out->rank = 4;
+        }
+        return 1;
     }
+    return 0;
+}
+
+int type_scalar_info(Type *ty, TypeScalarInfo *out)
+{
+    TypeIntInfo ii;
+
+    if (type_int_info(ty, &ii)) {
+        if (out) {
+            out->width = ii.width;
+            out->is_signed = ii.is_signed;
+            out->rank = ii.rank;
+            out->is_integer = 1;
+            out->is_pointer = 0;
+        }
+        return 1;
+    }
+
+    if (type_is_pointer(ty)) {
+        if (out) {
+            out->width = 8;
+            out->is_signed = 0;
+            out->rank = 0;
+            out->is_integer = 0;
+            out->is_pointer = 1;
+        }
+        return 1;
+    }
+
     return 0;
 }
 
@@ -255,8 +342,6 @@ Type *type_int_promote(Type *ty)
 /* C89 3.3.8 usual arithmetic conversions. */
 Type *type_arith_convert(Type *a, Type *b)
 {
-    Type *ua;
-    Type *ub;
     Type *signed_ty;
     Type *unsigned_ty;
     int rank_u;
@@ -433,6 +518,5 @@ const char *type_func_sig(Type *ty)
     return buf;
 }
 
-/* UNDEFER: U/u and UL/ul literal suffixes (C99). */
 /* UNDEFER: -Wsign-compare / narrowing unsigned-to-signed assignment warnings. */
 /* UNDEFER: full unsigned short ZEXT cast path in lower (CONV_ZEXT16). */

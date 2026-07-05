@@ -14,29 +14,6 @@ static Node *fold_to_num(long v, Type *ty, SourceLoc loc)
     return n;
 }
 
-static long cast_fold_value(long v, Type *ty)
-{
-    if (type_is_unsigned(ty)) {
-        int w = type_int_width(ty);
-        if (w == 1)
-            return (long)((unsigned long)v & 0xFFUL);
-        if (w == 2)
-            return (long)((unsigned long)v & 0xFFFFUL);
-        if (w == 4)
-            return (long)(unsigned int)v;
-        return (long)(unsigned long)v;
-    }
-    if (type_is_signed_char(ty))
-        return (long)(signed char)(unsigned char)v;
-    if (type_is_plain_char(ty) || type_is_unsigned_char(ty))
-        return (long)((unsigned long)v & 0xFFUL);
-    if (type_is_short(ty))
-        return (long)(short)v;
-    if (type_is_integer(ty) && type_int_width(ty) == 4)
-        return (long)(int)v;
-    return v;
-}
-
 static long int_promote_literal_value(long v, Type *ty)
 {
     Type *promoted = type_int_promote(ty);
@@ -75,7 +52,7 @@ static int fold_literal_operand(Node *n, long *out, Type **out_ty)
     }
     if (n->kind == ND_CAST && n->operand && n->operand->kind == ND_NUM &&
         type_is_integer(n->ty)) {
-        *out = cast_fold_value(n->operand->val, n->ty);
+        *out = type_convert_const(n->operand->val, n->ty);
         *out_ty = n->ty;
         return 1;
     }
@@ -161,7 +138,7 @@ int cosfold_expr(Node **np)
          * no value, so it is left for codegen to discard. */
         if (n->operand && n->operand->kind == ND_NUM &&
             !type_is_void(n->ty)) {
-            long v = cast_fold_value(n->operand->val, n->ty);
+            long v = type_convert_const(n->operand->val, n->ty);
             *np = fold_to_num(v, n->ty, n->loc);
             return 1;
         }
