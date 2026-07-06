@@ -38,7 +38,7 @@ Function *g_program = NULL;
 
 %token <num> NUM
 %token <str> IDENT
-%token INT CHAR SHORT LONG VOID UNSIGNED SIGNED RETURN IF ELSE WHILE FOR
+%token INT CHAR SHORT LONG VOID UNSIGNED SIGNED RETURN IF ELSE WHILE FOR SIZEOF
 %token EQ NE LE GE
 
 %type <node> expr expr_opt stmt
@@ -56,6 +56,7 @@ Function *g_program = NULL;
 %left '+' '-'
 %left '*' '/' '%'
 %precedence UMINUS
+%precedence SIZEOF
 %nonassoc IFX
 %nonassoc ELSE
 
@@ -123,10 +124,10 @@ direct_declarator:
         { $$ = declarator_ident($1); }
   | '(' declarator ')'
         { $$ = declarator_paren_group($2); }
-  | direct_declarator '[' NUM ']'
-        { $$ = declarator_add_dim($1, $3.val, declarator_was_paren($1)); }
+  | direct_declarator '[' expr ']'
+        { $$ = declarator_add_dim($1, $3, declarator_was_paren($1)); }
   | direct_declarator '[' ']'
-        { $$ = declarator_add_dim($1, 0, declarator_was_paren($1)); }
+        { $$ = declarator_add_dim($1, NULL, declarator_was_paren($1)); }
   ;
 
 abstract_declarator_opt:
@@ -140,12 +141,16 @@ abstract_declarator:
   ;
 
 direct_abstract_declarator:
-    '(' abstract_declarator ')'
+    '[' expr ']'
+        { $$ = declarator_add_dim(declarator_empty(), $2, 0); }
+  | '[' ']'
+        { $$ = declarator_add_dim(declarator_empty(), NULL, 0); }
+  | '(' abstract_declarator ')'
         { $$ = declarator_paren_group($2); }
-  | direct_abstract_declarator '[' NUM ']'
-        { $$ = declarator_add_dim($1, $3.val, declarator_was_paren($1)); }
+  | direct_abstract_declarator '[' expr ']'
+        { $$ = declarator_add_dim($1, $3, declarator_was_paren($1)); }
   | direct_abstract_declarator '[' ']'
-        { $$ = declarator_add_dim($1, 0, declarator_was_paren($1)); }
+        { $$ = declarator_add_dim($1, NULL, declarator_was_paren($1)); }
   ;
 
 param_clause:
@@ -162,14 +167,20 @@ param_clause:
 
 param_list:
     param                    { $$ = $1; }
-  | param_list ',' param     { $$ = param_append($1, $3->ty, $3->name); }
+  | param_list ',' param
+        {
+            Param *tail = $1;
+            while (tail->next)
+                tail = tail->next;
+            tail->next = $3;
+            $$ = $1;
+        }
   ;
 
 param:
     specifier declarator
         {
-            Type *ty = type_apply_declarator($1, $2, LOC(@1));
-            $$ = param_append(NULL, ty, declarator_name($2));
+            $$ = param_append_decl(NULL, $1, $2, declarator_name($2));
         }
   | specifier
         { $$ = param_append(NULL, $1, NULL); }
@@ -185,13 +196,11 @@ stmt:
   | RETURN ';'               { $$ = node_return(NULL, LOC(@1)); }
   | specifier declarator ';'
         {
-            Type *ty = type_apply_declarator($1, $2, LOC(@1));
-            $$ = node_decl(declarator_name($2), ty, NULL, LOC(@1));
+            $$ = node_decl(declarator_name($2), $1, $2, NULL, LOC(@1));
         }
   | specifier declarator '=' expr ';'
         {
-            Type *ty = type_apply_declarator($1, $2, LOC(@1));
-            $$ = node_decl(declarator_name($2), ty, $4, LOC(@1));
+            $$ = node_decl(declarator_name($2), $1, $2, $4, LOC(@1));
         }
   | IF '(' expr ')' stmt %prec IFX
                               { $$ = node_if($3, $5, NULL, LOC(@1)); }
@@ -231,6 +240,8 @@ expr:
   | '-' expr %prec UMINUS    { $$ = node_neg($2, LOC(@1)); }
   | '&' expr %prec UMINUS    { $$ = node_addr($2, LOC(@1)); }
   | '*' expr %prec UMINUS    { $$ = node_deref($2, LOC(@1)); }
+  | SIZEOF expr %prec SIZEOF { $$ = node_sizeof_expr($2, LOC(@1)); }
+  | SIZEOF '(' cast_type ')' %prec SIZEOF { $$ = node_sizeof_type($3, LOC(@1)); }
   | '(' cast_type ')' expr %prec UMINUS
                              { $$ = node_cast($2, $4, LOC(@1)); }
   | expr '[' expr ']'

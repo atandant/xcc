@@ -17,6 +17,16 @@ static const char *cur_fname;
 
 /* ---- resolution ---- */
 
+typedef enum {
+    CTX_RVALUE,
+    CTX_LVALUE,
+    CTX_ADDR_OPERAND,
+    CTX_SIZEOF_OPERAND
+} ExprCtx;
+
+static void resolve_expr_ctx(Node *n, ExprCtx ctx);
+static long sizeof_value(Type *ty, SourceLoc loc);
+
 static int is_arith_op(BinOp op)
 {
     return op == OP_ADD || op == OP_SUB || op == OP_MUL ||
@@ -43,21 +53,35 @@ static int ice_eval(Node *n, long *out)
 
     switch (n->kind) {
     case ND_NUM:
-        if (!type_is_integer(n->ty))
+        if (n->ty && !type_is_integer(n->ty))
             return 0;
         *out = n->val;
         return 1;
+    case ND_SIZEOF: {
+        Type *ty = n->cast_ty;
+
+        if (n->operand) {
+            resolve_expr_ctx(n->operand, CTX_SIZEOF_OPERAND);
+            ty = n->operand->ty;
+        }
+        if (!ty)
+            return 0;
+        *out = sizeof_value(ty, n->loc);
+        return 1;
+    }
     case ND_NEG:
         if (!ice_eval(n->operand, out))
             return 0;
-        return int_const_neg_ty(*out, n->ty, out);
+        return int_const_neg_ty(*out, n->ty ? n->ty : type_long(), out);
     case ND_BINOP:
-        if (!type_is_integer(n->ty))
+        if (n->ty && !type_is_integer(n->ty))
+            return 0;
+        if (!n->ty && !is_arith_op(n->op))
             return 0;
         if (!ice_eval(n->lhs, &l) || !ice_eval(n->rhs, &r))
             return 0;
         {
-            Type *bty = n->ty;
+            Type *bty = n->ty ? n->ty : type_long();
             if (is_eq_op(n->op) ||
                 n->op == OP_LT || n->op == OP_LE ||
                 n->op == OP_GT || n->op == OP_GE)
@@ -230,13 +254,35 @@ static int rel_operands_compatible(Node *lhs, Node *rhs)
             type_compatible(lhs->ty, rhs->ty));
 }
 
-typedef enum {
-    CTX_RVALUE,
-    CTX_LVALUE,
-    CTX_ADDR_OPERAND
-} ExprCtx;
+static int sema_array_bound_eval(Node *expr, long *out, SourceLoc loc, void *ctx)
+{
+    (void)ctx;
 
-static void resolve_expr_ctx(Node *n, ExprCtx ctx);
+    if (!expr) {
+        *out = 0;
+        return 1;
+    }
+    if (!ice_eval(expr, out)) {
+        diag_error_at(loc, "array size is not an integer constant expression");
+        return 0;
+    }
+    return 1;
+}
+
+static void sema_finish_function_types(Function *fn)
+{
+    for (Param *p = fn->params; p; p = p->next) {
+        if (p->decl) {
+            p->ty = type_apply_declarator_cb(p->decl_spec, p->decl, fn->loc,
+                                             sema_array_bound_eval, NULL);
+            p->decl = NULL;
+            p->decl_spec = NULL;
+        }
+    }
+    func_rebuild_type(fn);
+}
+
+static void resolve_expr_inner(Node *n, ExprCtx ctx);
 
 static int is_rel_op(BinOp op)
 {
@@ -297,11 +343,29 @@ static void resolve_expr_ctx(Node *n, ExprCtx ctx)
 
     resolve_expr_inner(n, ctx);
 
+    /* C89 3.2.2.1: arrays and functions do not decay inside sizeof. */
     if (ctx == CTX_RVALUE && type_is_array(n->ty)) {
         n->ty = type_decay(n->ty);
         n->is_lvalue = 0;
         n->var_decay = 1;
     }
+}
+
+static long sizeof_value(Type *ty, SourceLoc loc)
+{
+    if (!ty || type_is_void(ty)) {
+        diag_error_at(loc, "invalid application of sizeof to void type");
+        return 1;
+    }
+    if (ty->kind == TY_FUNC) {
+        diag_error_at(loc, "invalid application of sizeof to function type");
+        return 1;
+    }
+    if (!type_is_complete(ty)) {
+        diag_error_at(loc, "invalid application of sizeof to incomplete type");
+        return 1;
+    }
+    return type_size(ty);
 }
 
 /* On any error we still set a fallback type so later checks don't dereference
@@ -334,9 +398,18 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
 
         n->var_decay = 0;
         if (!scope_lookup(n->name, &off, &decl_ty)) {
-            diag_error_at(n->loc, "use of undeclared identifier '%s'", n->name);
-            n->ty = type_int();
-            n->is_lvalue = 0;
+            FuncSym *fs = (ctx == CTX_SIZEOF_OPERAND) ? functab_find(n->name)
+                                                      : NULL;
+
+            if (fs) {
+                n->ty = fs->ty;
+                n->is_lvalue = 1;
+            } else {
+                diag_error_at(n->loc, "use of undeclared identifier '%s'",
+                              n->name);
+                n->ty = type_int();
+                n->is_lvalue = 0;
+            }
         } else {
             n->offset = off;
             n->ty = decl_ty;
@@ -521,6 +594,25 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
         n->ty = dst;
         return;
     }
+    case ND_SIZEOF: {
+        Type *ty = n->cast_ty;
+
+        if (n->operand) {
+            resolve_expr_ctx(n->operand, CTX_SIZEOF_OPERAND);
+            ty = n->operand->ty;
+            n->operand = NULL;
+        }
+        n->cast_ty = NULL;
+        n->kind = ND_NUM;
+        n->val = sizeof_value(ty, n->loc);
+        n->has_long_suffix = 1;
+        n->is_hex_literal = 0;
+        n->is_octal_literal = 0;
+        n->ty = type_unsigned_long();
+        n->is_lvalue = 0;
+        n->var_decay = 0;
+        return;
+    }
     default:
         return;
     }
@@ -547,6 +639,12 @@ static void resolve_stmt(Node *s)
 {
     switch (s->kind) {
     case ND_DECL:
+        if (s->decl) {
+            s->ty = type_apply_declarator_cb(s->decl_spec, s->decl, s->loc,
+                                             sema_array_bound_eval, NULL);
+            s->decl = NULL;
+            s->decl_spec = NULL;
+        }
         if (!type_is_object(s->ty) || type_is_void(s->ty) ||
             (type_is_array(s->ty) && type_is_void(type_array_elem(s->ty))))
             diag_error_at(s->loc,
@@ -678,6 +776,7 @@ void sema(Function *prog)
      * its body is resolved (so recursion works), and calls to not-yet-seen
      * names fall to C89 implicit declaration. */
     for (Function *fn = prog; fn; fn = fn->next) {
+        sema_finish_function_types(fn);
         functab_register(fn);
         if (fn->is_definition)
             sema_function(fn);

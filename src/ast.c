@@ -2,6 +2,7 @@
 #include "ast.h"
 #include "arena.h"
 #include "diag.h"
+#include "intconst.h"
 
 #include <limits.h>
 
@@ -65,6 +66,20 @@ Node *node_cast(Type *ty, Node *o, SourceLoc loc)
     return n;
 }
 
+Node *node_sizeof_expr(Node *o, SourceLoc loc)
+{
+    Node *n = new_node(ND_SIZEOF, loc);
+    n->operand = o;
+    return n;
+}
+
+Node *node_sizeof_type(Type *ty, SourceLoc loc)
+{
+    Node *n = new_node(ND_SIZEOF, loc);
+    n->cast_ty = ty;
+    return n;
+}
+
 Node *node_assign(Node *l, Node *r, SourceLoc loc)
 {
     Node *n = new_node(ND_ASSIGN, loc);
@@ -87,11 +102,13 @@ Node *node_expr_stmt(Node *o, SourceLoc loc)
     return n;
 }
 
-Node *node_decl(char *name, Type *ty, Node *init, SourceLoc loc)
+Node *node_decl(char *name, Type *spec_ty, Declarator *decl, Node *init,
+                SourceLoc loc)
 {
     Node *n = new_node(ND_DECL, loc);
     n->name = name;
-    n->ty = ty;
+    n->decl_spec = spec_ty;
+    n->decl = decl;
     n->init = init;
     return n;
 }
@@ -182,6 +199,22 @@ Param *param_append(Param *list, Type *ty, char *name)
     return list;
 }
 
+Param *param_append_decl(Param *list, Type *spec_ty, Declarator *decl,
+                         char *name)
+{
+    Param *p = arena_alloc_zeroed(sizeof(Param));
+    p->name = name;
+    p->decl_spec = spec_ty;
+    p->decl = decl;
+    if (!list)
+        return p;
+    Param *tail = list;
+    while (tail->next)
+        tail = tail->next;
+    tail->next = p;
+    return list;
+}
+
 ParamClause *param_clause(Param *head, int prototyped)
 {
     ParamClause *pc = arena_alloc_zeroed(sizeof(ParamClause));
@@ -204,18 +237,23 @@ Function *func_new(char *name, ParamClause *pc, Type *ret_ty,
     f->ret_ty = ret_ty;
     f->is_definition = is_definition;
     f->body = body;
+    f->ty = type_func(ret_ty, NULL, 0, pc->prototyped);
+    return f;
+}
 
-    /* Build the full function type; array parameters decay to pointers. */
+Function *func_rebuild_type(Function *fn)
+{
     Type **ptypes = NULL;
-    if (pc->count > 0) {
-        ptypes = arena_alloc(sizeof(Type *) * pc->count);
+    int n = fn->nparams;
+
+    if (n > 0) {
+        ptypes = arena_alloc(sizeof(Type *) * (size_t)n);
         int i = 0;
-        for (Param *p = pc->head; p; p = p->next, i++)
+        for (Param *p = fn->params; p; p = p->next, i++)
             ptypes[i] = type_decay(p->ty);
     }
-    f->ty = type_func(ret_ty, ptypes, pc->count, pc->prototyped);
-
-    return f;
+    fn->ty = type_func(fn->ret_ty, ptypes, n, fn->prototyped);
+    return fn;
 }
 
 Function *func_append(Function *list, Function *f)
@@ -247,7 +285,7 @@ Declarator *declarator_ptr(Declarator *d)
     return d;
 }
 
-static int decl_add_suffix_dim(Declarator *d, long dim, SourceLoc loc)
+static int decl_add_suffix_dim(Declarator *d, Node *dim, SourceLoc loc)
 {
     if (d->ndims_suffix >= MAX_DECL_DIMS) {
         diag_error_at(loc, "too many array dimensions");
@@ -257,13 +295,13 @@ static int decl_add_suffix_dim(Declarator *d, long dim, SourceLoc loc)
     return 1;
 }
 
-Declarator *declarator_suffix(Declarator *d, long dim)
+Declarator *declarator_suffix(Declarator *d, Node *dim)
 {
     (void)decl_add_suffix_dim(d, dim, (SourceLoc){ 0, 0 });
     return d;
 }
 
-Declarator *declarator_add_dim(Declarator *d, long dim, int after_paren)
+Declarator *declarator_add_dim(Declarator *d, Node *dim, int after_paren)
 {
     if (after_paren)
         return declarator_paren_outer(d, dim);
@@ -284,7 +322,7 @@ Declarator *declarator_paren_group(Declarator *d)
     return wrap;
 }
 
-Declarator *declarator_paren_outer(Declarator *d, long dim)
+Declarator *declarator_paren_outer(Declarator *d, Node *dim)
 {
     Declarator *wrap = declarator_empty();
     wrap->inner = d->inner;
@@ -307,24 +345,109 @@ char *declarator_name(const Declarator *d)
     return NULL;
 }
 
-static Type *make_array_dim(Type *ty, long dim, SourceLoc loc)
+static long ast_sizeof_type(Type *ty, SourceLoc loc)
+{
+    if (!ty || type_is_void(ty)) {
+        diag_error_at(loc, "invalid application of sizeof to void type");
+        return 1;
+    }
+    if (ty->kind == TY_FUNC) {
+        diag_error_at(loc, "invalid application of sizeof to function type");
+        return 1;
+    }
+    if (!type_is_complete(ty)) {
+        diag_error_at(loc, "invalid application of sizeof to incomplete type");
+        return 1;
+    }
+    return type_size(ty);
+}
+
+static int parse_abstract_dim_eval(Node *expr, long *out, SourceLoc loc, void *ctx)
+{
+    long l, r;
+
+    (void)ctx;
+
+    if (!expr) {
+        *out = 0;
+        return 1;
+    }
+
+    switch (expr->kind) {
+    case ND_NUM:
+        *out = expr->val;
+        return 1;
+    case ND_SIZEOF: {
+        Type *ty = expr->cast_ty;
+
+        if (expr->operand)
+            return 0;
+        *out = ast_sizeof_type(ty, loc);
+        return 1;
+    }
+    case ND_NEG:
+        if (!parse_abstract_dim_eval(expr->operand, out, loc, ctx))
+            return 0;
+        return int_const_neg_ty(*out, type_long(), out);
+    case ND_BINOP:
+        if (expr->op != OP_ADD && expr->op != OP_SUB && expr->op != OP_MUL &&
+            expr->op != OP_DIV && expr->op != OP_MOD)
+            return 0;
+        if (!parse_abstract_dim_eval(expr->lhs, &l, loc, ctx) ||
+            !parse_abstract_dim_eval(expr->rhs, &r, loc, ctx))
+            return 0;
+        return int_const_binop_ty(expr->op, l, r, type_long(), out);
+    case ND_CAST:
+        if (!expr->cast_ty || !type_is_integer(expr->cast_ty))
+            return 0;
+        if (!parse_abstract_dim_eval(expr->operand, out, loc, ctx))
+            return 0;
+        *out = type_convert_const(*out, expr->cast_ty);
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+static int eval_decl_dim(Node *expr, long *out, SourceLoc loc, DeclDimEvalFn eval,
+                         void *ctx)
+{
+    if (!expr) {
+        *out = 0;
+        return 1;
+    }
+    if (eval)
+        return eval(expr, out, loc, ctx);
+    if (expr->kind == ND_NUM) {
+        *out = expr->val;
+        return 1;
+    }
+    diag_error_at(loc, "array size is not an integer constant expression");
+    return 0;
+}
+
+static Type *make_array_dim(Type *ty, Node *dim, SourceLoc loc,
+                            DeclDimEvalFn eval, void *ctx)
 {
     int count;
     int esz;
+    long bound;
 
-    if (dim == 0) {
+    if (!eval_decl_dim(dim, &bound, loc, eval, ctx))
+        return ty;
+    if (bound == 0) {
         /* `[]` on a parameter decays to a pointer before allocation. */
         return type_array(ty, 0);
     }
-    if (dim < 0) {
+    if (bound < 0) {
         diag_error_at(loc, "array size is negative");
         return ty;
     }
-    if (dim > INT_MAX) {
+    if (bound > INT_MAX) {
         diag_error_at(loc, "array size is too large");
         return ty;
     }
-    count = (int)dim;
+    count = (int)bound;
     esz = type_size(ty);
     if (esz > 0 && count > INT_MAX / esz) {
         diag_error_at(loc, "array size overflows");
@@ -342,7 +465,8 @@ static int declarator_has_suffix_arrays(const Declarator *d)
     return declarator_has_suffix_arrays(d->inner);
 }
 
-static Type *apply_decl_leaf(Type *base, const Declarator *d, SourceLoc loc)
+static Type *apply_decl_leaf(Type *base, const Declarator *d, SourceLoc loc,
+                             DeclDimEvalFn eval, void *ctx)
 {
     Type *ty = base;
     int i;
@@ -350,11 +474,12 @@ static Type *apply_decl_leaf(Type *base, const Declarator *d, SourceLoc loc)
     for (i = 0; i < d->nptr; i++)
         ty = type_ptr(ty);
     for (i = d->ndims_suffix - 1; i >= 0; i--)
-        ty = make_array_dim(ty, d->dims_suffix[i], loc);
+        ty = make_array_dim(ty, d->dims_suffix[i], loc, eval, ctx);
     return ty;
 }
 
-Type *type_apply_declarator(Type *base, Declarator *d, SourceLoc loc)
+Type *type_apply_declarator_cb(Type *base, Declarator *d, SourceLoc loc,
+                               DeclDimEvalFn eval, void *ctx)
 {
     Type *ty;
     int i;
@@ -376,12 +501,17 @@ Type *type_apply_declarator(Type *base, Declarator *d, SourceLoc loc)
         /* `int (*p)[3]`: outer `[]` binds to the base before the inner `*`. */
         ty = base;
         for (i = d->ndims_paren_outer - 1; i >= 0; i--)
-            ty = make_array_dim(ty, d->dims_paren_outer[i], loc);
-        return apply_decl_leaf(ty, d->inner, loc);
+            ty = make_array_dim(ty, d->dims_paren_outer[i], loc, eval, ctx);
+        return apply_decl_leaf(ty, d->inner, loc, eval, ctx);
     }
 
     if (d->was_paren && d->inner)
-        return apply_decl_leaf(base, d->inner, loc);
+        return apply_decl_leaf(base, d->inner, loc, eval, ctx);
 
-    return apply_decl_leaf(base, d, loc);
+    return apply_decl_leaf(base, d, loc, eval, ctx);
+}
+
+Type *type_apply_declarator(Type *base, Declarator *d, SourceLoc loc)
+{
+    return type_apply_declarator_cb(base, d, loc, parse_abstract_dim_eval, NULL);
 }

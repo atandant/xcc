@@ -91,6 +91,7 @@ int type_is_unsigned(Type *ty);
 int type_is_pointer(Type *ty);
 int type_is_scalar(Type *ty);
 int type_is_object(Type *ty);
+int type_is_complete(Type *ty);
 
 /* Relations. */
 int type_same(Type *a, Type *b);

@@ -125,6 +125,19 @@ int type_is_object(Type *ty)
     return ty && ty->kind != TY_VOID && ty->kind != TY_FUNC;
 }
 
+int type_is_complete(Type *ty)
+{
+    if (!ty || type_is_void(ty) || ty->kind == TY_FUNC)
+        return 0;
+    if (type_is_array(ty) && type_array_count(ty) == 0)
+        return 0;
+    if (type_is_array(ty) && !type_is_complete(type_array_elem(ty)))
+        return 0;
+    if (type_is_pointer(ty) && !type_is_complete(type_ptr_elem(ty)))
+        return 0;
+    return 1;
+}
+
 /* ---- relations ---- */
 
 int type_same(Type *a, Type *b)

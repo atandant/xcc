@@ -34,19 +34,19 @@ static long scan_decimal(const char *text)
 
 static long scan_hex(const char *text)
 {
-    long v;
+    unsigned long v;
 
     errno = 0;
-    v = strtol(text, NULL, 16);
+    v = strtoul(text, NULL, 16);
     if (errno == ERANGE)
         diag_error_at(scan_loc(), "integer constant out of range");
-    return v;
+    return (long)v;
 }
 
 static long scan_octal(const char *text)
 {
     const char *p;
-    long v;
+    unsigned long v;
 
     for (p = text + 1; *p; p++) {
         if (*p < '0' || *p > '7') {
@@ -56,10 +56,10 @@ static long scan_octal(const char *text)
     }
 
     errno = 0;
-    v = strtol(text, NULL, 8);
+    v = strtoul(text, NULL, 8);
     if (errno == ERANGE)
         diag_error_at(scan_loc(), "integer constant out of range");
-    return v;
+    return (long)v;
 }
 
 static int has_long_suffix(const char *text)
@@ -99,6 +99,7 @@ static int has_long_suffix(const char *text)
 "else"              { return ELSE; }
 "while"             { return WHILE; }
 "for"               { return FOR; }
+"sizeof"            { return SIZEOF; }
 
 "=="                { return EQ; }
 "!="                { return NE; }

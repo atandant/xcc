@@ -33,18 +33,19 @@ make
 ## Status (v0.0.1.6)
 
 The pipeline runs end to end (lex → parse → sema → lower → liveness →
-regalloc → emit → `.s` → gcc) with a typed semantic layer and 380+ acceptance
+regalloc → emit → `.s` → gcc) with a typed semantic layer and 410+ acceptance
 tests.
 
 | Supported | Not yet |
 | --- | --- |
-| `int`, `char`, `long`, `void`, pointers (`*`, `&`, dereference) | `sizeof`, brace initializers |
+| `int`, `char`, `long`, `void`, pointers (`*`, `&`, dereference) | `brace initializers` |
 | `unsigned` (`char`/`short`/`int`/`long`), usual arithmetic conversions | arrays of pointers (`int *p[3]`) |
 | parenthesized declarators (`int (*p)[3]`), casts (`(int (*)[3])`) | structs, unions, enums, `typedef` |
 | N-dimensional arrays, `[]` subscript, `ptr ± int/long`, `ptr - ptr`, param decay | function pointers |
 | typed declarations, parameters, returns | preprocessor (`#include`, `#define`) |
 | casts `(type)expr`, `(void)expr` discard | multiple translation units |
-| function calls (prototyped arg checking, void `*` conversions) | `-W` CLI flags |
+| `sizeof expr`, `sizeof(type)` (compile-time fold, `unsigned long`) | `-W` CLI flags |
+| function calls (prototyped arg checking, void `*` conversions) | |
 | `if` / `else`, `while`, `for`, blocks | |
 | `+ - * / %`, unary `-`, comparisons (signed and unsigned) | |
 | pointer `==` / `!=` / ordering, truthiness, `p == 0` | |
@@ -60,6 +61,10 @@ tests.
 > Plain `char` loads as an unsigned byte (0–255); use `unsigned char` when you
 > need an unsigned type in expressions. `U`/`u` literal suffixes are not supported
 > (C99); use `0x` constants or casts instead.
+>
+> `sizeof` is evaluated at compile time in sema (no runtime codegen). Array
+> operands do not decay; function, `void`, and incomplete types are rejected.
+> The operand of `sizeof expr` is not evaluated.
 >
 > `auto` arrays are not zero-initialized (faithful C89).
 
@@ -111,6 +116,7 @@ committed.
 - `0.0.1.4` — 1D arrays, subscript, pointer arithmetic, layout fix ✓
 - `0.0.1.5` — `long` (LP64 64-bit), literal suffixes, promotions, `ptr - ptr` ✓
 - `0.0.1.6` — LIR lowering, liveness, linear-scan register allocation ✓
+- `0.0.1.6` — `sizeof` (compile-time fold, abstract declarator types) ✓
 - later — preprocessor, structs, and enough to compile real projects
 
 ## License

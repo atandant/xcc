@@ -109,6 +109,7 @@ xcc-error|error_addr_ptr_eq_int.c|1|comparison between pointer type 'int *' and 
 xcc-error|error_addr_ptr_ordering.c|1|invalid operands to relational operator
 xcc-error|error_addr_wrong_ptr_level.c|1|incompatible types assigning 'int *' to 'int * *'
 xcc-error|error_array_assign.c|1|incompatible types assigning 'int *' to 'int[2]'
+xcc-error|error_array_bound_not_ice.c|1|array size is not an integer constant expression
 xcc-error|error_array_size_overflow.c|1|array size overflows
 xcc-error|error_array_to_scalar.c|1|incompatible types assigning 'int *' to 'int'
 xcc-error|error_array_zero_size.c|1|array size is missing or zero for 'a'
@@ -117,9 +118,9 @@ xcc-error|error_assign_long_overflow_ice.c|1|incompatible types assigning 'long'
 xcc-error|error_assign_long_to_pointer.c|1|incompatible types assigning 'long' to 'int *'
 xcc-error|error_assign_pointer_to_int.c|1|incompatible types assigning 'int *' to 'int'
 xcc-error|error_block_scope_expired.c|1|use of undeclared identifier 'x'
+xcc-error|error_called_local.c|1|called object 'f' is not a function
 xcc-error|error_call_int_expected_pointer.c|1|passing 'int' to parameter of type 'int *' in call to 'f'
 xcc-error|error_call_pointer_expected_int.c|1|passing 'int *' to parameter of type 'int' in call to 'f'
-xcc-error|error_called_local.c|1|called object 'f' is not a function
 xcc-error|error_conflicting_param_count.c|1|conflicting types for 'f'
 xcc-error|error_conflicting_param_type.c|1|conflicting types for 'f'
 xcc-error|error_conflicting_return_pointer.c|1|conflicting types for 'f'
@@ -127,6 +128,7 @@ xcc-error|error_conflicting_return_type.c|1|conflicting types for 'f'
 xcc-error|error_deref_int.c|1|cannot dereference non-pointer type 'int'
 xcc-error|error_deref_void_pointer.c|1|dereference of void pointer
 xcc-error|error_function_redefinition.c|1|redefinition of 'f'
+xcc-error|error_hex_unsigned_long_overflow.c|1|integer constant out of range
 xcc-error|error_long_literal_overflow.c|1|integer constant out of range
 xcc-error|error_long_suffix_ll.c|1|invalid suffix on integer constant
 xcc-error|error_long_suffix_unsigned.c|1|invalid suffix on integer constant
@@ -145,6 +147,9 @@ xcc-error|error_ptr_plus_ptr.c|1|invalid operands to arithmetic operator
 xcc-error|error_redeclaration.c|1|redeclaration of 'a'
 xcc-error|error_redeclaration_nested_same_scope.c|1|redeclaration of 'x'
 xcc-error|error_return_pointer_from_int.c|1|returning 'int *' from a function returning 'int'
+xcc-error|error_sizeof_function.c|1|invalid application of sizeof to function type
+xcc-error|error_sizeof_incomplete_type.c|1|invalid application of sizeof to incomplete type
+xcc-error|error_sizeof_void.c|1|invalid application of sizeof to void type
 xcc-error|error_stray_char.c|1|stray '@' in program
 xcc-error|error_subscript_nonscalar.c|1|cannot dereference non-pointer type 'int'
 xcc-error|error_too_few_args.c|1|too few arguments to function 'add'
@@ -202,8 +207,8 @@ run|long_index_for.c|15|
 run|long_index_while.c|10|
 run|long_int_boundary.c|47|
 run|long_int_decl.c|42|
-run|long_literal_large_div.c|3|
 run|long_literal_large_div2.c|4|
+run|long_literal_large_div.c|3|
 run|long_literal_mod.c|49|
 run|long_neg.c|42|
 run|long_param.c|55|
@@ -219,8 +224,8 @@ run|long_ptr_subscript.c|99|
 run|long_return_fn.c|42|
 run|long_stack_sum_8.c|8|
 run|long_store_load.c|30|
-run|long_suffix_L.c|42|
 run|long_suffix_arith.c|123|
+run|long_suffix_L.c|42|
 run|long_suffix_lower_l.c|200|
 run|long_suffix_mixed.c|123|
 run|long_to_int_narrow.c|2|
@@ -239,8 +244,8 @@ run|md_2d_two_cells.c|12|
 run|md_2d_var_index.c|3|
 run|md_3d_store_load.c|9|
 run|mod_precedence.c|8|
-run|neg.c|3|
 run|negative_div_mod.c|5|
+run|neg.c|3|
 run|nested_blocks_reuse_names.c|16|
 run|null_ptr_assign.c|1|
 run|null_ptr_assign_ice.c|1|
@@ -260,8 +265,8 @@ run|opt_fold_cmp_lt.c|1|
 run|opt_fold_cmp_ne.c|1|
 run|opt_fold_deep.c|10|
 run|opt_fold_div.c|25|
-run|opt_fold_long.c|120|
 run|opt_fold_long_boundary.c|0|
+run|opt_fold_long.c|120|
 run|opt_fold_long_div.c|3|
 run|opt_fold_long_mul.c|42|
 run|opt_fold_long_mul_safe.c|42|
@@ -273,13 +278,14 @@ run|opt_fold_neg.c|8|
 run|opt_fold_nested.c|20|
 run|opt_fold_octal_add.c|13|
 run|opt_fold_one.c|88|
-run|opt_fold_prop.c|100|
 run|opt_fold_prop_add.c|15|
+run|opt_fold_prop.c|100|
 run|opt_fold_schar_cast.c|56|
 run|opt_fold_sub.c|63|
 run|opt_fold_u_add.c|30|
 run|opt_fold_u_cast_uchar.c|44|
 run|opt_fold_u_chain.c|20|
+run|opt_fold_uchar_add.c|1|
 run|opt_fold_u_cmp_eq.c|1|
 run|opt_fold_u_cmp_gt.c|1|
 run|opt_fold_u_cmp_lt.c|1|
@@ -288,10 +294,9 @@ run|opt_fold_u_hex.c|48|
 run|opt_fold_u_mod.c|4|
 run|opt_fold_u_mul.c|42|
 run|opt_fold_u_neg.c|251|
+run|opt_fold_ushort_add.c|1|
 run|opt_fold_u_sub.c|33|
 run|opt_fold_u_wrap_add.c|0|
-run|opt_fold_uchar_add.c|1|
-run|opt_fold_ushort_add.c|1|
 run|opt_fold_zero.c|0|
 run|opt_prop_assign.c|20|
 run|opt_prop_block.c|12|
@@ -303,13 +308,13 @@ run|opt_prop_long_chain.c|15|
 run|opt_prop_multistmt.c|21|
 run|opt_prop_return_add.c|42|
 run|opt_prop_simple.c|50|
+run|param_seventh_stack_arg.c|7|
+run|param_shadow_block.c|8|
+run|paren_grouping.c|25|
 run|pa_row_deref_subscript.c|7|
 run|pa_row_ptr_diff.c|1|
 run|pa_row_ptr_plus_deref.c|4|
 run|pa_row_relational.c|1|
-run|param_seventh_stack_arg.c|7|
-run|param_shadow_block.c|8|
-run|paren_grouping.c|25|
 run|pd_assign_rows.c|11|
 run|pd_cast_row_ptr.c|3|
 run|pd_chain_subscript.c|5|
@@ -361,6 +366,20 @@ run|short_param.c|42|
 run|short_promote_add.c|150|
 run|short_store_load.c|30|
 run|short_truncate_store.c|112|
+run|sizeof_array_bound.c|4|
+run|sizeof_array_bound_md.c|9|
+run|sizeof_array_bound_mul.c|8|
+run|sizeof_array_bound_var.c|12|
+run|sizeof_array_no_decay.c|10|
+run|sizeof_mul_precedence.c|8|
+run|sizeof_multidim.c|24|
+run|sizeof_no_eval.c|0|
+run|sizeof_paren_type.c|22|
+run|sizeof_pointers.c|16|
+run|sizeof_precedence.c|7|
+run|sizeof_ptr_to_array_type.c|8|
+run|sizeof_scalars_sum.c|15|
+run|sizeof_subscript_elem.c|1|
 run|sub_assoc.c|12|
 run|ty_char_param_from_int.c|65|
 run|ty_double_deref_store.c|8|
@@ -384,13 +403,13 @@ run|u_hex_literal.c|255|
 run|u_index_unsigned.c|77|
 run|u_long_decl.c|17|
 run|u_mixed_promote.c|50|
+run|unary_precedence.c|4|
 run|u_param.c|99|
 run|u_return_fn.c|11|
 run|u_uchar.c|200|
 run|u_ushort.c|42|
 run|u_ushort_large.c|1|
 run|u_while_count.c|3|
-run|unary_precedence.c|4|
 run|void_function_bare_return.c|3|
 run|void_param_no_args.c|9|
 run|void_ptr_assign_from_int_ptr.c|0|

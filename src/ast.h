@@ -8,14 +8,16 @@
 #define MAX_DECL_DIMS 16
 #define XCC_MAX_CALL_ARGS 4096
 
+typedef struct Node Node;
+
 typedef struct Declarator Declarator;
 struct Declarator {
     char *name;
     int nptr;
     int ndims_suffix;
-    long dims_suffix[MAX_DECL_DIMS];
+    Node *dims_suffix[MAX_DECL_DIMS]; /* NULL = unsized `[]`; ND_NUM = bound */
     int ndims_paren_outer;
-    long dims_paren_outer[MAX_DECL_DIMS];
+    Node *dims_paren_outer[MAX_DECL_DIMS];
     int was_paren;     /* `(` declarator `)` with no following `[]` yet */
     Declarator *inner; /* set when `[]` immediately follows `( declarator )` */
 };
@@ -28,6 +30,7 @@ typedef enum {
     ND_ADDR,       /* unary & (address-of operand) */
     ND_DEREF,      /* unary * (dereference operand)*/
     ND_CAST,       /* (type)operand                */
+    ND_SIZEOF,     /* sizeof expr / sizeof(type)   */
     ND_ASSIGN,     /* lhs = rhs (lhs must be modifiable lvalue) */
     ND_RETURN,     /* return operand;              */
     ND_EXPR_STMT,  /* operand;                     */
@@ -67,6 +70,8 @@ struct Node {
 
     Node *operand;     /* ND_NEG, ND_RETURN, ND_EXPR_STMT, ND_CAST  */
     Type *cast_ty;     /* ND_CAST: parsed target type               */
+    Type *decl_spec;   /* ND_DECL: base specifier before declarator */
+    Declarator *decl;  /* ND_DECL: parsed declarator (sema → ty)    */
     Node *init;        /* ND_DECL initializer, ND_FOR init (NULL ok)*/
     Node *cond;        /* ND_IF, ND_WHILE, ND_FOR (FOR cond NULL ok)*/
     Node *step;        /* ND_FOR step (may be NULL)                 */
@@ -83,7 +88,9 @@ struct Node {
 typedef struct Param Param;
 struct Param {
     char *name;
-    Type *ty;          /* parameter type                            */
+    Type *ty;          /* parameter type (sema)                     */
+    Type *decl_spec;   /* parsed specifier when declarator pending  */
+    Declarator *decl;  /* parsed declarator (sema → ty)             */
     int offset;        /* stack offset from frame pointer (sema)     */
     Param *next;
 };
@@ -125,10 +132,13 @@ Node *node_neg(Node *o, SourceLoc loc);
 Node *node_addr(Node *o, SourceLoc loc);
 Node *node_deref(Node *o, SourceLoc loc);
 Node *node_cast(Type *ty, Node *o, SourceLoc loc);
+Node *node_sizeof_expr(Node *o, SourceLoc loc);
+Node *node_sizeof_type(Type *ty, SourceLoc loc);
 Node *node_assign(Node *l, Node *r, SourceLoc loc);
 Node *node_return(Node *o, SourceLoc loc);
 Node *node_expr_stmt(Node *o, SourceLoc loc);
-Node *node_decl(char *name, Type *ty, Node *init, SourceLoc loc);
+Node *node_decl(char *name, Type *spec_ty, Declarator *decl, Node *init,
+                SourceLoc loc);
 Node *node_call(char *name, NodeList *args, SourceLoc loc);
 Node *node_if(Node *cond, Node *then_body, Node *else_body, SourceLoc loc);
 Node *node_while(Node *cond, Node *body, SourceLoc loc);
@@ -139,19 +149,26 @@ NodeList *stmt_list_append(NodeList *list, Node *s);
 Node *stmt_list_head(NodeList *list);
 
 Param *param_append(Param *list, Type *ty, char *name);
+Param *param_append_decl(Param *list, Type *spec_ty, Declarator *decl,
+                         char *name);
 ParamClause *param_clause(Param *head, int prototyped);
 Function *func_new(char *name, ParamClause *pc, Type *ret_ty,
                    int is_definition, Node *body, SourceLoc loc);
+Function *func_rebuild_type(Function *fn);
 Function *func_append(Function *list, Function *f);
 
 Declarator *declarator_empty(void);
 Declarator *declarator_ident(char *name);
 Declarator *declarator_ptr(Declarator *d);
-Declarator *declarator_add_dim(Declarator *d, long dim, int after_paren);
+Declarator *declarator_add_dim(Declarator *d, Node *dim, int after_paren);
 Declarator *declarator_paren_group(Declarator *d);
-Declarator *declarator_paren_outer(Declarator *d, long dim);
+Declarator *declarator_paren_outer(Declarator *d, Node *dim);
 int declarator_was_paren(const Declarator *d);
 char *declarator_name(const Declarator *d);
+
+typedef int (*DeclDimEvalFn)(Node *expr, long *out, SourceLoc loc, void *ctx);
+Type *type_apply_declarator_cb(Type *base, Declarator *d, SourceLoc loc,
+                               DeclDimEvalFn eval, void *ctx);
 Type *type_apply_declarator(Type *base, Declarator *d, SourceLoc loc);
 
 #endif /* XCC_AST_H */
