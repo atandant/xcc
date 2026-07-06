@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: MIT */
-/* expect-error: brace initializer cannot be used to initialize 'int' */
+/* expect: 3 */
 int main(void) {
     int x = {3};
     return x;

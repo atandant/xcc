@@ -280,18 +280,72 @@ static Type *array_leaf_type(Type *ty)
     return ty;
 }
 
-/* UNDEFER: brace init for short, long, and unsigned element types. */
 static int brace_init_elem_supported(Type *leaf)
 {
     if (!leaf)
         return 0;
     if (type_is_pointer(leaf))
         return 1;
-    if (type_is_char(leaf))
-        return 1;
-    if (type_is_integer(leaf) && leaf->width == IW_INT && !type_is_unsigned(leaf))
+    /* Any scalar integer element (char/short/int/long, signed or unsigned).
+       Lowering is width-generic via store_lir_width/type_size. */
+    if (type_is_integer(leaf))
         return 1;
     return 0;
+}
+
+/* Number of scalar leaf slots contained in a (possibly nested-array) type. */
+static int type_leaf_count(Type *t)
+{
+    if (type_is_array(t))
+        return type_array_count(t) * type_leaf_count(type_array_elem(t));
+    return 1;
+}
+
+/* Count how many outermost-dimension elements a brace initializer fills,
+   mirroring init_aggregate's element boundaries: a nested `{...}` fills exactly
+   one element; a run of scalars fills up to `per` leaves per element (a `{` ends
+   the current run and starts the next element). Used only for unsized `T a[]`. */
+static int infer_unsized_count(Type *elem, Node *body)
+{
+    int per = type_leaf_count(elem);
+    int outer = 0;
+    Node *e = body;
+
+    if (per <= 0)
+        return 0;
+    while (e) {
+        outer++;
+        if (e->kind == ND_INIT_LIST) {
+            e = e->next;
+        } else {
+            int k = 0;
+            while (e && e->kind != ND_INIT_LIST && k < per) {
+                e = e->next;
+                k++;
+            }
+        }
+    }
+    return outer;
+}
+
+/* Patch an unsized outermost array bound `T a[] = {...}` in place from its
+   brace initializer. The declarator type is arena-owned and unshared. */
+static void infer_unsized_array(Node *decl)
+{
+    Type *elem = type_array_elem(decl->ty);
+    int count;
+
+    if (elem && type_is_array(elem) && type_array_count(elem) == 0) {
+        diag_error_at(decl->loc,
+                      "cannot infer size of '%s': inner array dimension is "
+                      "also unsized", decl->name);
+        return;
+    }
+    count = infer_unsized_count(elem, decl->init->body);
+    if (count <= 0)
+        return;          /* empty init -> existing zero-size diagnostic fires */
+    decl->ty->count = count;
+    decl->ty->size = type_size(elem) * count;
 }
 
 typedef struct {
@@ -417,6 +471,39 @@ static void check_init_list_from_self(Node *init, Node *decl)
         check_init_from_self(e, decl);
 }
 
+/* C89 3.5.7: a scalar may be initialized by a brace-enclosed single
+   expression, e.g. `int x = {3};` (optionally with a trailing comma). Unwrap it
+   to an ordinary scalar initializer so lowering emits a plain store. */
+static void sema_scalar_brace_init(Node *decl)
+{
+    Node *body = decl->init->body;
+    Node *val;
+
+    if (!body) {
+        diag_error_at(decl->loc, "empty scalar initializer");
+        return;
+    }
+    if (body->kind == ND_INIT_LIST) {
+        diag_error_at(decl->loc, "too many braces around scalar initializer");
+        return;
+    }
+    if (body->next != NULL) {
+        diag_error_at(decl->loc, "excess elements in scalar initializer");
+        return;
+    }
+
+    val = body;
+    val->next = NULL;
+    decl->init = val;
+
+    resolve_expr_ctx(val, CTX_RVALUE);
+    check_init_from_self(val, decl);
+    if (!expr_assignable_to(decl->ty, val))
+        diag_incompatible_init(val->loc, decl->ty, val);
+    else
+        warn_value_conversion(val->loc, decl->ty, val);
+}
+
 static void sema_brace_init(Node *decl)
 {
     Type *leaf;
@@ -427,9 +514,7 @@ static void sema_brace_init(Node *decl)
         return;
 
     if (!type_is_array(decl->ty)) {
-        diag_error_at(decl->loc,
-                      "brace initializer cannot be used to initialize '%s'",
-                      type_name(decl->ty));
+        sema_scalar_brace_init(decl);
         return;
     }
 
@@ -838,6 +923,10 @@ static void resolve_stmt(Node *s)
             diag_error_at(s->loc,
                           "variable '%s' has non-object type '%s'",
                           s->name, type_name(s->ty));
+        /* Infer `T a[] = {...}` bound from its brace initializer. */
+        if (type_is_array(s->ty) && type_array_count(s->ty) == 0 &&
+            s->init && s->init->kind == ND_INIT_LIST)
+            infer_unsized_array(s);
         if (type_is_array(s->ty) && type_array_count(s->ty) == 0)
             diag_error_at(s->loc,
                           "array size is missing or zero for '%s'",

@@ -51,10 +51,32 @@ run|brace_int_1d.c|6|
 run|brace_int_fold.c|9|
 run|brace_int_partial.c|5|
 run|brace_int_zero.c|0|
+run|brace_long_1d.c|60|
+run|brace_long_fold.c|16|
+run|brace_long_md_flat.c|4|
+run|brace_long_neg.c|5|
+run|brace_long_partial.c|42|
 run|brace_md_flat.c|7|
 run|brace_md_nested.c|4|
 run|brace_ptr_addrs.c|1|
 run|brace_ptr_zero.c|1|
+run|brace_scalar_int.c|3|
+run|brace_scalar_trailing.c|7|
+run|brace_short_1d.c|6|
+run|brace_short_fold.c|10|
+run|brace_short_md.c|7|
+run|brace_short_neg.c|1|
+run|brace_short_partial.c|12|
+run|brace_short_trailing_comma.c|6|
+run|brace_trailing_comma.c|6|
+run|brace_trailing_comma_md.c|4|
+run|brace_trailing_comma_single.c|9|
+run|brace_uchar_1d.c|60|
+run|brace_uint_1d.c|155|
+run|brace_uint_partial.c|3|
+run|brace_uint_zero.c|0|
+run|brace_ulong_1d.c|15|
+run|brace_ulong_zero.c|0|
 run|call_arg_local_before_assignment.c|23|
 run|call_expr_statement.c|5|
 run|call_forward_implicit.c|6|
@@ -129,8 +151,6 @@ xcc-error|error_assign_long_to_pointer.c|1|incompatible types assigning 'long' t
 xcc-error|error_assign_pointer_to_int.c|1|incompatible types assigning 'int *' to 'int'
 xcc-error|error_block_scope_expired.c|1|use of undeclared identifier 'x'
 xcc-error|error_brace_excess.c|1|excess elements in array initializer
-xcc-error|error_brace_scalar.c|1|brace initializer cannot be used to initialize 'int'
-xcc-error|error_brace_short.c|1|brace initialization is not supported for 'short' arrays yet
 xcc-error|error_called_local.c|1|called object 'f' is not a function
 xcc-error|error_call_int_expected_pointer.c|1|passing 'int' to parameter of type 'int *' in call to 'f'
 xcc-error|error_call_pointer_expected_int.c|1|passing 'int *' to parameter of type 'int' in call to 'f'
@@ -159,6 +179,8 @@ xcc-error|error_ptr_plus_ptr.c|1|invalid operands to arithmetic operator
 xcc-error|error_redeclaration.c|1|redeclaration of 'a'
 xcc-error|error_redeclaration_nested_same_scope.c|1|redeclaration of 'x'
 xcc-error|error_return_pointer_from_int.c|1|returning 'int *' from a function returning 'int'
+xcc-error|error_scalar_braces.c|1|too many braces around scalar initializer
+xcc-error|error_scalar_excess.c|1|excess elements in scalar initializer
 xcc-error|error_sizeof_function.c|1|invalid application of sizeof to function type
 xcc-error|error_sizeof_incomplete_type.c|1|invalid application of sizeof to incomplete type
 xcc-error|error_sizeof_void.c|1|invalid application of sizeof to void type
@@ -417,6 +439,11 @@ run|u_index_unsigned.c|77|
 run|u_long_decl.c|17|
 run|u_mixed_promote.c|50|
 run|unary_precedence.c|4|
+run|unsized_int_1d.c|6|
+run|unsized_long_1d.c|60|
+run|unsized_md_flat.c|5|
+run|unsized_md_nested.c|7|
+run|unsized_sizeof.c|20|
 run|u_param.c|99|
 run|u_return_fn.c|11|
 run|u_uchar.c|200|

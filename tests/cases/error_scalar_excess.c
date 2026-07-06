@@ -1,0 +1,6 @@
+/* SPDX-License-Identifier: MIT */
+/* expect-error: excess elements in scalar initializer */
+int main(void) {
+    int x = {1, 2};
+    return x;
+}

@@ -43,7 +43,9 @@ tests.
 | parenthesized declarators (`int (*p)[3]`), casts (`(int (*)[3])`) | preprocessor (`#include`, `#define`) |
 | N-dimensional arrays, `[]` subscript, `ptr ± int/long`, `ptr - ptr`, param decay | multiple translation units |
 | typed declarations, parameters, returns | `-W` CLI flags |
-| **brace initializers** for `int`/`char` arrays (1D and multidim, flat or nested) | |
+| **brace initializers** for any scalar array — `char`/`short`/`int`/`long`, signed & unsigned (1D and multidim, flat or nested; trailing comma OK) | |
+| unsized `T a[] = {…}` / `T a[][N] = {…}` bound inference (flat or nested) | |
+| scalar brace init `int x = {3};`, `int *p = {0};` | |
 | **arrays of pointers** (`int *p[3]`) with brace init (`{0}`, `{&a, …}`) | |
 | casts `(type)expr`, `(void)expr` discard | |
 | `sizeof expr`, `sizeof(type)` (compile-time fold, `unsigned long`) | |
@@ -56,11 +58,9 @@ tests.
 | warnings (`implicit` decl, unprototyped calls, `char` overflow, …) | |
 | `file:line:col` diagnostics, carets, `note:` spans, color (`auto`) | |
 
-**Brace initializer scope (deferred):** `short`/`long`/`unsigned` array brace
-init; unsized `T a[] = {…}` bound inference; file-scope/static aggregate init;
+**Brace initializer scope (deferred):** file-scope/static aggregate init;
 string literals for `char[]`; nested brace init for pointer-to-array types;
-`{…}` bulk-zero via `memset` (uses per-element stores today); trailing comma
-in init lists; redundant scalar brace form `int x = {3}` (rejected).
+`{…}` bulk-zero via `memset` (uses per-element stores today).
 
 > Locals use type-aware stack layout (`char` 1 byte, `int` 4 bytes, `long` and
 > pointers 8 bytes). On x86-64 Linux (SysV LP64), `long` is 64 bits — the same

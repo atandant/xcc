@@ -218,6 +218,7 @@ initializer_opt:
 initializer:
     arg_expr                 { $$ = $1; }
   | '{' init_list '}'        { $$ = node_init_list($2, LOC(@1)); }
+  | '{' init_list ',' '}'    { $$ = node_init_list($2, LOC(@1)); }
   ;
 
 init_list:

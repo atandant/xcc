@@ -15,7 +15,13 @@ binary.
 | `pointer_swap.c` | Swap via `int *`, return `x + y`     | 30        |
 | `bsort.c`        | Bubble sort `int[5]`, return `a[0]`  | 3         |
 | `star_bfs.c`     | BFS best path, decimal-coded nodes   | 15        |
+| `matmul.c`       | 3x3 matrix multiply + weighted trace | 38        |
 | `warnex.c`       | Warning demo (compiles; see stderr)  | 42        |
+
+`matmul.c` is a brace-initializer showcase: unsized multidimensional arrays with
+both flat and nested initializers (`int A[][3]`, `int B[][3]`), a 1-D unsized
+`long weight[]`, and scalar brace init (`int scale = {2}`). It multiplies two
+3x3 matrices, takes a weighted trace, scales it, and returns the result mod 256.
 
 `warnex.c` is a **deliberately sloppy** C89 program: it triggers many default
 xcc warnings (implicit declarations, unprototyped calls, `char` overflow, old-
