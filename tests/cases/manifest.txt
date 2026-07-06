@@ -45,6 +45,16 @@ xcc-warning|block_scope_initializer_self.c|0|initializer refers to 'x' before it
 run|block_scope_restored.c|3|
 run|block_scope_shadow.c|7|
 run|block_statement.c|9|
+run|brace_char.c|198|
+run|brace_comma.c|5|
+run|brace_int_1d.c|6|
+run|brace_int_fold.c|9|
+run|brace_int_partial.c|5|
+run|brace_int_zero.c|0|
+run|brace_md_flat.c|7|
+run|brace_md_nested.c|4|
+run|brace_ptr_addrs.c|1|
+run|brace_ptr_zero.c|1|
 run|call_arg_local_before_assignment.c|23|
 run|call_expr_statement.c|5|
 run|call_forward_implicit.c|6|
@@ -118,6 +128,9 @@ xcc-error|error_assign_long_overflow_ice.c|1|incompatible types assigning 'long'
 xcc-error|error_assign_long_to_pointer.c|1|incompatible types assigning 'long' to 'int *'
 xcc-error|error_assign_pointer_to_int.c|1|incompatible types assigning 'int *' to 'int'
 xcc-error|error_block_scope_expired.c|1|use of undeclared identifier 'x'
+xcc-error|error_brace_excess.c|1|excess elements in array initializer
+xcc-error|error_brace_scalar.c|1|brace initializer cannot be used to initialize 'int'
+xcc-error|error_brace_short.c|1|brace initialization is not supported for 'short' arrays yet
 xcc-error|error_called_local.c|1|called object 'f' is not a function
 xcc-error|error_call_int_expected_pointer.c|1|passing 'int' to parameter of type 'int *' in call to 'f'
 xcc-error|error_call_pointer_expected_int.c|1|passing 'int *' to parameter of type 'int' in call to 'f'
@@ -140,8 +153,7 @@ xcc-error|error_non_lvalue_cmp_assign.c|1|assignment to non-lvalue
 xcc-error|error_non_lvalue_neg_assign.c|1|assignment to non-lvalue
 xcc-error|error_octal_stray8.c|1|invalid digit in octal constant
 xcc-error|error_param_redefinition.c|1|redefinition of parameter 'x'
-xcc-error|error_parse_missing_semicolon.c|1|syntax error, unexpected RETURN
-xcc-error|error_pd_ptr_array_ambig.c|1|array declarator not allowed on pointer type
+xcc-error|error_parse_missing_semicolon.c|1|syntax error, unexpected RETURN, expecting ';'
 xcc-error|error_ptr_mul_int.c|1|invalid operands to arithmetic operator
 xcc-error|error_ptr_plus_ptr.c|1|invalid operands to arithmetic operator
 xcc-error|error_redeclaration.c|1|redeclaration of 'a'
@@ -308,6 +320,7 @@ run|opt_prop_long_chain.c|15|
 run|opt_prop_multistmt.c|21|
 run|opt_prop_return_add.c|42|
 run|opt_prop_simple.c|50|
+run|pa_ptr_array_decl.c|1|
 run|param_seventh_stack_arg.c|7|
 run|param_shadow_block.c|8|
 run|paren_grouping.c|25|

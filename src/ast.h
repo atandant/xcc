@@ -35,6 +35,7 @@ typedef enum {
     ND_RETURN,     /* return operand;              */
     ND_EXPR_STMT,  /* operand;                     */
     ND_DECL,       /* type-specifier declarator [= init]; */
+    ND_INIT_LIST,  /* brace initializer: body chain of expr / nested lists */
     ND_CALL,       /* name(args...)                */
     ND_IF,         /* if (cond) then [else else]   */
     ND_WHILE,      /* while (cond) body            */
@@ -44,7 +45,8 @@ typedef enum {
 
 typedef enum {
     OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_MOD,
-    OP_EQ, OP_NE, OP_LT, OP_LE, OP_GT, OP_GE
+    OP_EQ, OP_NE, OP_LT, OP_LE, OP_GT, OP_GE,
+    OP_COMMA
 } BinOp;
 
 typedef struct Node Node;
@@ -139,6 +141,8 @@ Node *node_return(Node *o, SourceLoc loc);
 Node *node_expr_stmt(Node *o, SourceLoc loc);
 Node *node_decl(char *name, Type *spec_ty, Declarator *decl, Node *init,
                 SourceLoc loc);
+Node *node_init_list(Node *items, SourceLoc loc);
+Node *init_list_append(Node *head, Node *item);
 Node *node_call(char *name, NodeList *args, SourceLoc loc);
 Node *node_if(Node *cond, Node *then_body, Node *else_body, SourceLoc loc);
 Node *node_while(Node *cond, Node *body, SourceLoc loc);

@@ -201,6 +201,10 @@ static void check_init_from_self(Node *n, Node *decl)
         for (Node *a = n->args; a; a = a->next)
             check_init_from_self(a, decl);
         return;
+    case ND_INIT_LIST:
+        for (Node *e = n->body; e; e = e->next)
+            check_init_from_self(e, decl);
+        return;
     default:
         return;
     }
@@ -267,6 +271,188 @@ static int sema_array_bound_eval(Node *expr, long *out, SourceLoc loc, void *ctx
         return 0;
     }
     return 1;
+}
+
+static Type *array_leaf_type(Type *ty)
+{
+    while (ty && type_is_array(ty))
+        ty = type_array_elem(ty);
+    return ty;
+}
+
+/* UNDEFER: brace init for short, long, and unsigned element types. */
+static int brace_init_elem_supported(Type *leaf)
+{
+    if (!leaf)
+        return 0;
+    if (type_is_pointer(leaf))
+        return 1;
+    if (type_is_char(leaf))
+        return 1;
+    if (type_is_integer(leaf) && leaf->width == IW_INT && !type_is_unsigned(leaf))
+        return 1;
+    return 0;
+}
+
+typedef struct {
+    Node *head;
+    Node **tail;
+} InitFlat;
+
+static void flat_append(InitFlat *f, Node *e)
+{
+    e->next = NULL;
+    *f->tail = e;
+    f->tail = &e->next;
+}
+
+static Node *zero_init_expr(Type *leaf, SourceLoc loc)
+{
+    Node *z = node_num(0, loc);
+    z->ty = leaf;
+    return z;
+}
+
+static void pad_aggregate_zeros(Type *t, InitFlat *flat, SourceLoc loc)
+{
+    if (type_is_array(t)) {
+        Type *elem = type_array_elem(t);
+        int n = type_array_count(t);
+        int i;
+
+        for (i = 0; i < n; i++)
+            pad_aggregate_zeros(elem, flat, loc);
+    } else {
+        flat_append(flat, zero_init_expr(t, loc));
+    }
+}
+
+static int init_aggregate(Type *t, Node **pcursor, InitFlat *flat,
+                          SourceLoc loc, int *excess);
+
+static int init_aggregate(Type *t, Node **pcursor, InitFlat *flat,
+                          SourceLoc loc, int *excess)
+{
+    if (type_is_array(t)) {
+        Type *elem = type_array_elem(t);
+        int n = type_array_count(t);
+        int i;
+
+        for (i = 0; i < n; i++) {
+            if (!*pcursor) {
+                pad_aggregate_zeros(elem, flat, loc);
+                continue;
+            }
+            if ((*pcursor)->kind == ND_INIT_LIST) {
+                Node *sub = (*pcursor)->body;
+                Node **subcur = &sub;
+
+                *pcursor = (*pcursor)->next;
+                if (init_aggregate(elem, subcur, flat, loc, excess))
+                    return 1;
+                if (*subcur != NULL)
+                    *excess = 1;
+            } else if (init_aggregate(elem, pcursor, flat, loc, excess)) {
+                return 1;
+            }
+        }
+        return 0;
+    }
+
+    if (!*pcursor) {
+        flat_append(flat, zero_init_expr(t, loc));
+        return 0;
+    }
+    if ((*pcursor)->kind == ND_INIT_LIST) {
+        diag_error_at(loc, "brace-enclosed initializer for scalar element");
+        return 1;
+    }
+    {
+        Node *e = *pcursor;
+
+        *pcursor = e->next;
+        e->next = NULL;
+        flat_append(flat, e);
+    }
+    return 0;
+}
+
+static Node *flatten_brace_init(Type *aty, Node *init, SourceLoc loc)
+{
+    InitFlat flat = { NULL, &flat.head };
+    Node *cursor = init->body;
+    int excess = 0;
+
+    if (init_aggregate(aty, &cursor, &flat, loc, &excess))
+        return init;
+    if (cursor != NULL || excess)
+        diag_error_at(loc, "excess elements in array initializer");
+    return node_init_list(flat.head, init->loc);
+}
+
+static void resolve_init_expr(Node *n, ExprCtx ctx);
+
+static void resolve_init_expr(Node *n, ExprCtx ctx)
+{
+    if (!n)
+        return;
+    if (n->kind == ND_INIT_LIST) {
+        for (Node *e = n->body; e; e = e->next)
+            resolve_init_expr(e, ctx);
+        return;
+    }
+    resolve_expr_ctx(n, ctx);
+}
+
+static void resolve_init_list(Node *init, ExprCtx ctx)
+{
+    resolve_init_expr(init, ctx);
+}
+
+static void check_init_list_from_self(Node *init, Node *decl)
+{
+    if (!init || init->kind != ND_INIT_LIST)
+        return;
+    for (Node *e = init->body; e; e = e->next)
+        check_init_from_self(e, decl);
+}
+
+static void sema_brace_init(Node *decl)
+{
+    Type *leaf;
+    Node *flat;
+    Node *e;
+
+    if (!decl->init || decl->init->kind != ND_INIT_LIST)
+        return;
+
+    if (!type_is_array(decl->ty)) {
+        diag_error_at(decl->loc,
+                      "brace initializer cannot be used to initialize '%s'",
+                      type_name(decl->ty));
+        return;
+    }
+
+    leaf = array_leaf_type(decl->ty);
+    if (!brace_init_elem_supported(leaf)) {
+        diag_error_at(decl->loc,
+                      "brace initialization is not supported for '%s' arrays yet",
+                      type_name(leaf));
+        return;
+    }
+
+    flat = flatten_brace_init(decl->ty, decl->init, decl->loc);
+    decl->init = flat;
+
+    resolve_init_list(flat, CTX_RVALUE);
+    check_init_list_from_self(flat, decl);
+
+    for (e = flat->body; e; e = e->next) {
+        if (!expr_assignable_to(leaf, e))
+            diag_incompatible_init(e->loc, leaf, e);
+        else
+            warn_value_conversion(e->loc, leaf, e);
+    }
 }
 
 static void sema_finish_function_types(Function *fn)
@@ -531,6 +717,8 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
                 diag_error_at(n->loc,
                               "invalid operands to relational operator");
             n->ty = type_int();
+        } else if (n->op == OP_COMMA) {
+            n->ty = n->rhs->ty;
         }
         n->is_lvalue = 0;
         return;
@@ -664,13 +852,17 @@ static void resolve_stmt(Node *s)
             s->offset = scope_add_local(s->name, s->ty, s->loc);
         }
         /* C89 3.1.2.1: the name is in scope within its own initializer. */
-        resolve_expr_ctx(s->init, CTX_RVALUE);
-        if (s->init)
-            check_init_from_self(s->init, s);
-        if (s->init && !expr_assignable_to(s->ty, s->init))
-            diag_incompatible_init(s->loc, s->ty, s->init);
-        else if (s->init)
-            warn_value_conversion(s->loc, s->ty, s->init);
+        if (s->init && s->init->kind == ND_INIT_LIST)
+            sema_brace_init(s);
+        else {
+            resolve_expr_ctx(s->init, CTX_RVALUE);
+            if (s->init)
+                check_init_from_self(s->init, s);
+            if (s->init && !expr_assignable_to(s->ty, s->init))
+                diag_incompatible_init(s->loc, s->ty, s->init);
+            else if (s->init)
+                warn_value_conversion(s->loc, s->ty, s->init);
+        }
         return;
     case ND_RETURN:
         if (s->operand) {

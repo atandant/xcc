@@ -174,7 +174,11 @@ static int prop_stmt_loop(Node *s)
 
     switch (s->kind) {
     case ND_DECL:
-        changed |= prop_expr(&s->init, 1, 0);
+        if (s->init && s->init->kind == ND_INIT_LIST) {
+            for (Node **p = &s->init->body; *p; p = &(*p)->next)
+                changed |= prop_expr(p, 1, 0);
+        } else
+            changed |= prop_expr(&s->init, 1, 0);
         return changed;
     case ND_RETURN:
     case ND_EXPR_STMT:
@@ -216,10 +220,13 @@ static int prop_expr(Node **np, int rvalue, int allow_subst)
 
     if (rvalue && allow_subst && n->kind == ND_VAR &&
         type_is_integer(n->ty) && bind_get(n->offset, &v)) {
-        *np = node_num(v, n->loc);
-        (*np)->ty = n->ty;
+        Node *subst = node_num(v, n->loc);
+
+        subst->ty = n->ty;
+        subst->next = n->next;
         if (type_is_long(n->ty))
-            (*np)->has_long_suffix = 1;
+            subst->has_long_suffix = 1;
+        *np = subst;
         return 1;
     }
 
@@ -227,6 +234,10 @@ static int prop_expr(Node **np, int rvalue, int allow_subst)
     case ND_BINOP:
         changed |= prop_expr(&n->lhs, 1, allow_subst);
         changed |= prop_expr(&n->rhs, 1, allow_subst);
+        return changed;
+    case ND_INIT_LIST:
+        for (Node **p = &n->body; *p; p = &(*p)->next)
+            changed |= prop_expr(p, 1, allow_subst);
         return changed;
     case ND_NEG:
     case ND_DEREF:
@@ -282,10 +293,15 @@ static int prop_stmt(Node *s)
 
     switch (s->kind) {
     case ND_DECL:
-        changed |= prop_expr_rvalue(&s->init);
-        if (type_is_integer(s->ty)) {
-            if (is_integer_const(s->init, &v))
-                bind_set(s->offset, v);
+        if (s->init && s->init->kind == ND_INIT_LIST) {
+            for (Node **p = &s->init->body; *p; p = &(*p)->next)
+                changed |= prop_expr_rvalue(p);
+        } else {
+            changed |= prop_expr_rvalue(&s->init);
+            if (type_is_integer(s->ty)) {
+                if (is_integer_const(s->init, &v))
+                    bind_set(s->offset, v);
+            }
         }
         return changed;
     case ND_RETURN:

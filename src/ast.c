@@ -113,6 +113,25 @@ Node *node_decl(char *name, Type *spec_ty, Declarator *decl, Node *init,
     return n;
 }
 
+Node *node_init_list(Node *items, SourceLoc loc)
+{
+    Node *n = new_node(ND_INIT_LIST, loc);
+    n->body = items;
+    return n;
+}
+
+Node *init_list_append(Node *head, Node *item)
+{
+    item->next = NULL;
+    if (!head)
+        return item;
+    Node *t = head;
+    while (t->next)
+        t = t->next;
+    t->next = item;
+    return head;
+}
+
 Node *node_call(char *name, NodeList *args, SourceLoc loc)
 {
     Node *n = new_node(ND_CALL, loc);
@@ -488,11 +507,6 @@ Type *type_apply_declarator_cb(Type *base, Declarator *d, SourceLoc loc,
         return base;
 
     if (type_is_pointer(base) && declarator_has_suffix_arrays(d)) {
-        diag_error_at(loc, "array declarator not allowed on pointer type");
-        return base;
-    }
-
-    if (d->nptr > 0 && d->ndims_suffix > 0) {
         diag_error_at(loc, "array declarator not allowed on pointer type");
         return base;
     }

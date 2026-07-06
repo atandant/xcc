@@ -30,21 +30,23 @@ make
 ./examples/build.sh
 ```
 
-## Status (v0.0.1.6)
+## Status (v0.0.1.7)
 
 The pipeline runs end to end (lex → parse → sema → lower → liveness →
-regalloc → emit → `.s` → gcc) with a typed semantic layer and 410+ acceptance
+regalloc → emit → `.s` → gcc) with a typed semantic layer and 420+ acceptance
 tests.
 
 | Supported | Not yet |
 | --- | --- |
-| `int`, `char`, `long`, `void`, pointers (`*`, `&`, dereference) | `brace initializers` |
-| `unsigned` (`char`/`short`/`int`/`long`), usual arithmetic conversions | arrays of pointers (`int *p[3]`) |
-| parenthesized declarators (`int (*p)[3]`), casts (`(int (*)[3])`) | structs, unions, enums, `typedef` |
-| N-dimensional arrays, `[]` subscript, `ptr ± int/long`, `ptr - ptr`, param decay | function pointers |
-| typed declarations, parameters, returns | preprocessor (`#include`, `#define`) |
-| casts `(type)expr`, `(void)expr` discard | multiple translation units |
-| `sizeof expr`, `sizeof(type)` (compile-time fold, `unsigned long`) | `-W` CLI flags |
+| `int`, `char`, `long`, `void`, pointers (`*`, `&`, dereference) | structs, unions, enums, `typedef` |
+| `unsigned` (`char`/`short`/`int`/`long`), usual arithmetic conversions | function pointers |
+| parenthesized declarators (`int (*p)[3]`), casts (`(int (*)[3])`) | preprocessor (`#include`, `#define`) |
+| N-dimensional arrays, `[]` subscript, `ptr ± int/long`, `ptr - ptr`, param decay | multiple translation units |
+| typed declarations, parameters, returns | `-W` CLI flags |
+| **brace initializers** for `int`/`char` arrays (1D and multidim, flat or nested) | |
+| **arrays of pointers** (`int *p[3]`) with brace init (`{0}`, `{&a, …}`) | |
+| casts `(type)expr`, `(void)expr` discard | |
+| `sizeof expr`, `sizeof(type)` (compile-time fold, `unsigned long`) | |
 | function calls (prototyped arg checking, void `*` conversions) | |
 | `if` / `else`, `while`, `for`, blocks | |
 | `+ - * / %`, unary `-`, comparisons (signed and unsigned) | |
@@ -53,6 +55,12 @@ tests.
 | `int`/`long` promotions; `ptr - ptr` → `long` | |
 | warnings (`implicit` decl, unprototyped calls, `char` overflow, …) | |
 | `file:line:col` diagnostics, carets, `note:` spans, color (`auto`) | |
+
+**Brace initializer scope (deferred):** `short`/`long`/`unsigned` array brace
+init; unsized `T a[] = {…}` bound inference; file-scope/static aggregate init;
+string literals for `char[]`; nested brace init for pointer-to-array types;
+`{…}` bulk-zero via `memset` (uses per-element stores today); trailing comma
+in init lists; redundant scalar brace form `int x = {3}` (rejected).
 
 > Locals use type-aware stack layout (`char` 1 byte, `int` 4 bytes, `long` and
 > pointers 8 bytes). On x86-64 Linux (SysV LP64), `long` is 64 bits — the same
@@ -66,7 +74,11 @@ tests.
 > operands do not decay; function, `void`, and incomplete types are rejected.
 > The operand of `sizeof expr` is not evaluated.
 >
-> `auto` arrays are not zero-initialized (faithful C89).
+> Brace initializers pad unspecified elements with zero (`{0}` zero-fills the
+> whole array). Partial lists and excess-element errors follow C89 aggregate rules.
+> Init element expressions are lowered normally so `cosfold`/`cosprop` can fold them.
+>
+> `auto` arrays without an initializer are not zero-initialized (faithful C89).
 
 ## How it works
 

@@ -14,6 +14,12 @@ static Node *fold_to_num(long v, Type *ty, SourceLoc loc)
     return n;
 }
 
+static void replace_expr_preserve_next(Node **np, Node *old, Node *newn)
+{
+    newn->next = old->next;
+    *np = newn;
+}
+
 static long int_promote_literal_value(long v, Type *ty)
 {
     Type *promoted = type_int_promote(ty);
@@ -98,6 +104,10 @@ int cosfold_expr(Node **np)
 
         changed |= cosfold_expr(&n->lhs);
         changed |= cosfold_expr(&n->rhs);
+        if (n->op == OP_COMMA && n->lhs && n->lhs->kind == ND_NUM) {
+            replace_expr_preserve_next(np, n, n->rhs);
+            return 1;
+        }
         if (foldable_binop(n) &&
             fold_literal_operand(n->lhs, &lv, &lty) &&
             fold_literal_operand(n->rhs, &rv, &rty)) {
@@ -108,7 +118,7 @@ int cosfold_expr(Node **np)
             rv = int_promote_literal_value(rv, rty);
             fty = fold_binop_ty(n, lty, rty);
             if (int_const_binop_ty(n->op, lv, rv, fty, &v)) {
-                *np = fold_to_num(v, n->ty, n->loc);
+                replace_expr_preserve_next(np, n, fold_to_num(v, n->ty, n->loc));
                 return 1;
             }
         }
@@ -120,7 +130,7 @@ int cosfold_expr(Node **np)
             type_is_integer(n->ty)) {
             long v;
             if (int_const_neg_ty(n->operand->val, n->ty, &v)) {
-                *np = fold_to_num(v, n->ty, n->loc);
+                replace_expr_preserve_next(np, n, fold_to_num(v, n->ty, n->loc));
                 return 1;
             }
         }
@@ -139,7 +149,7 @@ int cosfold_expr(Node **np)
         if (n->operand && n->operand->kind == ND_NUM &&
             !type_is_void(n->ty)) {
             long v = type_convert_const(n->operand->val, n->ty);
-            *np = fold_to_num(v, n->ty, n->loc);
+            replace_expr_preserve_next(np, n, fold_to_num(v, n->ty, n->loc));
             return 1;
         }
         return changed;
@@ -150,6 +160,10 @@ int cosfold_expr(Node **np)
     case ND_CALL:
         for (Node **ap = &n->args; *ap; ap = &(*ap)->next)
             changed |= cosfold_expr(ap);
+        return changed;
+    case ND_INIT_LIST:
+        for (Node **p = &n->body; *p; p = &(*p)->next)
+            changed |= cosfold_expr(p);
         return changed;
     case ND_NUM:
     case ND_VAR:
@@ -179,7 +193,11 @@ static int fold_stmt(Node *s)
 
     switch (s->kind) {
     case ND_DECL:
-        changed |= cosfold_expr(&s->init);
+        if (s->init && s->init->kind == ND_INIT_LIST) {
+            for (Node **p = &s->init->body; *p; p = &(*p)->next)
+                changed |= cosfold_expr(p);
+        } else
+            changed |= cosfold_expr(&s->init);
         return changed;
     case ND_RETURN:
     case ND_EXPR_STMT:

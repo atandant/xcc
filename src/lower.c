@@ -46,6 +46,12 @@ static int assigns_to_offset(Node *n, int offset)
     case ND_BINOP:
         return assigns_to_offset(n->lhs, offset) ||
                assigns_to_offset(n->rhs, offset);
+    case ND_INIT_LIST:
+        for (Node *e = n->body; e; e = e->next) {
+            if (assigns_to_offset(e, offset))
+                return 1;
+        }
+        return 0;
     case ND_CALL:
         for (Node *a = n->args; a; a = a->next) {
             if (assigns_to_offset(a, offset))
@@ -307,6 +313,27 @@ static int is_ptr_int_arith(BinOp op, Node *lhs, Node *rhs)
 
 static int lower_addr(LowerCtx *c, Node *n);
 static int lower_expr(LowerCtx *c, Node *n);
+static Type *array_leaf_type_lower(Type *ty)
+{
+    while (ty && type_is_array(ty))
+        ty = type_array_elem(ty);
+    return ty;
+}
+
+static void lower_brace_init(LowerCtx *c, Node *decl)
+{
+    Type *leaf = array_leaf_type_lower(decl->ty);
+    int esz = type_size(leaf);
+    int idx = 0;
+    Node *e;
+
+    for (e = decl->init->body; e; e = e->next) {
+        int v = lower_expr(c, e);
+        emit_store_slot(c, v, leaf, decl->offset + idx * esz);
+        idx++;
+    }
+}
+
 static void lower_stmt(LowerCtx *c, Node *n);
 
 static int lower_addr(LowerCtx *c, Node *n)
@@ -542,6 +569,17 @@ static void lower_binop(LowerCtx *c, int dst, BinOp op, Node *lhs, Node *rhs,
     case OP_GE:
         lower_setcc(c, dst, op, vl, rb, w, sgn);
         return;
+    case OP_COMMA:
+        (void)lower_expr(c, lhs);
+        if (imm_ok)
+            emit(c, (Instr){
+                .op = LIR_MOVI, .dst = dst, .a = lir_imm(rhs->val) });
+        else {
+            int vr = lower_expr(c, rhs);
+            emit(c, (Instr){
+                .op = LIR_MOV, .dst = dst, .a = lir_vreg(vr) });
+        }
+        return;
     }
 }
 
@@ -741,6 +779,10 @@ static void lower_stmt(LowerCtx *c, Node *n)
                     emit(c, (Instr){
                         .op = LIR_MOV, .dst = v, .a = lir_vreg(val) });
             }
+            return;
+        }
+        if (n->init && n->init->kind == ND_INIT_LIST) {
+            lower_brace_init(c, n);
             return;
         }
         if (n->init) {

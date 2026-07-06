@@ -41,7 +41,7 @@ Function *g_program = NULL;
 %token INT CHAR SHORT LONG VOID UNSIGNED SIGNED RETURN IF ELSE WHILE FOR SIZEOF
 %token EQ NE LE GE
 
-%type <node> expr expr_opt stmt
+%type <node> expr expr_opt arg_expr stmt initializer init_list initializer_opt
 %type <list> stmt_list arg_clause arg_list
 %type <param> param_list param
 %type <pclause> param_clause
@@ -51,6 +51,7 @@ Function *g_program = NULL;
                                   abstract_declarator_opt direct_abstract_declarator
 
 %right '='
+%left ','
 %left EQ NE
 %left '<' '>' LE GE
 %left '+' '-'
@@ -194,13 +195,9 @@ stmt_list:
 stmt:
     RETURN expr ';'          { $$ = node_return($2, LOC(@1)); }
   | RETURN ';'               { $$ = node_return(NULL, LOC(@1)); }
-  | specifier declarator ';'
+  | specifier declarator initializer_opt ';'
         {
-            $$ = node_decl(declarator_name($2), $1, $2, NULL, LOC(@1));
-        }
-  | specifier declarator '=' expr ';'
-        {
-            $$ = node_decl(declarator_name($2), $1, $2, $4, LOC(@1));
+            $$ = node_decl(declarator_name($2), $1, $2, $3, LOC(@1));
         }
   | IF '(' expr ')' stmt %prec IFX
                               { $$ = node_if($3, $5, NULL, LOC(@1)); }
@@ -213,38 +210,59 @@ stmt:
   | expr ';'                 { $$ = node_expr_stmt($1, LOC(@1)); }
   ;
 
+initializer_opt:
+    /* empty */              { $$ = NULL; }
+  | '=' initializer          { $$ = $2; }
+  ;
+
+initializer:
+    arg_expr                 { $$ = $1; }
+  | '{' init_list '}'        { $$ = node_init_list($2, LOC(@1)); }
+  ;
+
+init_list:
+    /* empty */                { $$ = NULL; }
+  | initializer                { $$ = $1; }
+  | init_list ',' initializer  { $$ = init_list_append($1, $3); }
+  ;
+
 expr_opt:
     /* empty */              { $$ = NULL; }
   | expr                     { $$ = $1; }
   ;
 
 expr:
+    arg_expr                 { $$ = $1; }
+  | expr ',' arg_expr        { $$ = node_binop(OP_COMMA, $1, $3, LOC(@2)); }
+  ;
+
+arg_expr:
     NUM                      { $$ = node_num($1.val, LOC(@1));
                                $$->has_long_suffix = $1.is_long;
                                $$->is_hex_literal = $1.is_hex;
                                $$->is_octal_literal = $1.is_octal; }
   | IDENT                    { $$ = node_var($1, LOC(@1)); }
   | IDENT '(' arg_clause ')' { $$ = node_call($1, $3, LOC(@1)); }
-  | expr '=' expr            { $$ = node_assign($1, $3, LOC(@2)); }
-  | expr '+' expr            { $$ = node_binop(OP_ADD, $1, $3, LOC(@2)); }
-  | expr '-' expr            { $$ = node_binop(OP_SUB, $1, $3, LOC(@2)); }
-  | expr '*' expr            { $$ = node_binop(OP_MUL, $1, $3, LOC(@2)); }
-  | expr '/' expr            { $$ = node_binop(OP_DIV, $1, $3, LOC(@2)); }
-  | expr '%' expr            { $$ = node_binop(OP_MOD, $1, $3, LOC(@2)); }
-  | expr EQ expr             { $$ = node_binop(OP_EQ, $1, $3, LOC(@2)); }
-  | expr NE expr             { $$ = node_binop(OP_NE, $1, $3, LOC(@2)); }
-  | expr '<' expr            { $$ = node_binop(OP_LT, $1, $3, LOC(@2)); }
-  | expr LE expr             { $$ = node_binop(OP_LE, $1, $3, LOC(@2)); }
-  | expr '>' expr            { $$ = node_binop(OP_GT, $1, $3, LOC(@2)); }
-  | expr GE expr             { $$ = node_binop(OP_GE, $1, $3, LOC(@2)); }
-  | '-' expr %prec UMINUS    { $$ = node_neg($2, LOC(@1)); }
-  | '&' expr %prec UMINUS    { $$ = node_addr($2, LOC(@1)); }
-  | '*' expr %prec UMINUS    { $$ = node_deref($2, LOC(@1)); }
-  | SIZEOF expr %prec SIZEOF { $$ = node_sizeof_expr($2, LOC(@1)); }
+  | arg_expr '=' arg_expr    { $$ = node_assign($1, $3, LOC(@2)); }
+  | arg_expr '+' arg_expr    { $$ = node_binop(OP_ADD, $1, $3, LOC(@2)); }
+  | arg_expr '-' arg_expr    { $$ = node_binop(OP_SUB, $1, $3, LOC(@2)); }
+  | arg_expr '*' arg_expr    { $$ = node_binop(OP_MUL, $1, $3, LOC(@2)); }
+  | arg_expr '/' arg_expr    { $$ = node_binop(OP_DIV, $1, $3, LOC(@2)); }
+  | arg_expr '%' arg_expr    { $$ = node_binop(OP_MOD, $1, $3, LOC(@2)); }
+  | arg_expr EQ arg_expr     { $$ = node_binop(OP_EQ, $1, $3, LOC(@2)); }
+  | arg_expr NE arg_expr     { $$ = node_binop(OP_NE, $1, $3, LOC(@2)); }
+  | arg_expr '<' arg_expr    { $$ = node_binop(OP_LT, $1, $3, LOC(@2)); }
+  | arg_expr LE arg_expr     { $$ = node_binop(OP_LE, $1, $3, LOC(@2)); }
+  | arg_expr '>' arg_expr    { $$ = node_binop(OP_GT, $1, $3, LOC(@2)); }
+  | arg_expr GE arg_expr     { $$ = node_binop(OP_GE, $1, $3, LOC(@2)); }
+  | '-' arg_expr %prec UMINUS { $$ = node_neg($2, LOC(@1)); }
+  | '&' arg_expr %prec UMINUS { $$ = node_addr($2, LOC(@1)); }
+  | '*' arg_expr %prec UMINUS { $$ = node_deref($2, LOC(@1)); }
+  | SIZEOF arg_expr %prec SIZEOF { $$ = node_sizeof_expr($2, LOC(@1)); }
   | SIZEOF '(' cast_type ')' %prec SIZEOF { $$ = node_sizeof_type($3, LOC(@1)); }
-  | '(' cast_type ')' expr %prec UMINUS
+  | '(' cast_type ')' arg_expr %prec UMINUS
                              { $$ = node_cast($2, $4, LOC(@1)); }
-  | expr '[' expr ']'
+  | arg_expr '[' arg_expr ']'
         { $$ = node_deref(node_binop(OP_ADD, $1, $3, LOC(@2)), LOC(@2)); }
   | '(' expr ')'             { $$ = $2; }
   ;
@@ -255,8 +273,8 @@ arg_clause:
   ;
 
 arg_list:
-    expr                     { $$ = stmt_list_append(NULL, $1); }
-  | arg_list ',' expr        { $$ = stmt_list_append($1, $3); }
+    arg_expr                 { $$ = stmt_list_append(NULL, $1); }
+  | arg_list ',' arg_expr    { $$ = stmt_list_append($1, $3); }
   ;
 
 %%
