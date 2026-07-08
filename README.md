@@ -33,17 +33,17 @@ make
 ## Status (v0.0.1.7)
 
 The pipeline runs end to end (lex → parse → sema → lower → liveness →
-regalloc → emit → `.s` → gcc) with a typed semantic layer and 420+ acceptance
+regalloc → emit → `.s` → gcc) with a typed semantic layer and 510+ acceptance
 tests.
 
 | Supported | Not yet |
 | --- | --- |
-| `int`, `char`, `long`, `void`, pointers (`*`, `&`, dereference) | structs, unions, enums, `typedef` |
+| `int`, `char`, `long`, `void`, pointers (`*`, `&`, dereference) | unions, enums |
 | `unsigned` (`char`/`short`/`int`/`long`), usual arithmetic conversions | function pointers |
 | parenthesized declarators (`int (*p)[3]`), casts (`(int (*)[3])`) | preprocessor (`#include`, `#define`) |
 | N-dimensional arrays, `[]` subscript, `ptr ± int/long`, `ptr - ptr`, param decay | multiple translation units |
 | typed declarations, parameters, returns | `-W` CLI flags |
-| **brace initializers** for any scalar array — `char`/`short`/`int`/`long`, signed & unsigned (1D and multidim, flat or nested; trailing comma OK) | |
+| **brace initializers** for scalar arrays and structs (partial init zero-fills) | |
 | unsized `T a[] = {…}` / `T a[][N] = {…}` bound inference (flat or nested) | |
 | scalar brace init `int x = {3};`, `int *p = {0};` | |
 | **arrays of pointers** (`int *p[3]`) with brace init (`{0}`, `{&a, …}`) | |
@@ -57,10 +57,15 @@ tests.
 | `int`/`long` promotions; `ptr - ptr` → `long` | |
 | warnings (`implicit` decl, unprototyped calls, `char` overflow, …) | |
 | `file:line:col` diagnostics, carets, `note:` spans, color (`auto`) | |
+| **`typedef`**, **`struct`** (tagged, forward-decl, layout), **`.` / `->`**, struct assign (`LIR_MEMCPY`), bitfields | |
+| `struct S *` parameters and returns | struct by-value param/return (ABI deferred) |
 
 **Brace initializer scope (deferred):** file-scope/static aggregate init;
-string literals for `char[]`; nested brace init for pointer-to-array types;
-`{…}` bulk-zero via `memset` (uses per-element stores today).
+string literals for `char[]`; nested brace init for pointer-to-array types.
+
+**Struct ABI (deferred, D17):** passing or returning a struct by value is
+rejected with a clear error until SysV AMD64 struct classification is
+implemented. Use pointers (`struct S *`) instead.
 
 > Locals use type-aware stack layout (`char` 1 byte, `int` 4 bytes, `long` and
 > pointers 8 bytes). On x86-64 Linux (SysV LP64), `long` is 64 bits — the same
@@ -129,7 +134,7 @@ committed.
 - `0.0.1.5` — `long` (LP64 64-bit), literal suffixes, promotions, `ptr - ptr` ✓
 - `0.0.1.6` — LIR lowering, liveness, linear-scan register allocation ✓
 - `0.0.1.6` — `sizeof` (compile-time fold, abstract declarator types) ✓
-- later — preprocessor, structs, and enough to compile real projects
+- later — preprocessor, struct-by-value ABI, and enough to compile real projects
 
 ## License
 

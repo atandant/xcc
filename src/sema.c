@@ -276,6 +276,11 @@ static Type *member_owner_struct(Node *base)
     return NULL;
 }
 
+static int struct_cmp_error(Node *lhs, Node *rhs)
+{
+    return type_is_struct(lhs->ty) || type_is_struct(rhs->ty);
+}
+
 /* Equality operands: both integers, compatible pointers, or pointer vs 0. */
 static int eq_operands_compatible(Node *lhs, Node *rhs)
 {
@@ -654,6 +659,11 @@ static void sema_finish_function_types(Function *fn)
 {
     fn->ret_ty = typedef_resolve_type(fn->ret_ty, fn->loc);
 
+    if (type_is_struct(fn->ret_ty) && type_struct_is_complete(fn->ret_ty))
+        diag_error_at(fn->loc,
+                      "returning struct type '%s' by value is not supported",
+                      type_name(fn->ret_ty));
+
     for (Param *p = fn->params; p; p = p->next) {
         if (p->decl) {
             if (p->decl_spec)
@@ -665,6 +675,10 @@ static void sema_finish_function_types(Function *fn)
         } else if (p->ty) {
             p->ty = typedef_resolve_type(p->ty, fn->loc);
         }
+        if (type_is_struct(p->ty) && type_struct_is_complete(p->ty))
+            diag_error_at(fn->loc,
+                          "passing struct type '%s' by value is not supported",
+                          type_name(p->ty));
     }
     func_rebuild_type(fn);
 }
@@ -891,7 +905,10 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
                 diag_error_at(n->loc,
                               "invalid operands to arithmetic operator");
         } else if (is_eq_op(n->op)) {
-            if (!eq_operands_compatible(n->lhs, n->rhs)) {
+            if (struct_cmp_error(n->lhs, n->rhs))
+                diag_error_at(n->loc,
+                              "invalid operands to comparison");
+            else if (!eq_operands_compatible(n->lhs, n->rhs)) {
                 if (type_is_pointer(n->lhs->ty) && type_is_pointer(n->rhs->ty))
                     diag_error_at(n->loc,
                                   "comparison between incompatible pointer types '%s' and '%s'",
@@ -914,7 +931,10 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
             }
             n->ty = type_int();
         } else if (is_rel_op(n->op)) {
-            if (!rel_operands_compatible(n->lhs, n->rhs))
+            if (struct_cmp_error(n->lhs, n->rhs))
+                diag_error_at(n->loc,
+                              "invalid operands to comparison");
+            else if (!rel_operands_compatible(n->lhs, n->rhs))
                 diag_error_at(n->loc,
                               "invalid operands to relational operator");
             n->ty = type_int();
@@ -1004,13 +1024,12 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
         n->is_lvalue = 0;
         n->cast_ty = dst;
 
-        /* C89 3.3.4: the target must be void or scalar, and (unless the
-         * target is void) the operand must also have scalar type. An explicit
-         * cast is the programmer's escape hatch, so it silences the implicit
-         * conversion warnings that assignment would raise. */
+        /* C89 3.3.4: the target must be void, scalar, or a struct whose member
+         * tree is scalar-only (B11). Unless the target is void, the operand must
+         * also have scalar type. */
         if (type_is_void(dst)) {
             /* (void)e discards the value; any operand type is fine. */
-        } else if (!type_is_scalar(dst)) {
+        } else if (!type_cast_target_ok(dst)) {
             diag_error_at(n->loc, "cast to non-scalar type '%s'",
                           type_name(dst));
         } else if (!type_is_scalar(n->operand->ty)) {

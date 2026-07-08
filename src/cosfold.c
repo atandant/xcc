@@ -147,7 +147,7 @@ int cosfold_expr(Node **np)
          * Plain (char) reduces modulo 256 (unsigned-byte model); (void) has
          * no value, so it is left for codegen to discard. */
         if (n->operand && n->operand->kind == ND_NUM &&
-            !type_is_void(n->ty)) {
+            !type_is_void(n->ty) && type_is_scalar(n->ty)) {
             long v = type_convert_const(n->operand->val, n->ty);
             replace_expr_preserve_next(np, n, fold_to_num(v, n->ty, n->loc));
             return 1;

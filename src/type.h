@@ -144,6 +144,7 @@ Type *type_decay(Type *ty);
 Type *type_array_elem(Type *ty);
 int type_array_count(Type *ty);
 Type *type_ptr_elem(Type *ty);
+int type_cast_target_ok(Type *ty);
 const char *type_name(Type *ty);
 const char *type_func_sig(Type *ty);
 

@@ -117,7 +117,10 @@ run|cast_ptr_through_void_ptr.c|7|
 run|cast_ptr_to_int_hygiene.c|1|
 run|cast_ptr_to_long.c|0|
 run|cast_ptr_to_long_eq.c|1|
+run|cast_struct_ptr.c|9|
+run|cast_struct_scalar.c|5|
 run|cast_subscript_precedence.c|3|
+run|cast_to_struct_ptr.c|3|
 run|cast_uint_to_ulong_zero_extend.c|1|
 run|cast_ushort_runtime_trunc.c|255|
 run|cast_void_discard.c|3|
@@ -163,6 +166,8 @@ xcc-error|error_brace_excess.c|1|excess elements in array initializer
 xcc-error|error_called_local.c|1|called object 'f' is not a function
 xcc-error|error_call_int_expected_pointer.c|1|passing 'int' to parameter of type 'int *' in call to 'f'
 xcc-error|error_call_pointer_expected_int.c|1|passing 'int *' to parameter of type 'int' in call to 'f'
+xcc-error|error_cast_struct_nested.c|1|cast to non-scalar type 'struct Outer'
+xcc-error|error_cast_struct_value.c|1|operand of cast has non-scalar type 'struct S'
 xcc-error|error_conflicting_param_count.c|1|conflicting types for 'f'
 xcc-error|error_conflicting_param_type.c|1|conflicting types for 'f'
 xcc-error|error_conflicting_return_pointer.c|1|conflicting types for 'f'
@@ -193,10 +198,17 @@ xcc-error|error_return_pointer_from_int.c|1|returning 'int *' from a function re
 xcc-error|error_scalar_braces.c|1|too many braces around scalar initializer
 xcc-error|error_scalar_excess.c|1|excess elements in scalar initializer
 xcc-error|error_sizeof_function.c|1|invalid application of sizeof to function type
+xcc-error|error_sizeof_incomplete_struct.c|1|invalid application of sizeof to incomplete type
 xcc-error|error_sizeof_incomplete_type.c|1|invalid application of sizeof to incomplete type
 xcc-error|error_sizeof_void.c|1|invalid application of sizeof to void type
 xcc-error|error_stray_char.c|1|stray '@' in program
+xcc-error|error_struct_byval_param.c|1|passing struct type 'struct S' by value is not supported
+xcc-error|error_struct_byval_return.c|1|returning struct type 'struct S' by value is not supported
+xcc-error|error_struct_cmp.c|1|invalid operands to comparison
+xcc-error|error_struct_condition.c|1|condition has non-scalar type 'struct S'
 xcc-error|error_struct_incomplete.c|1|variable 's' has incomplete type 'struct S'
+xcc-error|error_struct_member_limit.c|1|struct exceeds translation limit of 127 members
+xcc-error|error_struct_nest_limit.c|1|struct nesting exceeds translation limit of 6 levels
 xcc-error|error_subscript_nonscalar.c|1|cannot dereference non-pointer type 'int'
 xcc-error|error_too_few_args.c|1|too few arguments to function 'add'
 xcc-error|error_too_many_args.c|1|too many arguments to function 'id'
@@ -450,6 +462,9 @@ run|struct_nested.c|12|
 run|struct_ptr.c|8|
 run|struct_ptr_member_assign.c|55|
 run|struct_ptr_member.c|17|
+run|struct_ptr_param.c|42|
+run|struct_ptr_return.c|17|
+run|struct_sizeof_ice.c|2|
 run|sub_assoc.c|12|
 run|ty_char_param_from_int.c|65|
 run|ty_double_deref_store.c|8|

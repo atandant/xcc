@@ -8,6 +8,8 @@
 #include <string.h>
 
 #define MAX_STRUCT_TAGS 256
+#define MAX_STRUCT_MEMBERS 127
+#define MAX_STRUCT_NESTING 6
 
 typedef struct {
     char *tag;
@@ -110,6 +112,48 @@ static int member_type_ok(Type *ty, SourceLoc loc)
         type_is_struct(type_array_elem(ty)) &&
         !type_struct_is_complete(type_array_elem(ty))) {
         diag_error_at(loc, "array of incomplete struct type is not allowed");
+        return 0;
+    }
+    return 1;
+}
+
+static int struct_nest_depth(Type *ty)
+{
+    int max = 0;
+
+    if (!type_is_struct(ty) || !type_struct_is_complete(ty))
+        return 0;
+
+    for (int i = 0; i < ty->nmembers; i++) {
+        Type *mty = ty->members[i].ty;
+        int d = 0;
+
+        if (type_is_struct(mty))
+            d = 1 + struct_nest_depth(mty);
+        else if (type_is_array(mty)) {
+            Type *elem = type_array_elem(mty);
+
+            if (elem && type_is_struct(elem))
+                d = 1 + struct_nest_depth(elem);
+        }
+        if (d > max)
+            max = d;
+    }
+    return max;
+}
+
+static int check_struct_translation_limits(Type *ty, SourceLoc loc)
+{
+    if (ty->nmembers > MAX_STRUCT_MEMBERS) {
+        diag_error_at(loc,
+                      "struct exceeds translation limit of %d members",
+                      MAX_STRUCT_MEMBERS);
+        return 0;
+    }
+    if (struct_nest_depth(ty) > MAX_STRUCT_NESTING) {
+        diag_error_at(loc,
+                      "struct nesting exceeds translation limit of %d levels",
+                      MAX_STRUCT_NESTING);
         return 0;
     }
     return 1;
@@ -256,5 +300,7 @@ Type *struct_tag_define(char *tag, StructField *fields, SourceLoc loc)
     ty->nmembers = nmembers;
     ty->is_complete = 1;
     type_struct_layout(ty);
+    if (!check_struct_translation_limits(ty, loc))
+        ty->is_complete = 0;
     return ty;
 }

@@ -105,6 +105,7 @@ static int protect_home_before(LowerCtx *c, int v, Node *later)
 static void emit_load_slot(LowerCtx *c, int dst, Type *ty, int offset);
 static void emit_store_slot(LowerCtx *c, int src, Type *ty, int offset);
 static void lower_bitfield_store_off(LowerCtx *c, int struct_off, Member *m, int val);
+static void lower_cast_into(LowerCtx *c, int dst, Node *n);
 
 static int offset_address_taken(Function *fn, int offset)
 {
@@ -625,6 +626,66 @@ static void emit_conv(LowerCtx *c, int dst, ConvKind k)
  * 64-bit register; SEXT8 and SEXT32_64 only reach 32 and 64 respectively, so a
  * signed byte widened to 64 bits is composed as SEXT8 then SEXT32_64.
  */
+static void lower_mem_zero(LowerCtx *c, int addr, int size)
+{
+    int z = fresh(c);
+    int off;
+
+    emit(c, (Instr){ .op = LIR_MOVI, .dst = z, .a = lir_imm(0) });
+    for (off = 0; off < size; off += 8) {
+        int n = size - off;
+        LirWidth w;
+
+        if (n > 8)
+            n = 8;
+        if (n >= 8)
+            w = LIR_W8;
+        else
+            w = LIR_W4;
+        emit(c, (Instr){
+            .op = LIR_STORE,
+            .a = lir_mem(addr, off),
+            .b = lir_vreg(z),
+            .w = w,
+            .aux = n,
+        });
+    }
+}
+
+static int is_struct_scalar_cast(Node *n)
+{
+    return n && n->kind == ND_CAST && type_is_struct(n->ty) && n->operand &&
+           type_is_scalar(n->operand->ty) && type_cast_target_ok(n->ty);
+}
+
+static void lower_struct_from_scalar(LowerCtx *c, int addr, Type *sty, Node *scalar)
+{
+    int sz = type_size(sty);
+    int sw = store_width_bytes(scalar->ty);
+    int store_bytes = sw < sz ? sw : sz;
+    int val = lower_expr(c, scalar);
+    int t = fresh(c);
+    Node widen = {0};
+
+    if (sz > store_bytes)
+        lower_mem_zero(c, addr, sz);
+
+    emit(c, (Instr){ .op = LIR_MOV, .dst = t, .a = lir_vreg(val) });
+    widen.kind = ND_CAST;
+    widen.ty = type_long();
+    widen.cast_ty = type_long();
+    widen.operand = scalar;
+    widen.loc = scalar->loc;
+    lower_cast_into(c, t, &widen);
+    emit(c, (Instr){
+        .op = LIR_STORE,
+        .a = lir_mem(addr, 0),
+        .b = lir_vreg(t),
+        .w = store_lir_width(scalar->ty),
+        .aux = store_bytes,
+    });
+}
+
 static void lower_cast_into(LowerCtx *c, int dst, Node *n)
 {
     int v = lower_expr(c, n->operand);
@@ -950,12 +1011,21 @@ static int lower_expr(LowerCtx *c, Node *n)
     case ND_ASSIGN: {
         if (type_is_struct(n->lhs->ty)) {
             int dst = lower_object_addr(c, n->lhs);
-            int src = lower_object_addr(c, n->rhs);
-            int val = fresh(c);
 
-            emit_memcpy(c, dst, src, type_size(n->lhs->ty));
-            emit(c, (Instr){ .op = LIR_MOVI, .dst = val, .a = lir_imm(0) });
-            return val;
+            if (is_struct_scalar_cast(n->rhs)) {
+                int val = fresh(c);
+                lower_struct_from_scalar(c, dst, n->lhs->ty, n->rhs->operand);
+                emit(c, (Instr){ .op = LIR_MOVI, .dst = val, .a = lir_imm(0) });
+                return val;
+            }
+            {
+                int src = lower_object_addr(c, n->rhs);
+                int val = fresh(c);
+
+                emit_memcpy(c, dst, src, type_size(n->lhs->ty));
+                emit(c, (Instr){ .op = LIR_MOVI, .dst = val, .a = lir_imm(0) });
+                return val;
+            }
         }
         int val = lower_expr(c, n->rhs);
         if (n->lhs->kind == ND_VAR) {
@@ -1073,6 +1143,16 @@ static void lower_stmt(LowerCtx *c, Node *n)
         }
         if (n->init && n->init->kind == ND_INIT_LIST) {
             lower_brace_init(c, n);
+            return;
+        }
+        if (n->init && is_struct_scalar_cast(n->init)) {
+            int addr = fresh(c);
+            emit(c, (Instr){
+                .op = LIR_LEA,
+                .dst = addr,
+                .a = lir_mem(LIR_FP, n->offset),
+            });
+            lower_struct_from_scalar(c, addr, n->ty, n->init->operand);
             return;
         }
         if (n->init) {

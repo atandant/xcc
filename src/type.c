@@ -239,6 +239,42 @@ int type_is_scalar(Type *ty)
     return type_is_integer(ty) || type_is_pointer(ty);
 }
 
+static int type_cast_member_ty_ok(Type *ty)
+{
+    if (type_is_scalar(ty))
+        return 1;
+    if (type_is_array(ty)) {
+        Type *elem = type_array_elem(ty);
+        return elem && type_is_scalar(elem);
+    }
+    return 0;
+}
+
+/* C89 3.3.4: cast target may be void, scalar, or a struct whose members are
+ * scalars or arrays of scalars only (B11 / D16). */
+int type_cast_target_ok(Type *ty)
+{
+    if (!ty)
+        return 0;
+    if (type_is_void(ty) || type_is_scalar(ty))
+        return 1;
+    if (!type_is_struct(ty) || !type_struct_is_complete(ty))
+        return 0;
+
+    for (int i = 0; i < ty->nmembers; i++) {
+        Member *m = &ty->members[i];
+
+        if (m->is_bitfield) {
+            if (!type_is_integer(m->ty))
+                return 0;
+            continue;
+        }
+        if (!type_cast_member_ty_ok(m->ty))
+            return 0;
+    }
+    return 1;
+}
+
 int type_is_object(Type *ty)
 {
     return ty && ty->kind != TY_VOID && ty->kind != TY_FUNC;

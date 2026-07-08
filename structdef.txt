@@ -360,6 +360,11 @@ Known Deviations (pre-declared)
     - Plain `char` storage unsigned (existing xcc policy) applies to struct
       members declared `char`.
 
+    - Scalar-to-struct cast `(struct S)x` (D16): allowed when all members of
+      `S` are scalars or arrays of scalars; stores the scalar bit pattern into
+      the struct object (zero-fills tail bytes). C89 leaves the effect
+      implementation-defined. Test: cast_struct_scalar.c
+
     - No `-fms-extensions` / MSVC layout.
 
     - Single translation unit: `extern struct S s;` without definition accepted
@@ -876,88 +881,88 @@ Staged Checklist — Section 5: bitfields (A12)
 ---------------------------------------------
 
 Stage 5.1: Parser struct bitfield declarator
-    [ ] `int x : 3;` in struct_declaration
-    [ ] unnamed `: 0` padding field support
-    [ ] reject non-int bitfield types
-    [ ] make test
+    [x] `int x : 3;` in struct_declaration
+    [x] unnamed `: 0` padding field support
+    [x] reject non-int bitfield types
+    [x] make test
 
 Stage 5.2: Layout engine for bitfields
-    [ ] allocation unit packing (match GCC x86-64)
-    [ ] Member.is_bitfield, bit_width, bit_offset
-    [ ] sizeof/align includes bitfield units
-    [ ] tests: bitfield_sizeof.c, bitfield_layout_padding.c
-    [ ] make test
+    [x] allocation unit packing (match GCC x86-64)
+    [x] Member.is_bitfield, bit_width, bit_offset
+    [x] sizeof/align includes bitfield units
+    [x] tests: bitfield_sizeof.c, bitfield_layout_padding.c
+    [x] make test
 
 Stage 5.3: Sema / lower bitfield access
-    [ ] load: mask + shift + sign extend if signed
-    [ ] store: mask clear + or in value
-    [ ] reject &bitfield
-    [ ] tests: bitfield_load.c, bitfield_store.c, error_bitfield_addr.c
-    [ ] make test
+    [x] load: mask + shift + sign extend if signed
+    [x] store: mask clear + or in value
+    [x] reject &bitfield
+    [x] tests: bitfield_load.c, bitfield_store.c, error_bitfield_addr.c
+    [x] make test
 
 Stage 5.4: Bitfield in brace init (if supported)
-    [ ] init to integer constant fitting width
-    [ ] tests: bitfield_init.c
-    [ ] make test
+    [x] init to integer constant fitting width
+    [x] tests: bitfield_init.c
+    [x] make test
 
 Section 5 exit criteria:
 
-    [ ] bitfields pack and access correctly vs GCC layout tests
-    [ ] no address-of bitfield
+    [x] bitfields pack and access correctly vs GCC layout tests
+    [x] no address-of bitfield
 
 
 Staged Checklist — Section 6: casts & abstract struct types (B11)
 -----------------------------------------------------------------
 
 Stage 6.1: Cast type check extension
-    [ ] allow cast_type to struct specifier in parser (already if B11)
-    [ ] sema: cast target struct if member tree all scalar (D16)
-    [ ] reject struct cast if nested struct/array of struct in type_name
-    [ ] tests: cast_struct_ptr.c, error_cast_struct_value.c
-    [ ] make test
+    [x] allow cast_type to struct specifier in parser (already if B11)
+    [x] sema: cast target struct if member tree all scalar (D16)
+    [x] reject struct cast if nested struct/array of struct in type_name
+    [x] tests: cast_struct_ptr.c, error_cast_struct_value.c
+    [x] make test
 
 Stage 6.2: Pointer casts `(struct S *)p`
-    [ ] compatible pointer / void* / null rules unchanged
-    [ ] tests: cast_to_struct_ptr.c
-    [ ] make test
+    [x] compatible pointer / void* / null rules unchanged
+    [x] tests: cast_to_struct_ptr.c
+    [x] make test
 
 Stage 6.3: Value casts involving struct (strict)
-    [ ] `(struct S){...}` not in C89 — no compound literal
-    [ ] if `(struct S)x` allowed only when constraint met — implement or reject
-    [ ] document decision in deviation section
-    [ ] make test
+    [x] `(struct S){...}` not in C89 — no compound literal
+    [x] if `(struct S)x` allowed only when constraint met — implement or reject
+    [x] document decision in deviation section
+    [x] make test
 
 Stage 6.4: sizeof / incomplete / errors
-    [ ] sizeof incomplete struct error
-    [ ] struct compare error (D13)
-    [ ] struct in if condition error (D14)
-    [ ] tests: error_struct_cmp.c, error_sizeof_incomplete_struct.c
-    [ ] make test
+    [x] sizeof incomplete struct error
+    [x] struct compare error (D13)
+    [x] struct in if condition error (D14)
+    [x] tests: error_struct_cmp.c, error_sizeof_incomplete_struct.c
+    [x] make test
 
 Section 6 exit criteria:
 
-    [ ] `(struct S *)` casts work in abstract declarator
-    [ ] illegal struct operations diagnosed
+    [x] `(struct S *)` casts work in abstract declarator
+    [x] illegal struct operations diagnosed
 
 
 Staged Checklist — Section 7: params, returns, ABI deferral (D17)
 ---------------------------------------------------------------
 
 Stage 7.1: `struct S *` as param and return
-    [ ] sema param/return type checking
-    [ ] lower/emit unchanged (pointer ABI)
-    [ ] tests: struct_ptr_param.c, struct_ptr_return.c
-    [ ] make test
+    [x] sema param/return type checking
+    [x] lower/emit unchanged (pointer ABI)
+    [x] tests: struct_ptr_param.c, struct_ptr_return.c
+    [x] make test
 
 Stage 7.2: Reject by-value struct param/return with diagnostic
-    [ ] `void f(struct S s);` → error pointing to future ABI support
-    [ ] `struct S f(void);` → error
-    [ ] tests: error_struct_byval_param.c, error_struct_byval_return.c
-    [ ] make test
+    [x] `void f(struct S s);` → error pointing to future ABI support
+    [x] `struct S f(void);` → error
+    [x] tests: error_struct_byval_param.c, error_struct_byval_return.c
+    [x] make test
 
 Stage 7.3: Document D17 in README and structdef exit criteria
-    [ ] README status table update
-    [ ] make test
+    [x] README status table update
+    [x] make test
 
 Section 7 note: Full C89 struct-by-value is NOT required for structdef v1 exit;
 explicit errors satisfy documented subset.
@@ -967,29 +972,29 @@ Staged Checklist — Section 8: limits, opts, diagnostics, docs
 -------------------------------------------------------------
 
 Stage 8.1: Translation limits
-    [ ] error at 128th member
-    [ ] error at 7th nesting level
-    [ ] tests: error_struct_member_limit.c (generate or manual)
-    [ ] make test
+    [x] error at 128th member
+    [x] error at 7th nesting level
+    [x] tests: error_struct_member_limit.c (generate or manual)
+    [x] make test
 
 Stage 8.2: cosfold / cosprop / ICE
-    [ ] sizeof(struct S) folds in ICE paths
-    [ ] offsetof member in ICE if needed for array bounds — optional
-    [ ] make test
+    [x] sizeof(struct S) folds in ICE paths
+    [x] offsetof member in ICE if needed for array bounds — optional
+    [x] make test
 
 Stage 8.3: type_name / diagnostics polish
-    [ ] errors show `struct S` names
-    [ ] member name in member-not-found errors
-    [ ] make test
+    [x] errors show `struct S` names
+    [x] member name in member-not-found errors
+    [x] make test
 
 Stage 8.4: Integration examples
     [ ] examples/struct_list.c or convert star_bfs pattern — optional
     [ ] make test + examples/build.sh if added
 
 Stage 8.5: README + structdef exit
-    [ ] README supported/unsupported table
+    [x] README supported/unsupported table
     [ ] structdef.txt exit criteria all checked
-    [ ] make test
+    [x] make test
 
 
 Exit Criteria (structdef feature complete)
@@ -999,9 +1004,9 @@ Exit Criteria (structdef feature complete)
     [ ] Section 2: struct decl, layout, incomplete/complete, nested, forward decl
     [x] Section 3: `.` `->` `&member` `arr[i].x`
     [x] Section 4: brace init, struct assign, LIR_MEMCPY
-    [ ] Section 5: bitfields load/store/layout
-    [ ] Section 6: (struct S *) casts, sizeof, illegal ops rejected
-    [ ] Section 7: struct * param/return; by-value rejected with error
+    [x] Section 5: bitfields load/store/layout
+    [x] Section 6: (struct S *) casts, sizeof, illegal ops rejected
+    [x] Section 7: struct * param/return; by-value rejected with error
     [ ] All prior tests pass
     [ ] New struct/typedef/bitfield test suite passes
     [ ] Documented deviations: D12, D17, bitfield layout
