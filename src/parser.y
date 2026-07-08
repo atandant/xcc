@@ -6,6 +6,9 @@
 #include "token.h"
 #include "ast.h"
 #include "diag.h"
+#include "arena.h"
+#include "sema_typedef.h"
+#include "sema_struct.h"
 
 extern int yylex(void);
 void yyerror(const char *msg);
@@ -34,20 +37,26 @@ Function *g_program = NULL;
     Function *func;
     Type *type;
     Declarator *decl;
+    TypedefDecl *tdecl;
+    StructField *fields;
 }
 
 %token <num> NUM
-%token <str> IDENT
-%token INT CHAR SHORT LONG VOID UNSIGNED SIGNED RETURN IF ELSE WHILE FOR SIZEOF
-%token EQ NE LE GE
+%token <str> IDENT TYPEDEF_NAME
+%token INT CHAR SHORT LONG VOID UNSIGNED SIGNED RETURN IF ELSE WHILE FOR SIZEOF TYPEDEF STRUCT
+%token EQ NE LE GE ARROW
 
 %type <node> expr expr_opt arg_expr stmt initializer init_list initializer_opt
 %type <list> stmt_list arg_clause arg_list
 %type <param> param_list param
 %type <pclause> param_clause
 %type <func> toplevel
-%type <type> type specifier cast_type
-%type <decl> declarator direct_declarator abstract_declarator
+%type <tdecl> typedef_toplevel
+%type <type> type specifier cast_type decl_specifier keyword_specifier struct_specifier
+%type <fields> struct_declaration_list struct_declaration struct_declarator_list
+               struct_decl_item
+%type <str> struct_tag member_name
+%type <decl> declarator direct_declarator abstract_declarator struct_member_decl
                                   abstract_declarator_opt direct_abstract_declarator
 
 %right '='
@@ -60,23 +69,43 @@ Function *g_program = NULL;
 %precedence SIZEOF
 %nonassoc IFX
 %nonassoc ELSE
+%precedence PREC_STRUCT_MEMBER_END
+%right ':'
 
 %%
 
 program:
     /* empty */              { }
-  | program toplevel         { g_program = func_append(g_program, $2); }
+  | program toplevel         { if ($2) g_program = func_append(g_program, $2); }
+  | program typedef_toplevel { g_typedef_decls = typedef_decl_append(g_typedef_decls,
+                                                                     $2->spec,
+                                                                     $2->decl,
+                                                                     $2->loc); }
+  | program struct_toplevel    { }
+  ;
+
+struct_toplevel:
+    struct_specifier ';'       { (void)$1; }
+  ;
+
+typedef_toplevel:
+    TYPEDEF decl_specifier declarator ';'
+        {
+            typedef_declare($2, $3, LOC(@1));
+            $$ = typedef_decl_new($2, $3, LOC(@1));
+        }
   ;
 
 toplevel:
-    type IDENT '(' param_clause ')' '{' stmt_list '}'
-        { $$ = func_new($2, $4, $1, 1, stmt_list_head($7), LOC(@2)); }
+    type IDENT '(' param_clause ')' '{' { typedef_enter_scope(); } stmt_list '}'
+        { typedef_leave_scope();
+          $$ = func_new($2, $4, $1, 1, stmt_list_head($8), LOC(@2)); }
   | type IDENT '(' param_clause ')' ';'
         { $$ = func_new($2, $4, $1, 0, NULL, LOC(@2)); }
   ;
 
-/* Base type specifier (no declarator). */
-specifier:
+/* Integer / void specifiers (never a bare identifier). */
+keyword_specifier:
     INT                      { $$ = type_int(); }
   | CHAR                     { $$ = type_char(); }
   | SHORT                    { $$ = type_short(); }
@@ -104,6 +133,88 @@ specifier:
   | SIGNED LONG INT          { $$ = type_long(); }
   ;
 
+/* Declaration specifier: keywords, typedef name, or struct specifier. */
+decl_specifier:
+    keyword_specifier        { $$ = $1; }
+  | TYPEDEF_NAME             { $$ = typedef_lookup($1); }
+  | struct_specifier         { $$ = $1; }
+  ;
+
+struct_specifier:
+    STRUCT struct_tag
+        { $$ = struct_tag_forward($2, LOC(@1)); }
+  | STRUCT struct_tag '{' struct_declaration_list '}'
+        { $$ = struct_tag_define($2, $4, LOC(@1)); }
+  ;
+
+/* Struct tags live in a namespace distinct from ordinary identifiers and
+   typedef names (C89 3.1.2.3), so a typedef name may reappear as a tag. */
+struct_tag:
+    IDENT                    { $$ = $1; }
+  | TYPEDEF_NAME             { $$ = $1; }
+  ;
+
+struct_declaration_list:
+    struct_declaration
+  | struct_declaration_list struct_declaration
+        {
+            StructField *tail = $1;
+            while (tail->next)
+                tail = tail->next;
+            tail->next = $2;
+            $$ = $1;
+        }
+  ;
+
+struct_declaration:
+    decl_specifier struct_declarator_list ';'
+        {
+            StructField *f;
+            for (f = $2; f; f = f->next)
+                f->spec = $1;
+            $$ = $2;
+        }
+  ;
+
+struct_declarator_list:
+    struct_decl_item
+        { $$ = $1; }
+  | struct_declarator_list ',' struct_decl_item
+        {
+            StructField *tail = $1;
+            while (tail->next)
+                tail = tail->next;
+            tail->next = $3;
+            $$ = $1;
+        }
+  ;
+
+struct_decl_item:
+    struct_member_decl
+        { $$ = struct_field_append(NULL, NULL, $1, LOC(@1)); }
+  | ':' expr
+        { $$ = struct_field_append_bit(NULL, NULL, NULL, $2, LOC(@1)); }
+  ;
+
+struct_member_decl:
+    IDENT ':' expr
+        { $$ = declarator_bitfield(declarator_ident($1), $3); }
+  | IDENT %prec PREC_STRUCT_MEMBER_END
+        { $$ = declarator_ident($1); }
+  | '*' struct_member_decl
+        { $$ = declarator_ptr($2); }
+  | '(' struct_member_decl ')'
+        { $$ = declarator_paren_group($2); }
+  | struct_member_decl '[' expr ']'
+        { $$ = declarator_add_dim($1, $3, declarator_was_paren($1)); }
+  | struct_member_decl '[' ']'
+        { $$ = declarator_add_dim($1, NULL, declarator_was_paren($1)); }
+  ;
+
+specifier:
+    decl_specifier             { $$ = $1; }
+  ;
+
 /* Function return types may still use a trailing `*` prefix. */
 type:
     specifier                { $$ = $1; }
@@ -111,7 +222,7 @@ type:
   ;
 
 cast_type:
-    specifier abstract_declarator_opt
+    decl_specifier abstract_declarator_opt
         { $$ = type_apply_declarator($1, $2, LOC(@1)); }
   ;
 
@@ -121,7 +232,9 @@ declarator:
   ;
 
 direct_declarator:
-    IDENT
+    IDENT %prec PREC_STRUCT_MEMBER_END
+        { $$ = declarator_ident($1); }
+  | TYPEDEF_NAME
         { $$ = declarator_ident($1); }
   | '(' declarator ')'
         { $$ = declarator_paren_group($2); }
@@ -179,11 +292,11 @@ param_list:
   ;
 
 param:
-    specifier declarator
+    decl_specifier declarator
         {
             $$ = param_append_decl(NULL, $1, $2, declarator_name($2));
         }
-  | specifier
+  | decl_specifier
         { $$ = param_append(NULL, $1, NULL); }
   ;
 
@@ -193,9 +306,15 @@ stmt_list:
   ;
 
 stmt:
-    RETURN expr ';'          { $$ = node_return($2, LOC(@1)); }
+    expr ';'                 { $$ = node_expr_stmt($1, LOC(@2)); }
+  | RETURN expr ';'          { $$ = node_return($2, LOC(@1)); }
   | RETURN ';'               { $$ = node_return(NULL, LOC(@1)); }
-  | specifier declarator initializer_opt ';'
+  | TYPEDEF decl_specifier declarator ';'
+        {
+            typedef_declare($2, $3, LOC(@1));
+            $$ = node_typedef($2, $3, LOC(@1));
+        }
+  | decl_specifier declarator initializer_opt ';'
         {
             $$ = node_decl(declarator_name($2), $1, $2, $3, LOC(@1));
         }
@@ -206,8 +325,9 @@ stmt:
   | WHILE '(' expr ')' stmt   { $$ = node_while($3, $5, LOC(@1)); }
   | FOR '(' expr_opt ';' expr_opt ';' expr_opt ')' stmt
                               { $$ = node_for($3, $5, $7, $9, LOC(@1)); }
-  | '{' stmt_list '}'         { $$ = node_block(stmt_list_head($2), LOC(@1)); }
-  | expr ';'                 { $$ = node_expr_stmt($1, LOC(@1)); }
+  | '{' { typedef_enter_scope(); } stmt_list '}'
+        { typedef_leave_scope();
+          $$ = node_block(stmt_list_head($3), LOC(@1)); }
   ;
 
 initializer_opt:
@@ -265,7 +385,18 @@ arg_expr:
                              { $$ = node_cast($2, $4, LOC(@1)); }
   | arg_expr '[' arg_expr ']'
         { $$ = node_deref(node_binop(OP_ADD, $1, $3, LOC(@2)), LOC(@2)); }
+  | arg_expr '.' member_name
+        { $$ = node_member($1, $3, LOC(@2)); }
+  | arg_expr ARROW member_name
+        { $$ = node_member(node_deref($1, LOC(@2)), $3, LOC(@2)); }
   | '(' expr ')'             { $$ = $2; }
+  ;
+
+/* Member names occupy the struct-member namespace (C89 3.1.2.3), so a name
+   that is also a typedef name is still a valid member selector here. */
+member_name:
+    IDENT                    { $$ = $1; }
+  | TYPEDEF_NAME             { $$ = $1; }
   ;
 
 arg_clause:

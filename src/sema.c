@@ -2,6 +2,8 @@
 #include "sema.h"
 #include "sema_scope.h"
 #include "sema_functab.h"
+#include "sema_typedef.h"
+#include "sema_struct.h"
 #include "diag.h"
 #include "intconst.h"
 
@@ -190,6 +192,9 @@ static void check_init_from_self(Node *n, Node *decl)
     case ND_CAST:
         check_init_from_self(n->operand, decl);
         return;
+    case ND_MEMBER:
+        check_init_from_self(n->lhs, decl);
+        return;
     case ND_ADDR:
         check_init_from_self(n->operand, decl);
         return;
@@ -242,6 +247,35 @@ static int expr_is_modifiable_lvalue(Node *n)
     return expr_is_lvalue(n) && n->ty && type_is_object(n->ty);
 }
 
+/* ND_MEMBER / ND_ADDR(&member): mark the enclosing local when its address escapes. */
+static void mark_member_base_address_taken(Node *n)
+{
+    while (n) {
+        if (n->kind == ND_VAR) {
+            scope_mark_address_taken(n->name);
+            return;
+        }
+        if (n->kind == ND_DEREF) {
+            n = n->operand;
+            continue;
+        }
+        if (n->kind == ND_MEMBER) {
+            n = n->lhs;
+            continue;
+        }
+        return;
+    }
+}
+
+static Type *member_owner_struct(Node *base)
+{
+    if (!base || !base->ty)
+        return NULL;
+    if (type_is_struct(base->ty))
+        return base->ty;
+    return NULL;
+}
+
 /* Equality operands: both integers, compatible pointers, or pointer vs 0. */
 static int eq_operands_compatible(Node *lhs, Node *rhs)
 {
@@ -273,31 +307,24 @@ static int sema_array_bound_eval(Node *expr, long *out, SourceLoc loc, void *ctx
     return 1;
 }
 
-static Type *array_leaf_type(Type *ty)
+static int type_is_aggregate(Type *t)
 {
-    while (ty && type_is_array(ty))
-        ty = type_array_elem(ty);
-    return ty;
+    return type_is_array(t) || type_is_struct(t);
 }
 
-static int brace_init_elem_supported(Type *leaf)
-{
-    if (!leaf)
-        return 0;
-    if (type_is_pointer(leaf))
-        return 1;
-    /* Any scalar integer element (char/short/int/long, signed or unsigned).
-       Lowering is width-generic via store_lir_width/type_size. */
-    if (type_is_integer(leaf))
-        return 1;
-    return 0;
-}
-
-/* Number of scalar leaf slots contained in a (possibly nested-array) type. */
-static int type_leaf_count(Type *t)
+/* Number of scalar leaf slots contained in an aggregate type tree. */
+static int type_init_slot_count(Type *t)
 {
     if (type_is_array(t))
-        return type_array_count(t) * type_leaf_count(type_array_elem(t));
+        return type_array_count(t) * type_init_slot_count(type_array_elem(t));
+    if (type_is_struct(t)) {
+        int n = 0;
+        int i;
+
+        for (i = 0; i < t->nmembers; i++)
+            n += type_init_slot_count(t->members[i].ty);
+        return n;
+    }
     return 1;
 }
 
@@ -307,7 +334,7 @@ static int type_leaf_count(Type *t)
    the current run and starts the next element). Used only for unsized `T a[]`. */
 static int infer_unsized_count(Type *elem, Node *body)
 {
-    int per = type_leaf_count(elem);
+    int per = type_init_slot_count(elem);
     int outer = 0;
     Node *e = body;
 
@@ -376,9 +403,35 @@ static void pad_aggregate_zeros(Type *t, InitFlat *flat, SourceLoc loc)
 
         for (i = 0; i < n; i++)
             pad_aggregate_zeros(elem, flat, loc);
-    } else {
-        flat_append(flat, zero_init_expr(t, loc));
+        return;
     }
+    if (type_is_struct(t)) {
+        int i;
+
+        for (i = 0; i < t->nmembers; i++)
+            pad_aggregate_zeros(t->members[i].ty, flat, loc);
+        return;
+    }
+    flat_append(flat, zero_init_expr(t, loc));
+}
+
+static int init_scalar_brace_unwrap(Node **pcursor, InitFlat *flat, SourceLoc loc)
+{
+    Node *sub = (*pcursor)->body;
+    Node *inner = sub;
+
+    if (!inner || inner->kind == ND_INIT_LIST) {
+        diag_error_at(loc, "too many braces around scalar initializer");
+        return 1;
+    }
+    if (inner->next != NULL) {
+        diag_error_at(loc, "excess elements in scalar initializer");
+        return 1;
+    }
+    *pcursor = (*pcursor)->next;
+    inner->next = NULL;
+    flat_append(flat, inner);
+    return 0;
 }
 
 static int init_aggregate(Type *t, Node **pcursor, InitFlat *flat,
@@ -413,6 +466,42 @@ static int init_aggregate(Type *t, Node **pcursor, InitFlat *flat,
         return 0;
     }
 
+    if (type_is_struct(t)) {
+        int i;
+
+        if (!type_struct_is_complete(t)) {
+            diag_error_at(loc,
+                          "initializer element is not computable for "
+                          "incomplete type '%s'", type_name(t));
+            return 1;
+        }
+        for (i = 0; i < t->nmembers; i++) {
+            Type *mty = t->members[i].ty;
+
+            if (!*pcursor) {
+                pad_aggregate_zeros(mty, flat, loc);
+                continue;
+            }
+            if ((*pcursor)->kind == ND_INIT_LIST) {
+                if (type_is_aggregate(mty)) {
+                    Node *sub = (*pcursor)->body;
+                    Node **subcur = &sub;
+
+                    *pcursor = (*pcursor)->next;
+                    if (init_aggregate(mty, subcur, flat, loc, excess))
+                        return 1;
+                    if (*subcur != NULL)
+                        *excess = 1;
+                } else if (init_scalar_brace_unwrap(pcursor, flat, loc)) {
+                    return 1;
+                }
+            } else if (init_aggregate(mty, pcursor, flat, loc, excess)) {
+                return 1;
+            }
+        }
+        return 0;
+    }
+
     if (!*pcursor) {
         flat_append(flat, zero_init_expr(t, loc));
         return 0;
@@ -439,8 +528,12 @@ static Node *flatten_brace_init(Type *aty, Node *init, SourceLoc loc)
 
     if (init_aggregate(aty, &cursor, &flat, loc, &excess))
         return init;
-    if (cursor != NULL || excess)
-        diag_error_at(loc, "excess elements in array initializer");
+    if (cursor != NULL || excess) {
+        if (type_is_struct(aty))
+            diag_error_at(loc, "excess elements in struct initializer");
+        else
+            diag_error_at(loc, "excess elements in array initializer");
+    }
     return node_init_list(flat.head, init->loc);
 }
 
@@ -469,6 +562,32 @@ static void check_init_list_from_self(Node *init, Node *decl)
         return;
     for (Node *e = init->body; e; e = e->next)
         check_init_from_self(e, decl);
+}
+
+static Node *check_flat_init_type(Type *t, Node *e, SourceLoc loc, Node *decl)
+{
+    int i;
+
+    if (type_is_array(t)) {
+        Type *elem = type_array_elem(t);
+        int n = type_array_count(t);
+
+        for (i = 0; i < n; i++)
+            e = check_flat_init_type(elem, e, loc, decl);
+        return e;
+    }
+    if (type_is_struct(t)) {
+        for (i = 0; i < t->nmembers; i++)
+            e = check_flat_init_type(t->members[i].ty, e, loc, decl);
+        return e;
+    }
+    if (!e)
+        return NULL;
+    if (!expr_assignable_to(t, e))
+        diag_incompatible_init(e->loc, t, e);
+    else
+        warn_value_conversion(e->loc, t, e);
+    return e->next;
 }
 
 /* C89 3.5.7: a scalar may be initialized by a brace-enclosed single
@@ -506,23 +625,20 @@ static void sema_scalar_brace_init(Node *decl)
 
 static void sema_brace_init(Node *decl)
 {
-    Type *leaf;
     Node *flat;
-    Node *e;
 
     if (!decl->init || decl->init->kind != ND_INIT_LIST)
         return;
 
-    if (!type_is_array(decl->ty)) {
+    if (!type_is_aggregate(decl->ty)) {
         sema_scalar_brace_init(decl);
         return;
     }
 
-    leaf = array_leaf_type(decl->ty);
-    if (!brace_init_elem_supported(leaf)) {
+    if (type_is_struct(decl->ty) && !type_struct_is_complete(decl->ty)) {
         diag_error_at(decl->loc,
-                      "brace initialization is not supported for '%s' arrays yet",
-                      type_name(leaf));
+                      "variable '%s' has incomplete type '%s'",
+                      decl->name, type_name(decl->ty));
         return;
     }
 
@@ -531,23 +647,23 @@ static void sema_brace_init(Node *decl)
 
     resolve_init_list(flat, CTX_RVALUE);
     check_init_list_from_self(flat, decl);
-
-    for (e = flat->body; e; e = e->next) {
-        if (!expr_assignable_to(leaf, e))
-            diag_incompatible_init(e->loc, leaf, e);
-        else
-            warn_value_conversion(e->loc, leaf, e);
-    }
+    check_flat_init_type(decl->ty, flat->body, decl->loc, decl);
 }
 
 static void sema_finish_function_types(Function *fn)
 {
+    fn->ret_ty = typedef_resolve_type(fn->ret_ty, fn->loc);
+
     for (Param *p = fn->params; p; p = p->next) {
         if (p->decl) {
+            if (p->decl_spec)
+                p->decl_spec = typedef_resolve_spec(p->decl_spec, fn->loc);
             p->ty = type_apply_declarator_cb(p->decl_spec, p->decl, fn->loc,
                                              sema_array_bound_eval, NULL);
             p->decl = NULL;
             p->decl_spec = NULL;
+        } else if (p->ty) {
+            p->ty = typedef_resolve_type(p->ty, fn->loc);
         }
     }
     func_rebuild_type(fn);
@@ -820,10 +936,48 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
         n->var_decay = 0;
         if (!expr_is_lvalue(n->operand))
             diag_error_at(n->loc, "cannot take address of non-lvalue");
-        if (n->operand->kind == ND_VAR)
+        else if (n->operand->kind == ND_VAR)
             scope_mark_address_taken(n->operand->name);
+        else if (n->operand->kind == ND_MEMBER) {
+            Type *sty = n->operand->lhs->ty;
+            Member *m = &sty->members[n->operand->member_index];
+
+            if (m->is_bitfield && m->bit_width > 0)
+                diag_error_at(n->loc, "cannot take address of bit-field");
+            else
+                mark_member_base_address_taken(n->operand->lhs);
+        }
         n->ty = type_ptr(n->operand->ty);
         n->is_lvalue = 0;
+        return;
+    case ND_MEMBER:
+        resolve_expr_ctx(n->lhs, CTX_LVALUE);
+        n->var_decay = 0;
+        if (!member_owner_struct(n->lhs)) {
+            if (n->lhs->kind != ND_DEREF)
+                diag_error_at(n->loc,
+                              "member reference base type is not a structure or union");
+            n->ty = type_int();
+            n->is_lvalue = 0;
+            return;
+        }
+        {
+            Type *sty = n->lhs->ty;
+            int idx = -1;
+            Member *m = type_struct_member(sty, n->name, &idx);
+
+            if (!m) {
+                diag_error_at(n->loc,
+                              "no member named '%s' in '%s'",
+                              n->name, type_name(sty));
+                n->ty = type_int();
+                n->is_lvalue = 0;
+                return;
+            }
+            n->member_index = idx;
+            n->ty = m->ty;
+            n->is_lvalue = expr_is_modifiable_lvalue(n->lhs);
+        }
         return;
     case ND_DEREF:
         resolve_expr_ctx(n->operand, CTX_RVALUE);
@@ -843,11 +997,12 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
         }
         return;
     case ND_CAST: {
-        Type *dst = n->cast_ty;
+        Type *dst = typedef_resolve_type(n->cast_ty, n->loc);
 
         resolve_expr_ctx(n->operand, CTX_RVALUE);
         n->var_decay = 0;
         n->is_lvalue = 0;
+        n->cast_ty = dst;
 
         /* C89 3.3.4: the target must be void or scalar, and (unless the
          * target is void) the operand must also have scalar type. An explicit
@@ -868,7 +1023,7 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
         return;
     }
     case ND_SIZEOF: {
-        Type *ty = n->cast_ty;
+        Type *ty = typedef_resolve_type(n->cast_ty, n->loc);
 
         if (n->operand) {
             resolve_expr_ctx(n->operand, CTX_SIZEOF_OPERAND);
@@ -913,12 +1068,18 @@ static void resolve_stmt(Node *s)
     switch (s->kind) {
     case ND_DECL:
         if (s->decl) {
+            if (s->decl_spec)
+                s->decl_spec = typedef_resolve_spec(s->decl_spec, s->loc);
             s->ty = type_apply_declarator_cb(s->decl_spec, s->decl, s->loc,
                                              sema_array_bound_eval, NULL);
             s->decl = NULL;
             s->decl_spec = NULL;
         }
-        if (!type_is_object(s->ty) || type_is_void(s->ty) ||
+        if (type_is_struct(s->ty) && !type_struct_is_complete(s->ty))
+            diag_error_at(s->loc,
+                          "variable '%s' has incomplete type '%s'",
+                          s->name, type_name(s->ty));
+        else if (!type_is_object(s->ty) || type_is_void(s->ty) ||
             (type_is_array(s->ty) && type_is_void(type_array_elem(s->ty))))
             diag_error_at(s->loc,
                           "variable '%s' has non-object type '%s'",
@@ -1000,8 +1161,16 @@ static void resolve_stmt(Node *s)
         return;
     case ND_BLOCK:
         enter_scope();
+        typedef_enter_scope();
         resolve_stmt_list(s->body);
+        typedef_leave_scope();
         leave_scope();
+        return;
+    case ND_TYPEDEF:
+        /* Bound during parse for disambiguation; sema re-binds idempotently. */
+        typedef_declare(s->decl_spec, s->decl, s->loc);
+        s->decl = NULL;
+        s->decl_spec = NULL;
         return;
     default:
         return;
@@ -1011,6 +1180,7 @@ static void resolve_stmt(Node *s)
 static void sema_function(Function *fn)
 {
     scope_reset();
+    typedef_enter_scope();
     cur_ret_ty = fn->ret_ty;
     cur_fname = fn->name;
 
@@ -1039,6 +1209,7 @@ static void sema_function(Function *fn)
     resolve_stmt_list(fn->body);
     scope_export_frame_locals(&fn->frame_locals, &fn->nframe_locals);
     leave_scope();
+    typedef_leave_scope();
 
     int locals_size = scope_frame_size();
 
@@ -1052,6 +1223,10 @@ static void sema_function(Function *fn)
 void sema(Function *prog)
 {
     functab_reset();
+    typedef_reset();
+
+    for (TypedefDecl *td = g_typedef_decls; td; td = td->next)
+        typedef_declare(td->spec, td->decl, td->loc);
 
     /* Single forward pass: each function's declaration becomes visible before
      * its body is resolved (so recursion works), and calls to not-yet-seen

@@ -160,6 +160,11 @@ static void instr_use_def(LirFn *lf, int i, const TargetDesc *td, Liveness *lv,
     case LIR_ADD:
     case LIR_SUB:
     case LIR_MUL:
+    case LIR_AND:
+    case LIR_OR:
+    case LIR_SHL:
+    case LIR_SHR:
+    case LIR_SAR:
     case LIR_SETCC:
         operand_vreg_uses(ins->a, uses, nu);
         operand_vreg_uses(ins->b, uses, nu);
@@ -190,6 +195,11 @@ static void instr_use_def(LirFn *lf, int i, const TargetDesc *td, Liveness *lv,
         operand_vreg_uses(ins->a, uses, nu);
         operand_phys_touch(lv, ins->a, i);
         block_phys(lv, td->ret_reg, i);
+        return;
+
+    case LIR_MEMCPY:
+        operand_vreg_uses(ins->a, uses, nu);
+        operand_vreg_uses(ins->b, uses, nu);
         return;
     }
 }

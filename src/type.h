@@ -13,7 +13,9 @@ typedef enum {
     TY_INT,     /* char, short, int, long; signed and unsigned variants */
     TY_PTR,
     TY_ARRAY,
-    TY_FUNC
+    TY_FUNC,
+    TY_TYPEDEF_REF, /* parser placeholder: resolve via typedef name in sema */
+    TY_STRUCT
 } TypeKind;
 
 typedef enum {
@@ -29,6 +31,17 @@ typedef enum {
 } IntSign;
 
 typedef struct Type Type;
+
+typedef struct Member Member;
+struct Member {
+    char *name;
+    Type *ty;
+    int offset;
+    int is_bitfield;
+    int bit_width;   /* 0 for unnamed `: 0` padding markers */
+    int bit_offset;
+};
+
 struct Type {
     TypeKind kind;
     IntWidth width;    /* TY_INT: char / short / int / long              */
@@ -43,6 +56,13 @@ struct Type {
     Type **params;     /* TY_FUNC: parameter type                       */
     int nparams;       /* TY_FUNC: parameter count                      */
     int prototyped;    /* TY_FUNC: 0 = bare () unspecified args          */
+
+    char *ref_name;    /* TY_TYPEDEF_REF: pending typedef identifier     */
+
+    char *tag;         /* TY_STRUCT: struct tag name (arena-owned)       */
+    int is_complete;   /* TY_STRUCT: 1 when body has been defined        */
+    Member *members;   /* TY_STRUCT: member array (arena-owned)          */
+    int nmembers;      /* TY_STRUCT: member count                        */
 };
 
 typedef struct {
@@ -75,8 +95,16 @@ Type *type_unsigned_long(void);
 Type *type_ptr(Type *base);
 Type *type_array(Type *elem, int count);
 Type *type_func(Type *ret, Type **params, int nparams, int prototyped);
+Type *type_typedef_ref(char *name);
+void type_struct_layout(Type *ty);
+int type_is_struct(Type *ty);
+int type_struct_is_complete(Type *ty);
+const char *type_struct_tag(Type *ty);
+Member *type_struct_member(Type *ty, const char *name, int *out_index);
 
 /* Predicates. */
+int type_is_typedef_ref(Type *ty);
+const char *type_typedef_ref_name(Type *ty);
 int type_is_array(Type *ty);
 int type_is_void(Type *ty);
 int type_is_plain_char(Type *ty);   /* plain `char` only */

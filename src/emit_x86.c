@@ -619,12 +619,22 @@ static void emit_instr(EmitCtx *c, Instr *ins)
 
     case LIR_ADD:
     case LIR_SUB:
-    case LIR_MUL: {
+    case LIR_MUL:
+    case LIR_AND:
+    case LIR_OR:
+    case LIR_SHL:
+    case LIR_SHR:
+    case LIR_SAR: {
         LirWidth w = ins->w;
         int off_b = spilled_vreg_off(c, ins->b);
         int off_a = spilled_vreg_off(c, ins->a);
         const char *op = ins->op == LIR_ADD ? "add" :
-                         ins->op == LIR_SUB ? "sub" : "imul";
+                         ins->op == LIR_SUB ? "sub" :
+                         ins->op == LIR_MUL ? "imul" :
+                         ins->op == LIR_AND ? "and" :
+                         ins->op == LIR_OR ? "or" :
+                         ins->op == LIR_SHL ? "sal" :
+                         ins->op == LIR_SHR ? "shr" : "sar";
         int dp;
 
         if (ins->dst != LIR_NO_VREG && dst_phys(c, ins->dst, &dp)) {
@@ -825,6 +835,37 @@ static void emit_instr(EmitCtx *c, Instr *ins)
 
     case LIR_RET:
         return;
+
+    case LIR_MEMCPY: {
+        int size = ins->aux;
+
+        load_operand(c, ins->a, "%rdi", LIR_W8);
+        load_operand(c, ins->b, "%rsi", LIR_W8);
+        if (size <= 8) {
+            if (size >= 8)
+                fprintf(c->out, "  mov (%%rsi), %%rax\n");
+            else if (size >= 4)
+                fprintf(c->out, "  movslq (%%rsi), %%rax\n");
+            else if (size >= 2)
+                fprintf(c->out, "  movswq (%%rsi), %%rax\n");
+            else
+                fprintf(c->out, "  movsbq (%%rsi), %%rax\n");
+            if (size >= 8)
+                fprintf(c->out, "  mov %%rax, (%%rdi)\n");
+            else if (size >= 4)
+                fprintf(c->out, "  mov %%eax, (%%rdi)\n");
+            else if (size >= 2)
+                fprintf(c->out, "  mov %%ax, (%%rdi)\n");
+            else
+                fprintf(c->out, "  mov %%al, (%%rdi)\n");
+        } else {
+            fprintf(c->out, "  mov $%d, %%rcx\n", size);
+            fprintf(c->out, "  cld\n");
+            fprintf(c->out, "  rep movsb\n");
+        }
+        invalidate_rax(c);
+        return;
+    }
     }
 }
 

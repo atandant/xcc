@@ -7,6 +7,8 @@
 #include "ast.h"
 #include "diag.h"
 #include "sema.h"
+#include "sema_typedef.h"
+#include "sema_struct.h"
 #include "copts.h"
 #include "codegen.h"
 #include "arena.h"
@@ -114,6 +116,9 @@ int main(int argc, char **argv)
         yyin = stdin;
         g_filename = "<stdin>";
     }
+
+    typedef_reset();
+    struct_tag_reset();
 
     if (yyparse() != 0 || diag_error_count > 0)
         return 1;

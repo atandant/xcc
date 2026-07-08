@@ -5,6 +5,7 @@
 #include "intconst.h"
 
 #include <limits.h>
+#include <string.h>
 
 static Node *new_node(NodeKind kind, SourceLoc loc)
 {
@@ -55,6 +56,14 @@ Node *node_deref(Node *o, SourceLoc loc)
 {
     Node *n = new_node(ND_DEREF, loc);
     n->operand = o;
+    return n;
+}
+
+Node *node_member(Node *base, char *name, SourceLoc loc)
+{
+    Node *n = new_node(ND_MEMBER, loc);
+    n->lhs = base;
+    n->name = name;
     return n;
 }
 
@@ -177,6 +186,118 @@ Node *node_block(Node *body, SourceLoc loc)
     return n;
 }
 
+TypedefDecl *g_typedef_decls;
+
+TypedefDecl *typedef_decl_new(Type *spec, Declarator *decl, SourceLoc loc)
+{
+    TypedefDecl *td = arena_alloc_zeroed(sizeof(*td));
+    td->spec = spec;
+    td->decl = decl;
+    td->loc = loc;
+    return td;
+}
+
+Node *node_typedef(Type *spec, Declarator *decl, SourceLoc loc)
+{
+    Node *n = new_node(ND_TYPEDEF, loc);
+    n->decl_spec = spec;
+    n->decl = decl;
+    return n;
+}
+
+TypedefDecl *typedef_decl_append(TypedefDecl *list, Type *spec, Declarator *decl,
+                                 SourceLoc loc)
+{
+    TypedefDecl *td = arena_alloc_zeroed(sizeof(*td));
+    td->spec = spec;
+    td->decl = decl;
+    td->loc = loc;
+    td->next = NULL;
+
+    if (!list)
+        return td;
+
+    TypedefDecl *tail = list;
+    while (tail->next)
+        tail = tail->next;
+    tail->next = td;
+    return list;
+}
+
+StructField *struct_field_append(StructField *list, Type *spec, Declarator *decl,
+                                 SourceLoc loc)
+{
+    StructField *f = arena_alloc_zeroed(sizeof(*f));
+    f->spec = spec;
+    f->decl = decl;
+    f->loc = loc;
+
+    if (!list)
+        return f;
+
+    StructField *tail = list;
+    while (tail->next)
+        tail = tail->next;
+    tail->next = f;
+    return list;
+}
+
+StructField *struct_field_append_bit(StructField *list, Type *spec, Declarator *decl,
+                                     Node *bit_width, SourceLoc loc)
+{
+    if (!decl)
+        decl = declarator_empty();
+    decl = declarator_bitfield(decl, bit_width);
+    return struct_field_append(list, spec, decl, loc);
+}
+
+static void member_append(Member **members, int *nmembers, Member *src)
+{
+    Member *m;
+    int n = *nmembers;
+
+    m = arena_alloc((size_t)(n + 1) * sizeof(*m));
+    if (n > 0)
+        memcpy(m, *members, (size_t)n * sizeof(*m));
+    m[n] = *src;
+    *members = m;
+    (*nmembers)++;
+}
+
+Member *struct_fields_to_members(StructField *fields, int *out_n, SourceLoc loc)
+{
+    Member *members = NULL;
+    int nmembers = 0;
+    StructField *f;
+
+    for (f = fields; f; f = f->next) {
+        char *name = f->decl ? declarator_name(f->decl) : NULL;
+        Type *mty;
+        Member m = {0};
+
+        if (!f->decl || !f->decl->bit_width_expr) {
+            if (!name) {
+                diag_error_at(f->loc, "struct member requires a name");
+                continue;
+            }
+            mty = type_apply_declarator(f->spec, f->decl, f->loc);
+        } else if (f->decl) {
+            mty = type_apply_declarator(f->spec, f->decl, f->loc);
+        } else {
+            mty = f->spec ? f->spec : type_int();
+        }
+        m.name = name;
+        m.ty = mty;
+        m.is_bitfield = f->decl && f->decl->bit_width_expr != NULL;
+        member_append(&members, &nmembers, &m);
+    }
+
+    if (out_n)
+        *out_n = nmembers;
+    (void)loc;
+    return members;
+}
+
 struct NodeList {
     Node *head;
     Node *tail;
@@ -295,6 +416,12 @@ Declarator *declarator_ident(char *name)
 {
     Declarator *d = declarator_empty();
     d->name = name;
+    return d;
+}
+
+Declarator *declarator_bitfield(Declarator *d, Node *width)
+{
+    d->bit_width_expr = width;
     return d;
 }
 

@@ -1,0 +1,1299 @@
+xcc Struct / Typedef / Aggregate Feature — structdef.txt
+=========================================================
+
+SUMMARY
+-------
+
+Add C89 structs (tagged, forward-declarable, complete/incomplete), typedef,
+member access (`.` / `->`), struct assignment and brace initialization,
+bitfields, abstract struct types in casts, and `LIR_MEMCPY` for bulk struct
+copy — on top of the existing xcc 0.0.1.7 pipeline (LIR, regalloc, brace
+array init, sizeof, unsigned, long).
+
+Locked product decisions:
+
+    1. Implementation order: typedef first (Section 1), then structs (Section 2+).
+       Typedef is a name table over existing Type *; structs introduce TY_STRUCT.
+    2. C89 is the normative spec. Document deviations explicitly per
+       typesystemlist.txt policy (explicit, documented, tested when observable).
+    3. Struct layout: SysV LP64 / GCC-compatible padding for supported members
+       (scalars, pointers, arrays thereof, nested complete structs, bitfields).
+    4. Struct locals and non-scalar objects stay on stack; no SROA / per-member
+       register promotion in this feature.
+    5. `ND_MEMBER` for `.` / `->` — do not desugar to untyped byte offsets.
+    6. Struct assignment and bulk zero-init use `LIR_MEMCPY` once Section 4 lands
+       (E8); member-wise scalar stores remain fallback until then.
+    7. Bitfields (A12): C89 `int` / `signed int` / `unsigned int` only; pack into
+       allocation units per GCC/x86-64 behavior; no address-of bitfield.
+    8. Cast to/from struct types (B11): C89 3.3.4 derived-type rule — allow casts
+       where type_name's member tree is composed of scalar types only.
+    9. `typedef struct S S` idioms supported (A11) before or with struct body.
+   10. Partial auto struct init: zero-fill remaining members (documented deviation
+       from C89 implementation-defined auto behavior; matches xcc array init policy).
+
+C89 mandates we cannot silently skip (full struct conformance):
+
+    - tagged struct/union specifiers and distinct tag namespaces (3.5.2.1)
+    - forward declaration + later completion of same tag in same scope
+    - incomplete types: `sizeof` and object definition constraints
+    - member types: no void, no function type as member
+    - `.` on struct/union lvalue; `->` on pointer to struct/union
+    - struct assignment between compatible same-tag types (3.3.16)
+    - aggregate brace initialization (3.5.7)
+    - `sizeof` on complete struct type
+    - reject struct `==` / `!=` / ordering (constraints)
+    - typedef (3.1.2.3)
+    - bitfields (3.5.2.1) when A12 is in scope
+    - translation limits: 127 members, 6 nesting levels (6.4.1) — enforce or error
+
+C89 mandates deferred to later milestone (documented subset):
+
+    - struct / union pass and return **by value** (SysV register classification)
+    - union type (TY_UNION) — separate from struct milestone unless pulled in
+    - enum type
+    - static / file-scope aggregate initialization (already README-deferred)
+    - string literal initialization for `char[]` members
+    - anonymous struct members (not C89)
+    - designated initializers (C99)
+    - `const` / `volatile` on members
+    - multiple translation units / extern struct completion across TUs
+    - `#pragma pack` and alignment attributes
+
+Release goal:
+
+    Programs can define tagged structs, typedef them, declare locals and
+    `struct S *` parameters, initialize with braces, assign structs, access
+    members, use bitfields, take addresses of members (not bitfields), use
+  `sizeof(struct S)` and `(struct S *)` casts, and build linked structures
+    via forward-declared pointers — with all prior tests passing.
+
+
+Purpose
+-------
+
+This file is the working bucket list for the struct/typedef/aggregate feature
+(structdef).
+
+It records:
+
+    - locked design decisions,
+    - C89 normative anchors (xcc 3.x citation style where codebase already uses it),
+    - type representation and tag/typedef tables,
+    - parser/sema/lower/LIR plans,
+    - staged implementation checklist by section,
+    - undeferred scope from planning (A11, A12, B11, E8),
+    - explicit deferrals and deviations,
+    - test strategy (files listed, not generated here).
+
+Follow the deviation policy from typesystemlist.txt:
+
+    explicit, documented, tested when observable, tied to a reason.
+
+Do not begin implementation until the maintainer says to begin. Stage 0 is an
+auto gate only (`make test` on current master).
+
+
+Current Compiler Shape (pre-struct, v0.0.1.7)
+----------------------------------------------
+
+Types (src/type.h / type.c):
+
+    TY_VOID, TY_INT, TY_PTR, TY_ARRAY, TY_FUNC
+
+    No TY_STRUCT, TY_UNION, no typedef names, no tag namespace.
+    type_is_scalar() = integer | pointer only.
+    type_is_object() excludes void and function only — arrays are objects.
+    type_is_complete() handles arrays and pointers to incomplete element types.
+    type_assignable() rejects array-to-array; integers and compatible pointers only.
+    type_same() structural for ptr/array/func; no tag identity.
+
+Lexer (src/lexer.l):
+
+    Keywords: int, char, short, long, void, unsigned, signed, control, sizeof.
+    No: struct, union, enum, typedef.
+    No `->` token (`-` and `>` separate).
+
+Parser (src/parser.y):
+
+    toplevel: function definitions / prototypes only.
+    specifier: integer + void specifiers only.
+    type: specifier | type '*'.
+    cast_type: specifier abstract_declarator_opt.
+    Subscript: desugared to *(base + index).
+    No member access, no struct decl, no typedef decl.
+
+AST (src/ast.h):
+
+    ND_* expression/statement kinds; no ND_MEMBER.
+    Declarator: pointers + array dims; no struct abstract declarator on base.
+    Node.offset = stack slot for ND_VAR locals.
+
+Sema (src/sema.c):
+
+    scope_lookup / scope_add_local — flat name → offset + Type *.
+    init_aggregate() — arrays only; flattens brace init to scalar leaf list.
+    sema_brace_init() — arrays and scalar-in-brace unwrap.
+    lower_addr paths assume ND_VAR | ND_DEREF lvalues only.
+    ND_CAST: target must be void or scalar (3.3.4 subset today).
+    sizeof: rejects incomplete types (except unsized array inference elsewhere).
+
+Lower / LIR (src/lower.c, src/lir.h):
+
+    emit_load_slot / emit_store_slot — width from scalar type.
+    can_promote() — scalars only, not address-taken.
+    ND_ASSIGN on ND_VAR — scalar store or home vreg.
+    No LIR_MEMCPY opcode.
+    lower_addr: assert on unknown lvalue kinds.
+
+Regalloc / emit:
+
+    Non-scalars (arrays) stay in memory; same will apply to structs.
+    SysV call path: 8-byte scalar args in registers; no struct classification.
+
+Tests:
+
+    ~465 cases in tests/cases/, manifest-driven.
+    No struct_, typedef_, bitfield_ tests yet.
+
+
+Locked Design Decisions
+-----------------------
+
+ID  Decision                                              Rationale
+--  --------                                              ---------
+D1  typedef before struct user-visible syntax             Typedef table and
+                                                          parser decl-spec chain
+                                                          needed for `typedef
+                                                          struct S S` and cleaner
+                                                          struct-decl parsing.
+
+D2  TY_STRUCT with explicit member list + layout offsets  Matches array init and
+                                                          lower_addr offset math;
+                                                          offsetof known at sema.
+
+D3  Tag table separate from typedef table                 C89 distinct namespaces:
+                                                          tags vs ordinary ids.
+
+D4  Struct type identity = tag name + structural match    C89 3.1.2.3 / 3.5.2.1:
+                                                          `struct A` ≠ `struct B`
+                                                          even if same layout.
+
+D5  ND_MEMBER(base, member_index)                         Preserves member type for
+                                                          sema and width for lower;
+                                                          subscript-style desugar
+                                                          loses member type.
+
+D6  `->` parse to ND_MEMBER(ND_DEREF(p), m) or equivalent Single sema path from
+                                                          dereferenced pointer base.
+
+D7  Incomplete struct: size 0, align 1, is_complete 0    Diagnostics on sizeof and
+                                                          local/object definition.
+
+D8  Allow pointer to incomplete struct                    `struct S *p` without body.
+
+D9  Struct assignment → LIR_MEMCPY (E8) when size > 0     Correct bulk copy; one
+                                                          emit path; enables rep
+                                                          movs or call memcpy later.
+
+D10 Bitfield storage: GCC x86-64 packing rules            Interop with C compilers
+                                                          on same platform; document
+                                                          as implementation-defined
+                                                          per C89 3.5.2.1.
+
+D11 Plain `int` bitfield signedness: signed              Document deviation if
+                                                          plain int bitfields differ
+                                                          from host GCC (match GCC).
+
+D12 Auto partial struct init: zero-fill tail members      Aligns with xcc array brace
+                                                          policy and README; deviation
+                                                          from C89 impl-defined auto.
+
+D13 Reject comparison operators on struct operands        C89 constraint; hard error.
+
+D14 Reject struct in controlling if/while/for without     Condition must be scalar;
+    cast                                                  struct is not scalar.
+
+D15 `(struct S *)p` via abstract declarator (B11)         Needed for intrusive lists
+                                                          and type punning patterns.
+
+D16 `(struct S)x` only if S's member tree is all scalar   C89 3.3.4 constraint on
+                                                          cast type_name.
+
+D17 No struct-by-value parameters or returns in v1        Documented deferral; C89
+                                                          full conformance needs
+                                                          SysV classification (F3–F5).
+
+D18 File-scope struct decl required in v1                 Functions-only toplevel
+                                                          cannot express shared tags.
+
+D19 Nested struct members must be complete at definition  No `struct Inner` incomplete
+    time of outer                                         member except via pointer.
+
+D20 `&s.member` marks base variable address-taken         Same policy as `&s` for
+                                                          regalloc correctness.
+
+D21 Existing tests must pass at every stage gate          Regression guard (D12
+                                                          clongf precedent).
+
+D22 Stage 0 gate: `make test` only — no manual audit      Infrastructure proven;
+                                                          Sections 1+ are the work.
+
+
+C89 Normative Anchors
+---------------------
+
+xcc codebase often cites "C89 3.x" (Rationale-era numbering). ISO C89 / C90
+equivalents noted where useful.
+
+Section     Topic                           xcc obligation
+-------     -----                           --------------
+3.1.2.1     Identifiers                     struct tags in distinct name space
+                                            from ordinary identifiers; typedef
+                                            names are identifiers.
+
+3.1.2.3     Typedef names                   `typedef type declarator`; typedef
+                                            name is synonym for type; cannot
+                                            redefine in same scope.
+
+3.1.2.5     Type names                      struct-or-union-specifier introduces
+                                            type; tag binding rules.
+
+3.1.2.8     Declaration semantics             struct decl at file scope visible
+                                            in later declarations.
+
+3.2.2.1     Lvalue conversions              struct object is lvalue; array of
+                                            struct still decays to pointer in
+                                            rvalue context.
+
+3.2.2.3     Integeal / null constants       unchanged; bitfield ICE for width.
+
+3.3.4       Cast operators                  type in cast must be void, scalar,
+                                            or derived declarator whose leaves
+                                            are scalar types (B11). Operand of
+                                            cast must be scalar unless casting
+                                            to void. Struct-to-struct cast only
+                                            when constraint satisfied.
+
+3.3.6       Additive / member operators     `.` requires struct/union lvalue;
+                                            `->` requires pointer to struct/
+                                            union. Result is lvalue (except
+                                            bitfield may be non-addressable).
+
+3.3.16      Assignment                      simple assignment: struct/union if
+                                            left and right same type; no struct
+                                            compare.
+
+3.5.2.1     Structure and union specifiers  syntax, forward decl, complete type,
+                                            member constraints, layout, bit-fields,
+                                            translation limits.
+
+3.5.7       Initialization                  brace init for aggregates; struct
+                                            member order; excess element error;
+                                            static tail zero; auto tail impl-
+                                            defined (we choose zero — D12).
+
+3.5.3       Expressions                     sizeof: complete types only; operand
+                                            not evaluated.
+
+6.3.7       Function arguments              struct by value allowed in C89 — DEFER
+                                            (D17) with note in README.
+
+6.3.8       Function returns                struct by value allowed — DEFER (D17).
+
+6.4.1       Translation limits              127 struct members; nesting depth 6.
+
+
+Undeferred Scope (from planning session)
+----------------------------------------
+
+Code   Item                                    Section
+----   ----                                    -------
+A11    typedef (incl. `typedef struct S S`)    1
+A12    bitfields                               5
+B11    abstract struct in casts                6
+E8     LIR_MEMCPY for struct assign/init       4
+
+Core struct (implicitly undeferred):
+
+    TY_STRUCT, layout, tag table, file-scope decl, `.` / `->`, brace init,
+    struct assign, `struct S *` params/returns, sizeof, incomplete types,
+    member arrays, nested structs, `arr[i].x`, linked-list forward decl.
+
+
+Explicit Deferrals
+------------------
+
+Item                                    Reason                          Target
+----                                    ------                          ------
+struct / union by-value param           SysV AMD64 classification         v0.0.2.x ABI
+struct / union by-value return          hidden sret / register split      v0.0.2.x ABI
+union (TY_UNION)                        overlapping layout + init rules   post-struct
+enum                                    separate type kind                post-struct
+static/file-scope aggregate init        README already deferred           agg-init milestone
+string literal → char[] member          no string literals yet            strings milestone
+anonymous struct members                not C89                           never / C11
+designated initializers                 C99                               never / C99 mode
+const/volatile members                  qualifier grammar                 qualifiers feat
+extern struct across TUs                single TU compiler                multi-TU
+#pragma pack                            non-C89                           never
+zero-size struct (GCC ext)              not C89                           reject
+flexible array member                   C99                               C99 mode
+struct comparison operators             illegal in C                      always error
+bitfield address-of                     illegal in C                      always error
+void member                             illegal in C                      always error
+function type member                    illegal in C                      always error
+register struct                         deprecated / odd                  low priority
+
+
+Known Deviations (pre-declared)
+-------------------------------
+
+    - D12: auto struct partial brace init zero-fills remaining members.
+      C89 3.5.7: auto tail is implementation-defined. Test: struct_init_auto_pad.c
+
+    - D17: struct by-value call/return rejected with clear error until ABI stage.
+      C89 allows them; xcc subset documented in README.
+
+    - D10/D11: bitfield layout within allocation units matches GCC x86-64.
+      C89 leaves packing implementation-defined. Test: bitfield_layout_*.c
+
+    - Plain `char` storage unsigned (existing xcc policy) applies to struct
+      members declared `char`.
+
+    - No `-fms-extensions` / MSVC layout.
+
+    - Single translation unit: `extern struct S s;` without definition accepted
+      only if no use requires complete type, or diagnostic if violated.
+
+
+Proposed Type Model
+-------------------
+
+TypeKind (add):
+
+    TY_STRUCT
+    /* TY_UNION later */
+
+Fields on Type when kind == TY_STRUCT:
+
+    char *tag;              /* "Node", arena-owned; NULL only internal anon reject */
+    int is_complete;        /* 0 = forward decl / incomplete */
+    struct Member *members;
+    int nmembers;
+    /* size, align computed at completion; 0/1 when incomplete */
+
+struct Member {
+
+    char *name;             /* NULL for unnamed bitfield width-only padding */
+    Type *ty;               /* member type (scalar, array, ptr, nested struct) */
+    int offset;             /* byte offset from struct start */
+    int is_bitfield;
+    int bit_width;          /* 0 if not bitfield */
+    int bit_offset;         /* bit position within allocation unit, for codegen */
+};
+
+New constructors / queries:
+
+    Type *type_struct(const char *tag, Member *members, int n, int complete);
+    Type *type_struct_incomplete(const char *tag);
+    int type_is_struct(Type *ty);
+    int type_is_aggregate(Type *ty);     /* struct | array (union later) */
+    Member *type_struct_member(Type *ty, const char *name, int *out_index);
+    void type_struct_layout(Type *ty);   /* fill size, align, member offsets */
+    int type_struct_member_count(Type *ty);
+
+type_same updates:
+
+    TY_STRUCT: same tag string (pointer equality on interned tag) AND same
+    completeness AND if complete, same members (names, types, offsets).
+
+type_compatible:
+
+    structs compatible iff type_same (no void*-style struct compatibility).
+
+type_assignable:
+
+    add: type_same struct types assignable;
+    reject: struct to anything else without cast.
+
+type_is_scalar:
+
+    unchanged — struct is NOT scalar.
+
+type_is_complete:
+
+    TY_STRUCT: ty->is_complete && size computed.
+
+type_is_object:
+
+    struct is object type.
+
+
+Typedef Table (Section 1)
+-------------------------
+
+Separate from struct tag table.
+
+typedef struct {
+
+    char *name;
+    Type *ty;
+    SourceLoc loc;
+} TypedefSym;
+
+Operations:
+
+    typedef_bind(name, ty, loc)   — error on redefinition in same scope
+    typedef_lookup(name) → Type *
+    typedef_push_scope / pop        — shadowing in blocks (C89 allows)
+
+Parser integration:
+
+    declaration:
+        typedef decl_specifiers declarator_list ';'
+
+    decl_specifiers may include typedef-specifier only as first pass hook;
+    for Section 1 minimal: `typedef <existing-type> name;` and
+    `typedef struct S name;` once struct specifier exists (Stage 1.4 may stub
+    struct forward ref).
+
+Typedef does not create distinct type for type_same (C89: typedef is synonym).
+
+
+Struct Tag Table (Section 2)
+----------------------------
+
+typedef struct {
+
+    char *tag;
+    Type *ty;               /* incomplete or complete TY_STRUCT */
+    int defined_here;       /* 1 if body seen in this scope */
+    SourceLoc loc;
+} StructTag;
+
+Operations:
+
+    struct_tag_declare(tag) → incomplete Type *
+    struct_tag_define(tag, members) → complete Type *, error on mismatch redef
+    struct_tag_lookup(tag) → Type *
+    file scope + block scope stacks
+
+Redeclaration rules:
+
+    `struct S;` then `struct S { ... };` — OK, completes type.
+    Two incompatible bodies for same tag in same scope — error.
+    `struct S { int x; };` then `struct S { int x; };` — error (redefinition).
+
+
+Member Layout Algorithm (D2, D10)
+---------------------------------
+
+For each member in declaration order:
+
+    1. If bitfield: pack into current allocation unit per GCC rules (A12).
+       Update struct size to include unit size.
+    2. Else: align cursor to alignof(member_ty).
+       member.offset = cursor.
+       cursor += type_size(member_ty).
+    3. After all members: struct.align = max(member aligns, bitfield unit align).
+       struct.size = round_up(cursor, struct.align).
+
+Reject:
+
+    member type void, function, incomplete array of incomplete struct,
+    incomplete struct by value (D19).
+
+Arrays of struct: size = count * elem_size, align = elem_align.
+
+ICE for bitfield width: positive integer constant expression.
+
+
+Parser Grammar Additions (overview)
+-----------------------------------
+
+Lexer:
+
+    "struct"            → STRUCT
+    "typedef"           → TYPEDEF
+    "->"                → ARROW
+
+Parser:
+
+    toplevel:
+      | struct_or_union_specifier ';'
+      | typedef_declaration ';'
+
+    struct_or_union_specifier:
+        STRUCT tag_opt '{' struct_declaration_list '}'
+      | STRUCT tag
+
+    tag_opt:
+        /* empty */       → anonymous (reject in v1 unless extension decided)
+      | IDENT
+
+    struct_declaration_list:
+        struct_declaration
+      | struct_declaration_list struct_declaration
+
+    struct_declaration:
+        specifier struct_declarator_list ';'
+
+    struct_declarator_list:
+        struct_declarator
+      | struct_declarator_list ',' struct_declarator
+
+    struct_declarator:
+        declarator
+      | declarator_opt ':' constant_expression   /* bitfield */
+
+    specifier (extend):
+        struct_or_union_specifier
+      | typedef_name                            /* after Section 1 */
+
+    type:
+        specifier
+      | type '*'
+
+    arg_expr (extend):
+      | arg_expr '.' IDENT
+      | arg_expr ARROW IDENT
+
+Abstract declarator for casts (B11):
+
+    cast_type:
+        specifier abstract_declarator_opt
+
+    specifier includes struct-or-union-specifier so `(struct S *)p` parses.
+
+
+AST Additions
+-------------
+
+NodeKind:
+
+    ND_MEMBER
+
+Node fields for ND_MEMBER:
+
+    Node *base;           /* struct/union lvalue or -> pointer deref chain */
+    int member_index;     /* index into Type.members */
+    /* sema fills ty = member type, is_lvalue = 1 if base modifiable and not
+       non-addressable bitfield */
+
+Optional: ND_TYPEDEF_DECL for typedef in decl statements — or reuse ND_DECL
+with flag; prefer explicit typedef statement kind in stmt resolver.
+
+
+Sema Additions (by concern)
+---------------------------
+
+Typedef (Section 1):
+
+    - Resolve typedef_name in specifier to underlying Type *.
+    - `typedef int foo;` binds foo → type_int().
+    - Parameter `typedef struct S *Ptr;` after struct exists.
+
+Struct decl:
+
+    - On `struct S { ... };` build members, run layout, mark complete.
+    - On `struct S;` register incomplete.
+    - On `struct S var;` require complete.
+
+Member access:
+
+    - ND_MEMBER: base must be struct (after ->: pointer to struct).
+    - ty = member field type.
+    - is_lvalue unless bitfield rules forbid & (always forbid & on bitfield).
+
+Assignment:
+
+    - struct = struct iff type_same.
+    - lower to LIR_MEMCPY (E8).
+
+Initialization:
+
+    - Generalize init_aggregate() to recurse TY_STRUCT members.
+    - Generalize type_leaf_count → type_init_slot_count for arrays + structs.
+    - sema_brace_init accepts struct type.
+    - Nested braces for struct member that is struct or array.
+
+Casts (B11):
+
+    - Extend cast target check: allow TY_STRUCT if all members scalar (recursive).
+    - Operand must be scalar unless cast to void (existing).
+    - Struct-to-struct cast: only if type_same OR explicit extension — C89
+      requires compatible types; use type_same only.
+
+sizeof:
+
+    - sizeof(struct S) → type_size when complete.
+    - error on incomplete.
+
+Address-of:
+
+    - ND_ADDR on ND_MEMBER: LEA base + member.offset unless bitfield error.
+
+Decay:
+
+    - array of struct decays to pointer to struct element (existing path).
+
+Params / returns:
+
+    - `struct S *` — pointer, unchanged ABI.
+    - `struct S` by value — error diagnostic (D17).
+
+
+Lower / LIR Additions
+---------------------
+
+LirOp:
+
+    LIR_MEMCPY    /* dst_mem, src_mem, size immediate — E8 */
+
+Operands:
+
+    dst: mem (fp+off or address vreg)
+    src: mem
+    aux: size bytes
+
+emit_x86:
+
+    Small sizes: sequence of mov from src to dst.
+    Or: rep movsb / rep movsq for medium.
+    Or: call memcpy@plt for large (optional; inline first).
+
+lower_addr:
+
+    case ND_MEMBER:
+        addr = lower_addr(base);
+        if base is ND_VAR with known offset:
+            return LEA(fp, base.offset + member.offset)
+        else:
+            LEA(addr_reg, member.offset)
+
+lower ND_ASSIGN struct:
+
+    emit LIR_MEMCPY(dst, src, type_size(ty))
+
+lower struct brace init:
+
+    flatten to init list or direct MEMCPY zero + scalar stores per member.
+
+Bitfield load/store:
+
+    mask and shift based on bit_offset and bit_width; sign-extend for signed
+    int bitfield.
+
+
+Regalloc / Promotion
+--------------------
+
+can_promote(): remain false for struct types (type_is_scalar false).
+
+Address-taken: scope_mark_address_taken on base var name for `&s.m` (D20).
+
+Struct locals always memory — no change to linear scan.
+
+
+Staged Checklist — Section 0: Baseline Gate
+-------------------------------------------
+
+Stage 0.0: Auto regression gate (no manual checklist)
+    [AUTO] make test passes on current master before any structdef work
+    [AUTO] record test count in manifest (baseline ~465)
+    [AUTO] confirm TY_STRUCT absent and no struct keywords in lexer
+
+Gate rule: Sections 1+ each end with `make test` unless stage says otherwise.
+Do not start Section 1 until maintainer says begin.
+
+
+Staged Checklist — Section 1: typedef (A11)
+-------------------------------------------
+
+Stage 1.1: Typedef table + scope
+    [DONE] src/sema_typedef.h, src/sema_typedef.c — depth-based scope stack
+    [DONE] typedef_bind, typedef_lookup, enter/leave scope
+    [DONE] make test — no user-visible change yet
+
+Stage 1.2: Lexer / parser `typedef`
+    [DONE] TYPEDEF token
+    [DONE] typedef_declaration at file scope and block stmt
+    [DONE] TYPEDEF_NAME lexer token (typedef names distinct from IDENT)
+    [DONE] make test
+
+Stage 1.3: Sema typedef resolution
+    [DONE] decl_specifier resolves typedef names via TYPEDEF_NAME
+    [DONE] error on typedef redefinition in same scope
+    [DONE] locals/params: `typedef int Foo; Foo x;`
+    [DONE] make test
+
+Stage 1.4: Typedef + pointer/array declarators
+    [DONE] typedef int *IntPtr;
+    [DONE] typedef int A[3];
+    [DONE] tests: typedef_scalar.c, typedef_ptr.c, typedef_array.c
+    [DONE] make test
+
+Stage 1.5: Forward typedef to struct (stub hook)
+    [ ] parse `typedef struct S S;` — requires Section 2 struct tag
+    [ ] tests: typedef_struct_fwd.c
+    [ ] make test
+
+Section 1 exit criteria:
+
+    [DONE] typedef of all supported non-struct types works
+    [DONE] typedef redeclaration errors
+    [DONE] block scope shadowing works
+    [DONE] `make test` clean (475 tests)
+
+
+Staged Checklist — Section 2: struct types & declarations
+-------------------------------------------------------
+
+Stage 2.1: TY_STRUCT representation
+    [x] type.h: TY_STRUCT, Member, fields on Type
+    [x] type_struct_incomplete, type_struct, layout function
+    [x] type_is_struct, type_struct_member, type_name for struct
+    [x] type_same / type_is_complete / type_size / type_align updates
+    [x] make test — no parser change yet; optional type_unit hooks
+
+Stage 2.2: Struct tag table
+    [x] struct_tag.h / struct_tag.c — parallel to typedef table
+    [x] forward declare, complete, redefinition errors
+    [x] intern tag strings in arena
+    [x] make test
+
+Stage 2.3: Lexer / parser struct decl
+    [x] STRUCT token
+    [x] struct_or_union_specifier (struct only; union keyword reserved/error)
+    [x] file-scope `struct S { ... };`
+    [x] file-scope `struct S;`
+    [x] reject anonymous struct at file scope (v1)
+    [x] make test
+
+Stage 2.4: struct as specifier
+    [x] `struct S var;` locals
+    [x] `struct S *p;`
+    [x] `struct S a[10];`
+    [x] nested struct member types
+    [x] incomplete error on `struct S var` without body
+    [x] tests: struct_decl_local.c, struct_ptr.c, struct_array.c,
+        struct_nested.c, error_struct_incomplete.c
+    [x] make test
+
+Stage 2.5: Forward declaration + pointer recursion
+    [x] struct list { int v; struct list *next; };
+    [x] sizeof incomplete error; sizeof complete OK
+    [x] tests: struct_forward.c, struct_list_node.c
+    [x] make test
+
+Stage 2.6: typedef struct S S completion (A11 + struct)
+    [x] `typedef struct S S;` + later body
+    [x] `typedef struct S { int x; } S;`
+    [x] tests: typedef_struct_S.c
+    [x] make test
+
+Section 2 exit criteria:
+
+    [x] tagged struct decl, complete/incomplete rules
+    [x] layout size/align matches GCC for test structs
+    [x] no member access / init / assign yet — decl and sizeof only
+
+
+Staged Checklist — Section 3: member access (`.` / `->`)
+--------------------------------------------------------
+
+Stage 3.1: Lexer / parser member syntax
+    [x] ARROW token
+    [x] ND_MEMBER in ast.c
+    [x] `s.x`, `p->x` parse tree
+    [x] make test (parse-only if needed via sema reject downstream)
+
+Stage 3.2: Sema member resolution
+    [x] ND_MEMBER type check and member_index resolution
+    [x] error: member not found, base not struct/ptr-to-struct
+    [x] lvalue flag; bitfield lvalue for assign (non-addressable)
+    [x] tests: struct_member_load.c, error_member_missing.c
+    [x] make test
+
+Stage 3.3: Lower member load / store
+    [x] lower_addr ND_MEMBER
+    [x] lower_expr member load (through deref of address)
+    [x] ND_ASSIGN to member
+    [x] tests: struct_member_assign.c, struct_ptr_member.c
+    [x] make test
+
+Stage 3.4: Address of member + array-of-struct
+    [x] `&s.x` → LEA; error `&bf` for bitfield
+    [x] `arr[i].x` via subscript desugar + member
+    [x] address-taken propagation (D20)
+    [x] tests: struct_member_addr.c, struct_array_member.c
+    [x] make test
+
+Section 3 exit criteria:
+
+    [x] `.` and `->` work for scalar members
+    [x] `arr[i].x` works
+    [x] `&member` works except bitfields
+
+
+Staged Checklist — Section 4: initialization & assignment (E8)
+----------------------------------------------------------------
+
+Stage 4.1: Generalize init_aggregate for structs
+    [x] type_init_slot_count for struct + array
+    [x] init_aggregate TY_STRUCT branch
+    [x] sema_brace_init for struct locals
+    [x] partial init zero-fill (D12)
+    [x] tests: struct_init_full.c, struct_init_partial.c, struct_init_nested.c
+    [x] make test
+
+Stage 4.2: Struct array brace init
+    [x] `struct S a[2] = { {1}, {2,3} };`
+    [x] tests: struct_array_init.c
+    [x] make test
+
+Stage 4.3: LIR_MEMCPY (E8)
+    [x] LIR_MEMCPY in lir.h / lir.c
+    [x] lower struct ND_ASSIGN → MEMCPY
+    [x] emit_x86 for MEMCPY (inline movs or equivalent)
+    [x] optional: bulk `{0}` struct init via MEMCPY zero pattern
+    [x] tests: struct_assign.c, struct_assign_copy.c (mutate copy independence)
+    [x] make test
+
+Stage 4.4: Scalar brace unwrap for struct member types
+    [x] `struct S s = { {3} };` if member is scalar — 3.5.7 single-element rule
+    [x] align with sema_scalar_brace_init pattern
+    [x] make test
+
+Section 4 exit criteria:
+
+    [x] brace init + assignment copy bits correctly
+    [x] MEMCPY used for struct assign
+    [x] independent copy verified by test
+
+
+Staged Checklist — Section 5: bitfields (A12)
+---------------------------------------------
+
+Stage 5.1: Parser struct bitfield declarator
+    [ ] `int x : 3;` in struct_declaration
+    [ ] unnamed `: 0` padding field support
+    [ ] reject non-int bitfield types
+    [ ] make test
+
+Stage 5.2: Layout engine for bitfields
+    [ ] allocation unit packing (match GCC x86-64)
+    [ ] Member.is_bitfield, bit_width, bit_offset
+    [ ] sizeof/align includes bitfield units
+    [ ] tests: bitfield_sizeof.c, bitfield_layout_padding.c
+    [ ] make test
+
+Stage 5.3: Sema / lower bitfield access
+    [ ] load: mask + shift + sign extend if signed
+    [ ] store: mask clear + or in value
+    [ ] reject &bitfield
+    [ ] tests: bitfield_load.c, bitfield_store.c, error_bitfield_addr.c
+    [ ] make test
+
+Stage 5.4: Bitfield in brace init (if supported)
+    [ ] init to integer constant fitting width
+    [ ] tests: bitfield_init.c
+    [ ] make test
+
+Section 5 exit criteria:
+
+    [ ] bitfields pack and access correctly vs GCC layout tests
+    [ ] no address-of bitfield
+
+
+Staged Checklist — Section 6: casts & abstract struct types (B11)
+-----------------------------------------------------------------
+
+Stage 6.1: Cast type check extension
+    [ ] allow cast_type to struct specifier in parser (already if B11)
+    [ ] sema: cast target struct if member tree all scalar (D16)
+    [ ] reject struct cast if nested struct/array of struct in type_name
+    [ ] tests: cast_struct_ptr.c, error_cast_struct_value.c
+    [ ] make test
+
+Stage 6.2: Pointer casts `(struct S *)p`
+    [ ] compatible pointer / void* / null rules unchanged
+    [ ] tests: cast_to_struct_ptr.c
+    [ ] make test
+
+Stage 6.3: Value casts involving struct (strict)
+    [ ] `(struct S){...}` not in C89 — no compound literal
+    [ ] if `(struct S)x` allowed only when constraint met — implement or reject
+    [ ] document decision in deviation section
+    [ ] make test
+
+Stage 6.4: sizeof / incomplete / errors
+    [ ] sizeof incomplete struct error
+    [ ] struct compare error (D13)
+    [ ] struct in if condition error (D14)
+    [ ] tests: error_struct_cmp.c, error_sizeof_incomplete_struct.c
+    [ ] make test
+
+Section 6 exit criteria:
+
+    [ ] `(struct S *)` casts work in abstract declarator
+    [ ] illegal struct operations diagnosed
+
+
+Staged Checklist — Section 7: params, returns, ABI deferral (D17)
+---------------------------------------------------------------
+
+Stage 7.1: `struct S *` as param and return
+    [ ] sema param/return type checking
+    [ ] lower/emit unchanged (pointer ABI)
+    [ ] tests: struct_ptr_param.c, struct_ptr_return.c
+    [ ] make test
+
+Stage 7.2: Reject by-value struct param/return with diagnostic
+    [ ] `void f(struct S s);` → error pointing to future ABI support
+    [ ] `struct S f(void);` → error
+    [ ] tests: error_struct_byval_param.c, error_struct_byval_return.c
+    [ ] make test
+
+Stage 7.3: Document D17 in README and structdef exit criteria
+    [ ] README status table update
+    [ ] make test
+
+Section 7 note: Full C89 struct-by-value is NOT required for structdef v1 exit;
+explicit errors satisfy documented subset.
+
+
+Staged Checklist — Section 8: limits, opts, diagnostics, docs
+-------------------------------------------------------------
+
+Stage 8.1: Translation limits
+    [ ] error at 128th member
+    [ ] error at 7th nesting level
+    [ ] tests: error_struct_member_limit.c (generate or manual)
+    [ ] make test
+
+Stage 8.2: cosfold / cosprop / ICE
+    [ ] sizeof(struct S) folds in ICE paths
+    [ ] offsetof member in ICE if needed for array bounds — optional
+    [ ] make test
+
+Stage 8.3: type_name / diagnostics polish
+    [ ] errors show `struct S` names
+    [ ] member name in member-not-found errors
+    [ ] make test
+
+Stage 8.4: Integration examples
+    [ ] examples/struct_list.c or convert star_bfs pattern — optional
+    [ ] make test + examples/build.sh if added
+
+Stage 8.5: README + structdef exit
+    [ ] README supported/unsupported table
+    [ ] structdef.txt exit criteria all checked
+    [ ] make test
+
+
+Exit Criteria (structdef feature complete)
+----------------------------------------
+
+    [ ] Section 1 typedef: scalar, pointer, array typedefs; typedef struct S S
+    [ ] Section 2: struct decl, layout, incomplete/complete, nested, forward decl
+    [x] Section 3: `.` `->` `&member` `arr[i].x`
+    [x] Section 4: brace init, struct assign, LIR_MEMCPY
+    [ ] Section 5: bitfields load/store/layout
+    [ ] Section 6: (struct S *) casts, sizeof, illegal ops rejected
+    [ ] Section 7: struct * param/return; by-value rejected with error
+    [ ] All prior tests pass
+    [ ] New struct/typedef/bitfield test suite passes
+    [ ] Documented deviations: D12, D17, bitfield layout
+    [ ] No union, enum, static agg init, or by-value ABI slipped in unmarked
+
+
+Test Plan (files to add — NOT generated in structdef pass)
+----------------------------------------------------------
+
+Naming prefixes: typedef_*, struct_*, bitfield_*, cast_struct_*,
+error_struct_*, error_typedef_*.
+
+Typedef:
+
+    typedef_int.c
+    typedef_char.c
+    typedef_long.c
+    typedef_ptr.c
+    typedef_array.c
+    typedef_shadow.c
+    typedef_struct_S.c
+    error_typedef_redef.c
+
+Struct core:
+
+    struct_decl_local.c
+    struct_sizeof.c
+    struct_align_pad.c          /* char + int padding == 8 */
+    struct_nested.c
+    struct_forward.c
+    struct_list_node.c          /* forward decl linked list walk */
+    struct_ptr_param.c
+    struct_ptr_return.c
+    struct_array.c
+    error_struct_incomplete.c
+    error_struct_redef.c
+    error_struct_void_member.c
+
+Member access:
+
+    struct_member_load.c
+    struct_member_assign.c
+    struct_ptr_member.c
+    struct_member_addr.c
+    struct_array_member.c
+    error_member_missing.c
+
+Init / assign:
+
+    struct_init_full.c
+    struct_init_partial.c
+    struct_init_nested.c
+    struct_array_init.c
+    struct_assign.c
+    struct_assign_copy.c
+
+Bitfield:
+
+    bitfield_sizeof.c
+    bitfield_layout_padding.c
+    bitfield_load.c
+    bitfield_store.c
+    bitfield_init.c
+    error_bitfield_addr.c
+
+Casts / errors:
+
+    cast_struct_ptr.c
+    cast_to_struct_ptr.c
+    error_cast_struct_value.c
+    error_struct_cmp.c
+    error_sizeof_incomplete_struct.c
+    error_struct_byval_param.c
+    error_struct_byval_return.c
+
+Regression watchlist:
+
+    brace_* tests (init_aggregate changes)
+    sizeof_* tests
+    regalloc_* tests (struct stays memory)
+    pa_* / pd_* pointer tests
+
+
+Preferred Section Order
+-----------------------
+
+    0 (auto gate) → 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
+
+Do not start Section 2 until Section 1 Stage 1.3 lands (typedef table live).
+Do not start Section 4 MEMCPY until Section 3 member stores work.
+Bitfields (5) may parallelize after Section 3 but layout touches Section 2 —
+prefer 2 → 3 → 4 → 5 → 6 → 7 → 8.
+
+Suggested first PR slice (when told to begin):
+
+    Section 1 Stages 1.1–1.3 only (typedef infrastructure, no struct).
+
+
+Open Questions (resolve during implementation)
+----------------------------------------------
+
+    Q1  Separate typedef_tag.c vs merge into sema_scope.c?
+        Lean: sema_typedef.c + sema_struct.c for clarity.
+
+    Q2  ND_MEMBER store member_index vs Member * pointer?
+        Lean: member_index into Type->members (stable across copies).
+
+    Q3  Anonymous struct rejection: hard error or defer to extension?
+        Lean: hard error in v1 (D18 anonymous rejected).
+
+    Q4  LIR_MEMCPY: inline rep movs vs lib call threshold?
+        Lean: inline for <= 32 bytes, rep movsq for larger in emit_x86.
+
+    Q5  Struct init: flatten to scalar list vs MEMCPY + per-field stores?
+        Lean: scalar stores for init (cosfold friendly); MEMCPY for assign.
+
+    Q6  `typedef struct { int x; } S;` anonymous struct with typedef name?
+        C89 allows; requires anonymous struct type with typedef binding.
+        Lean: support via typedef name as effective tag for type_same.
+
+    Q7  ICE offsetof for bitfields?
+        Lean: reject bitfield in ICE offsetof; width ICE only in decl.
+
+
+File Touch List (anticipatory)
+------------------------------
+
+    structdef.txt
+    src/type.h
+    src/type.c
+    src/typedef.c / src/sema_typedef.h     (new)
+    src/struct_tag.c / src/sema_struct.h   (new)
+    src/lexer.l
+    src/parser.y
+    src/ast.h
+    src/ast.c
+    src/sema.c
+    src/lower.c
+    src/lir.h
+    src/lir.c
+    src/emit_x86.c
+    src/sema_scope.c                       (address-taken hooks)
+    src/cosfold.c
+    src/cosprop.c
+    Makefile                               (new .c files)
+    tests/cases/manifest.txt
+    tests/cases/typedef_*.c
+    tests/cases/struct_*.c
+    tests/cases/bitfield_*.c
+    README.md
+
+
+Implementation Notes — init_aggregate generalization
+----------------------------------------------------
+
+Current init_aggregate (sema.c) recurses TY_ARRAY only. Extend:
+
+    static int init_aggregate(Type *t, Node **pcursor, InitFlat *flat, ...)
+
+    case TY_ARRAY:
+        (unchanged)
+
+    case TY_STRUCT:
+        if (!type_is_complete(t))
+            error incomplete
+        for each member m in t->members:
+            if cursor is ND_INIT_LIST and m.ty is struct or array:
+                recurse into member sub-cursor
+            else
+                init_aggregate(m.ty, pcursor, ...)
+        pad remaining members with zero (D12)
+
+type_init_slot_count:
+
+    TY_ARRAY: count * elem_slots
+    TY_STRUCT: sum of member slot counts
+    scalar: 1
+
+Brace init elem supported:
+
+    extend brace_init_elem_supported for struct leaf scalars/pointers inside
+    struct (handled by recursion).
+
+
+Implementation Notes — lower_addr ND_MEMBER
+-----------------------------------------
+
+    static int lower_addr(LowerCtx *c, Node *n)
+    {
+        case ND_MEMBER: {
+            Member *m = &n->ty_struct_owner->members[n->member_index];
+            int base = lower_addr(c, n->base);
+            if (n->base->kind == ND_VAR && !n->base->var_decay) {
+                /* fold fp-relative */
+                emit LIR_LEA dst, mem(fp, n->base->offset + m->offset)
+            } else {
+                emit LIR_LEA dst, mem(base, m->offset)
+            }
+            return dst;
+        }
+    }
+
+Bitfield load/store does not use plain LOAD width — separate helpers.
+
+
+Implementation Notes — LIR_MEMCPY emit (E8)
+-------------------------------------------
+
+    void emit_memcpy(EmitCtx *c, Operand dst, Operand src, int size)
+    {
+        if (size <= 8)
+            mov single slot
+        else if (size <= 32)
+            4x movq or rep movsb
+        else
+            rep movsq / call memcpy
+    }
+
+Struct assign in lower:
+
+    int dst = lower_addr(c, lhs);
+    int src = lower_addr(c, rhs);  /* or eval to temp for overlapping? */
+    /* C89 assign not overlap-safe for struct in general — use memmove semantics */
+    emit LIR_MEMCPY with memmove behavior if overlap possible
+
+
+Implementation Notes — bitfield layout (GCC x86-64)
+---------------------------------------------------
+
+Follow GCC struct bitfield rules on LP64:
+
+    - int / unsigned int / signed int bitfields share allocation units
+    - unit size: typically 4 bytes for int bitfields; align struct to unit
+    - `: 0` forces new unit
+    - endian: little — bit 0 is LSB of unit
+
+Verify each layout test against `gcc -gdwarf-2` offsetof / sizeof or
+hand-computed padding tables.
+
+
+Implementation Notes — typedef vs struct tag lookup in specifier
+--------------------------------------------------------------
+
+    specifier:
+        struct_or_union_specifier  { $$ = struct_type; }
+      | typedef_name               { $$ = typedef_lookup($1); }
+      | INT ...                    { existing }
+
+When parsing `typedef struct S S;`:
+
+    1. struct_tag_declare("S") → incomplete Type *
+    2. typedef_bind("S", incomplete struct type)
+    3. Later struct S { ... } completes tag; typedef name sees updated type?
+       C89: completing struct S updates the type for typedef struct S S.
+       Implementation: typedef stores Type * pointer to same canonical struct
+       object that tag table completes in place (is_complete flip + layout).
+
+
+C89 Spec Adherence Checklist (auditor view)
+-------------------------------------------
+
+Requirement                              structdef coverage
+-----------                              ------------------
+3.1.2.3 typedef                          Section 1
+3.5.2.1 struct specifiers                Section 2
+3.5.2.1 bit-fields                       Section 5
+3.5.7 struct initialization              Section 4
+3.3.6 . and ->                           Section 3
+3.3.16 struct assignment                 Section 4 (MEMCPY)
+3.5.3 sizeof complete type               Section 2/6
+3.3.4 casts to struct ptr / scalar tree  Section 6
+incomplete type rules                    Section 2, 6
+no struct comparison                       Section 6
+127 member limit                         Section 8
+6 nesting levels                         Section 8
+struct by value call/return              DEFERRED D17 — error
+union                                    DEFERRED
+enum                                     DEFERRED
+static aggregate init                    DEFERRED (README)
+auto partial init tail                   DEVIATION D12 (zero-fill)
+
+
+Waiting for Begin
+-----------------
+
+    Implementation must not start until maintainer explicitly says to begin.
+
+    When begin is signaled:
+
+        1. Run Stage 0 [AUTO] gate (`make test`).
+        2. Start Section 1 Stage 1.1.
+        3. Update this file stage checkboxes as stages complete.
+
+
+End of structdef.txt

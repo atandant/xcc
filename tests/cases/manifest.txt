@@ -40,6 +40,12 @@ run|array_subscript_assign.c|42|
 run|array_while_index.c|6|
 run|assign_chain.c|12|
 run|assign_expr.c|7|
+run|bitfield_init.c|3|
+run|bitfield_layout_padding.c|3|
+run|bitfield_load.c|7|
+run|bitfield_signed.c|254|
+run|bitfield_sizeof.c|8|
+run|bitfield_store.c|253|
 run|block_comment_multiline.c|12|
 xcc-warning|block_scope_initializer_self.c|0|initializer refers to 'x' before its value is defined
 run|block_scope_restored.c|3|
@@ -145,10 +151,13 @@ xcc-error|error_array_bound_not_ice.c|1|array size is not an integer constant ex
 xcc-error|error_array_size_overflow.c|1|array size overflows
 xcc-error|error_array_to_scalar.c|1|incompatible types assigning 'int *' to 'int'
 xcc-error|error_array_zero_size.c|1|array size is missing or zero for 'a'
+xcc-error|error_arrow_not_ptr.c|1|cannot dereference non-pointer type 'struct Point'
 xcc-error|error_assign_int_to_pointer.c|1|incompatible types assigning 'int' to 'int *'
 xcc-error|error_assign_long_overflow_ice.c|1|incompatible types assigning 'long' to 'int *'
 xcc-error|error_assign_long_to_pointer.c|1|incompatible types assigning 'long' to 'int *'
 xcc-error|error_assign_pointer_to_int.c|1|incompatible types assigning 'int *' to 'int'
+xcc-error|error_bitfield_addr.c|1|cannot take address of bit-field
+xcc-error|error_bitfield_type.c|1|bit-field has invalid type
 xcc-error|error_block_scope_expired.c|1|use of undeclared identifier 'x'
 xcc-error|error_brace_excess.c|1|excess elements in array initializer
 xcc-error|error_called_local.c|1|called object 'f' is not a function
@@ -165,6 +174,8 @@ xcc-error|error_hex_unsigned_long_overflow.c|1|integer constant out of range
 xcc-error|error_long_literal_overflow.c|1|integer constant out of range
 xcc-error|error_long_suffix_ll.c|1|invalid suffix on integer constant
 xcc-error|error_long_suffix_unsigned.c|1|invalid suffix on integer constant
+xcc-error|error_member_missing.c|1|no member named 'z' in 'struct Point'
+xcc-error|error_member_not_struct.c|1|member reference base type is not a structure or union
 xcc-error|error_neg_array.c|1|invalid operand to unary minus
 xcc-error|error_non_lvalue_arith_assign.c|1|assignment to non-lvalue
 xcc-error|error_non_lvalue_assign.c|1|assignment to non-lvalue
@@ -185,9 +196,11 @@ xcc-error|error_sizeof_function.c|1|invalid application of sizeof to function ty
 xcc-error|error_sizeof_incomplete_type.c|1|invalid application of sizeof to incomplete type
 xcc-error|error_sizeof_void.c|1|invalid application of sizeof to void type
 xcc-error|error_stray_char.c|1|stray '@' in program
+xcc-error|error_struct_incomplete.c|1|variable 's' has incomplete type 'struct S'
 xcc-error|error_subscript_nonscalar.c|1|cannot dereference non-pointer type 'int'
 xcc-error|error_too_few_args.c|1|too few arguments to function 'add'
 xcc-error|error_too_many_args.c|1|too many arguments to function 'id'
+xcc-error|error_typedef_redef.c|1|redefinition of typedef 'Foo'
 xcc-error|error_ty_ptr_eq_mismatch.c|1|comparison between incompatible pointer types 'int *' and 'char *'
 xcc-error|error_undeclared.c|1|use of undeclared identifier 'x'
 xcc-error|error_void_condition.c|1|condition has non-scalar type 'void'
@@ -415,11 +428,43 @@ run|sizeof_precedence.c|7|
 run|sizeof_ptr_to_array_type.c|8|
 run|sizeof_scalars_sum.c|15|
 run|sizeof_subscript_elem.c|1|
+run|struct_array.c|80|
+run|struct_array_init.c|40|
+run|struct_array_member.c|33|
+run|struct_assign.c|42|
+run|struct_assign_copy.c|1|
+run|struct_decl_local.c|8|
+run|struct_forward.c|8|
+run|struct_init_full.c|30|
+run|struct_init_nested.c|12|
+run|struct_init_nested_partial.c|5|
+run|struct_init_partial.c|7|
+run|struct_init_scalar_brace.c|3|
+run|struct_list_node.c|16|
+run|struct_member_addr.c|7|
+run|struct_member_assign.c|99|
+run|struct_member_load.c|42|
+run|struct_member_long.c|42|
+run|struct_member_nested.c|12|
+run|struct_nested.c|12|
+run|struct_ptr.c|8|
+run|struct_ptr_member_assign.c|55|
+run|struct_ptr_member.c|17|
 run|sub_assoc.c|12|
 run|ty_char_param_from_int.c|65|
 run|ty_double_deref_store.c|8|
 run|ty_int_param_from_char.c|7|
 run|ty_null_ptr_eq_false.c|0|
+run|typedef_array.c|15|
+run|typedef_block.c|3|
+run|typedef_chain.c|8|
+run|typedef_char.c|65|
+run|typedef_file_scope.c|11|
+run|typedef_int.c|7|
+run|typedef_long.c|42|
+run|typedef_ptr.c|9|
+run|typedef_shadow.c|5|
+run|typedef_struct_S.c|8|
 run|ty_void_ptr_param_call.c|3|
 run|u_arith_add.c|42|
 run|u_arith_div.c|25|

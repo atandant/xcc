@@ -20,6 +20,7 @@ struct Declarator {
     Node *dims_paren_outer[MAX_DECL_DIMS];
     int was_paren;     /* `(` declarator `)` with no following `[]` yet */
     Declarator *inner; /* set when `[]` immediately follows `( declarator )` */
+    Node *bit_width_expr; /* struct bit-field `: width`; NULL if ordinary member */
 };
 
 typedef enum {
@@ -40,7 +41,9 @@ typedef enum {
     ND_IF,         /* if (cond) then [else else]   */
     ND_WHILE,      /* while (cond) body            */
     ND_FOR,        /* for (init; cond; step) body  */
-    ND_BLOCK       /* { body }                     */
+    ND_BLOCK,      /* { body }                     */
+    ND_TYPEDEF,    /* typedef specifier declarator; */
+    ND_MEMBER      /* lhs.name  (`->` desugars to (*p).name) */
 } NodeKind;
 
 typedef enum {
@@ -84,6 +87,8 @@ struct Node {
     Node *args;        /* ND_CALL argument list (chained via next)  */
     int nargs;         /* ND_CALL argument count                    */
     Type *func_ty;     /* ND_CALL: resolved callee TY_FUNC (sema)   */
+
+    int member_index;  /* ND_MEMBER: index into struct Type.members */
 };
 
 /* A function parameter. `name` is NULL for an unnamed prototype parameter. */
@@ -127,12 +132,33 @@ struct Function {
     Function *next;    /* next function in the translation unit       */
 };
 
+/* File-scope typedef collected before functions (parser → sema). */
+typedef struct TypedefDecl TypedefDecl;
+struct TypedefDecl {
+    Type *spec;
+    Declarator *decl;
+    SourceLoc loc;
+    TypedefDecl *next;
+};
+
+/* One field in a struct declaration list (parser → struct_tag_define). */
+typedef struct StructField StructField;
+struct StructField {
+    Type *spec;
+    Declarator *decl;
+    SourceLoc loc;
+    StructField *next;
+};
+
+extern TypedefDecl *g_typedef_decls;
+
 Node *node_num(long v, SourceLoc loc);
 Node *node_var(char *name, SourceLoc loc);
 Node *node_binop(BinOp op, Node *l, Node *r, SourceLoc loc);
 Node *node_neg(Node *o, SourceLoc loc);
 Node *node_addr(Node *o, SourceLoc loc);
 Node *node_deref(Node *o, SourceLoc loc);
+Node *node_member(Node *base, char *name, SourceLoc loc);
 Node *node_cast(Type *ty, Node *o, SourceLoc loc);
 Node *node_sizeof_expr(Node *o, SourceLoc loc);
 Node *node_sizeof_type(Type *ty, SourceLoc loc);
@@ -148,6 +174,15 @@ Node *node_if(Node *cond, Node *then_body, Node *else_body, SourceLoc loc);
 Node *node_while(Node *cond, Node *body, SourceLoc loc);
 Node *node_for(Node *init, Node *cond, Node *step, Node *body, SourceLoc loc);
 Node *node_block(Node *body, SourceLoc loc);
+Node *node_typedef(Type *spec, Declarator *decl, SourceLoc loc);
+TypedefDecl *typedef_decl_new(Type *spec, Declarator *decl, SourceLoc loc);
+TypedefDecl *typedef_decl_append(TypedefDecl *list, Type *spec, Declarator *decl,
+                                 SourceLoc loc);
+StructField *struct_field_append(StructField *list, Type *spec, Declarator *decl,
+                                 SourceLoc loc);
+StructField *struct_field_append_bit(StructField *list, Type *spec, Declarator *decl,
+                                     Node *bit_width, SourceLoc loc);
+Member *struct_fields_to_members(StructField *fields, int *out_n, SourceLoc loc);
 NodeList *stmt_list_new(void);
 NodeList *stmt_list_append(NodeList *list, Node *s);
 Node *stmt_list_head(NodeList *list);
@@ -163,6 +198,7 @@ Function *func_append(Function *list, Function *f);
 
 Declarator *declarator_empty(void);
 Declarator *declarator_ident(char *name);
+Declarator *declarator_bitfield(Declarator *d, Node *width);
 Declarator *declarator_ptr(Declarator *d);
 Declarator *declarator_add_dim(Declarator *d, Node *dim, int after_paren);
 Declarator *declarator_paren_group(Declarator *d);

@@ -166,6 +166,11 @@ static const char *op_name(LirOp op)
     case LIR_MUL:   return "mul";
     case LIR_DIV:   return "div";
     case LIR_MOD:   return "mod";
+    case LIR_AND:   return "and";
+    case LIR_OR:    return "or";
+    case LIR_SHL:   return "shl";
+    case LIR_SHR:   return "shr";
+    case LIR_SAR:   return "sar";
     case LIR_NEG:   return "neg";
     case LIR_SETCC: return "setcc";
     case LIR_BR:    return "br";
@@ -174,6 +179,7 @@ static const char *op_name(LirOp op)
     case LIR_CONV:  return "conv";
     case LIR_CALL:  return "call";
     case LIR_RET:   return "ret";
+    case LIR_MEMCPY: return "memcpy";
     }
     return "?";
 }
@@ -270,6 +276,11 @@ void lir_dump_fn(LirFn *fn, FILE *out)
         case LIR_MUL:
         case LIR_DIV:
         case LIR_MOD:
+        case LIR_AND:
+        case LIR_OR:
+        case LIR_SHL:
+        case LIR_SHR:
+        case LIR_SAR:
         case LIR_SETCC:
             dump_operand(out, ins->a);
             fprintf(out, ", ");
@@ -300,6 +311,12 @@ void lir_dump_fn(LirFn *fn, FILE *out)
             break;
         case LIR_RET:
             dump_operand(out, ins->a);
+            break;
+        case LIR_MEMCPY:
+            dump_operand(out, ins->a);
+            fprintf(out, ", ");
+            dump_operand(out, ins->b);
+            fprintf(out, " size=%d", ins->aux);
             break;
         }
         fprintf(out, "\n");

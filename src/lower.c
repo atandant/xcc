@@ -104,6 +104,7 @@ static int protect_home_before(LowerCtx *c, int v, Node *later)
 
 static void emit_load_slot(LowerCtx *c, int dst, Type *ty, int offset);
 static void emit_store_slot(LowerCtx *c, int src, Type *ty, int offset);
+static void lower_bitfield_store_off(LowerCtx *c, int struct_off, Member *m, int val);
 
 static int offset_address_taken(Function *fn, int offset)
 {
@@ -288,6 +289,18 @@ static void emit_store_slot(LowerCtx *c, int src, Type *ty, int offset)
     });
 }
 
+static void emit_memcpy(LowerCtx *c, int dst, int src, int size)
+{
+    emit(c, (Instr){
+        .op = LIR_MEMCPY,
+        .a = lir_vreg(dst),
+        .b = lir_vreg(src),
+        .aux = size,
+    });
+}
+
+static int lower_object_addr(LowerCtx *c, Node *n);
+
 static int ptr_elem_size(Type *ptr_ty)
 {
     Type *elem = type_ptr_elem(ptr_ty);
@@ -313,28 +326,258 @@ static int is_ptr_int_arith(BinOp op, Node *lhs, Node *rhs)
 
 static int lower_addr(LowerCtx *c, Node *n);
 static int lower_expr(LowerCtx *c, Node *n);
-static Type *array_leaf_type_lower(Type *ty)
+static int lower_member_addr(LowerCtx *c, Node *n);
+
+static void lower_init_from_type(LowerCtx *c, Type *ty, Node **pcursor, int base_off)
 {
-    while (ty && type_is_array(ty))
-        ty = type_array_elem(ty);
-    return ty;
+    int i;
+
+    if (type_is_array(ty)) {
+        Type *elem = type_array_elem(ty);
+        int esz = type_size(elem);
+        int n = type_array_count(ty);
+
+        for (i = 0; i < n; i++)
+            lower_init_from_type(c, elem, pcursor, base_off + i * esz);
+        return;
+    }
+    if (type_is_struct(ty)) {
+        for (i = 0; i < ty->nmembers; i++) {
+            Member *m = &ty->members[i];
+
+            if (m->is_bitfield && m->bit_width > 0) {
+                Node *e = *pcursor;
+                int v;
+
+                assert(e);
+                *pcursor = e->next;
+                v = lower_expr(c, e);
+                lower_bitfield_store_off(c, base_off, m, v);
+            } else {
+                lower_init_from_type(c, m->ty, pcursor, base_off + m->offset);
+            }
+        }
+        return;
+    }
+    {
+        Node *e = *pcursor;
+        int v;
+
+        assert(e);
+        *pcursor = e->next;
+        v = lower_expr(c, e);
+        emit_store_slot(c, v, ty, base_off);
+    }
 }
 
 static void lower_brace_init(LowerCtx *c, Node *decl)
 {
-    Type *leaf = array_leaf_type_lower(decl->ty);
-    int esz = type_size(leaf);
-    int idx = 0;
-    Node *e;
+    Node *cursor = decl->init->body;
 
-    for (e = decl->init->body; e; e = e->next) {
-        int v = lower_expr(c, e);
-        emit_store_slot(c, v, leaf, decl->offset + idx * esz);
-        idx++;
+    lower_init_from_type(c, decl->ty, &cursor, decl->offset);
+}
+
+static int lower_object_addr(LowerCtx *c, Node *n)
+{
+    switch (n->kind) {
+    case ND_VAR: {
+        int dst = fresh(c);
+        emit(c, (Instr){
+            .op = LIR_LEA,
+            .dst = dst,
+            .a = lir_mem(LIR_FP, n->offset),
+        });
+        return dst;
+    }
+    case ND_DEREF:
+        return lower_expr(c, n->operand);
+    case ND_MEMBER:
+        return lower_member_addr(c, n);
+    default:
+        assert(0 && "invalid object address");
+        return fresh(c);
     }
 }
 
 static void lower_stmt(LowerCtx *c, Node *n);
+
+static Member *member_meta(Node *n)
+{
+    return &n->lhs->ty->members[n->member_index];
+}
+
+static int emit_binop_imm(LowerCtx *c, LirOp op, int dst, int lhs, long imm)
+{
+    int t = fresh(c);
+    emit(c, (Instr){
+        .op = op, .dst = t, .a = lir_vreg(lhs), .b = lir_imm(imm), .w = LIR_W8 });
+    if (t != dst)
+        emit(c, (Instr){ .op = LIR_MOV, .dst = dst, .a = lir_vreg(t) });
+    return dst;
+}
+
+static int lower_bitfield_unit_load_off(LowerCtx *c, int struct_off, int unit_off)
+{
+    int dst = fresh(c);
+
+    emit(c, (Instr){
+        .op = LIR_LOAD,
+        .dst = dst,
+        .a = lir_mem(LIR_FP, struct_off + unit_off),
+        .w = LIR_W4,
+        .sgn = LIR_SGN_Z,
+        .aux = 4,
+    });
+    emit(c, (Instr){
+        .op = LIR_CONV, .dst = dst, .a = lir_vreg(dst), .conv = CONV_ZEXT32 });
+    return dst;
+}
+
+static void lower_bitfield_unit_store_off(LowerCtx *c, int struct_off, int unit_off, int val)
+{
+    int t = fresh(c);
+    emit(c, (Instr){
+        .op = LIR_CONV, .dst = t, .a = lir_vreg(val), .conv = CONV_TRUNC_LO32 });
+    emit(c, (Instr){
+        .op = LIR_STORE,
+        .a = lir_mem(LIR_FP, struct_off + unit_off),
+        .b = lir_vreg(t),
+        .w = LIR_W4,
+        .aux = 4,
+    });
+}
+
+static void lower_bitfield_store_off(LowerCtx *c, int struct_off, Member *m, int val)
+{
+    int unit = lower_bitfield_unit_load_off(c, struct_off, m->offset);
+    long bmask = ((1L << m->bit_width) - 1) << m->bit_offset;
+    int cleared = fresh(c);
+    int bits = fresh(c);
+    int shifted = fresh(c);
+    int merged = fresh(c);
+
+    emit_binop_imm(c, LIR_AND, cleared, unit, ~bmask);
+    emit_binop_imm(c, LIR_AND, bits, val, (1L << m->bit_width) - 1);
+    emit_binop_imm(c, LIR_SHL, shifted, bits, m->bit_offset);
+    emit(c, (Instr){
+        .op = LIR_OR, .dst = merged, .a = lir_vreg(cleared), .b = lir_vreg(shifted),
+        .w = LIR_W8 });
+    lower_bitfield_unit_store_off(c, struct_off, m->offset, merged);
+}
+
+static int lower_bitfield_unit_load(LowerCtx *c, Node *base, int unit_off)
+{
+    if (base->kind == ND_VAR && !base->var_decay)
+        return lower_bitfield_unit_load_off(c, base->offset, unit_off);
+
+    {
+        int dst = fresh(c);
+        int b = lower_object_addr(c, base);
+
+        emit(c, (Instr){
+            .op = LIR_LOAD,
+            .dst = dst,
+            .a = lir_mem(b, unit_off),
+            .w = LIR_W4,
+            .sgn = LIR_SGN_Z,
+            .aux = 4,
+        });
+        emit(c, (Instr){
+            .op = LIR_CONV, .dst = dst, .a = lir_vreg(dst), .conv = CONV_ZEXT32 });
+        return dst;
+    }
+}
+
+static void lower_bitfield_unit_store(LowerCtx *c, Node *base, int unit_off, int val)
+{
+    if (base->kind == ND_VAR && !base->var_decay) {
+        lower_bitfield_unit_store_off(c, base->offset, unit_off, val);
+        return;
+    }
+
+    {
+        int t = fresh(c);
+        int b = lower_object_addr(c, base);
+
+        emit(c, (Instr){
+            .op = LIR_CONV, .dst = t, .a = lir_vreg(val), .conv = CONV_TRUNC_LO32 });
+        emit(c, (Instr){
+            .op = LIR_STORE,
+            .a = lir_mem(b, unit_off),
+            .b = lir_vreg(t),
+            .w = LIR_W4,
+            .aux = 4,
+        });
+    }
+}
+
+static int lower_bitfield_load(LowerCtx *c, Node *n, Member *m)
+{
+    int unit = lower_bitfield_unit_load(c, n->lhs, m->offset);
+    int dst = fresh(c);
+    int t = fresh(c);
+    long mask = (1L << m->bit_width) - 1;
+
+    emit_binop_imm(c, LIR_SHR, t, unit, m->bit_offset);
+    emit_binop_imm(c, LIR_AND, dst, t, mask);
+    if (type_is_signed(m->ty) && !type_is_unsigned(m->ty)) {
+        int sh = 64 - m->bit_width;
+        emit_binop_imm(c, LIR_SHL, dst, dst, sh);
+        emit_binop_imm(c, LIR_SAR, dst, dst, sh);
+    }
+    return dst;
+}
+
+static void lower_bitfield_store(LowerCtx *c, Node *lhs, Member *m, int val)
+{
+    if (lhs->lhs->kind == ND_VAR && !lhs->lhs->var_decay) {
+        lower_bitfield_store_off(c, lhs->lhs->offset, m, val);
+        return;
+    }
+
+    {
+        int unit = lower_bitfield_unit_load(c, lhs->lhs, m->offset);
+        long bmask = ((1L << m->bit_width) - 1) << m->bit_offset;
+        int cleared = fresh(c);
+        int bits = fresh(c);
+        int shifted = fresh(c);
+        int merged = fresh(c);
+
+        emit_binop_imm(c, LIR_AND, cleared, unit, ~bmask);
+        emit_binop_imm(c, LIR_AND, bits, val, (1L << m->bit_width) - 1);
+        emit_binop_imm(c, LIR_SHL, shifted, bits, m->bit_offset);
+        emit(c, (Instr){
+            .op = LIR_OR, .dst = merged, .a = lir_vreg(cleared), .b = lir_vreg(shifted),
+            .w = LIR_W8 });
+        lower_bitfield_unit_store(c, lhs->lhs, m->offset, merged);
+    }
+}
+
+static int lower_member_addr(LowerCtx *c, Node *n)
+{
+    Type *sty = n->lhs->ty;
+    Member *m = &sty->members[n->member_index];
+    int dst = fresh(c);
+
+    if (n->lhs->kind == ND_VAR && !n->lhs->var_decay) {
+        emit(c, (Instr){
+            .op = LIR_LEA,
+            .dst = dst,
+            .a = lir_mem(LIR_FP, n->lhs->offset + m->offset),
+        });
+        return dst;
+    }
+
+    {
+        int base = lower_addr(c, n->lhs);
+        emit(c, (Instr){
+            .op = LIR_LEA,
+            .dst = dst,
+            .a = lir_mem(base, m->offset),
+        });
+        return dst;
+    }
+}
 
 static int lower_addr(LowerCtx *c, Node *n)
 {
@@ -356,6 +599,8 @@ static int lower_addr(LowerCtx *c, Node *n)
         }
     case ND_DEREF:
         return lower_expr(c, n->operand);
+    case ND_MEMBER:
+        return lower_member_addr(c, n);
     default:
         assert(0 && "invalid lvalue");
         return fresh(c);
@@ -657,6 +902,8 @@ static int lower_expr(LowerCtx *c, Node *n)
             return dst;
         case ND_DEREF:
             return lower_expr(c, n->operand->operand);
+        case ND_MEMBER:
+            return lower_member_addr(c, n->operand);
         default:
             assert(0);
             return dst;
@@ -677,12 +924,39 @@ static int lower_expr(LowerCtx *c, Node *n)
         emit_widen_to_rax(c, dst, n->ty);
         return dst;
     }
+    case ND_MEMBER: {
+        Member *m = member_meta(n);
+        if (m->is_bitfield && m->bit_width > 0)
+            return lower_bitfield_load(c, n, m);
+        int addr = lower_member_addr(c, n);
+        int dst = fresh(c);
+        int bytes = store_width_bytes(n->ty);
+        emit(c, (Instr){
+            .op = LIR_LOAD,
+            .dst = dst,
+            .a = lir_mem(addr, 0),
+            .w = load_lir_width(n->ty),
+            .sgn = load_sign(n->ty),
+            .aux = bytes,
+        });
+        emit_widen_to_rax(c, dst, n->ty);
+        return dst;
+    }
     case ND_CAST: {
         int dst = fresh(c);
         lower_cast_into(c, dst, n);
         return dst;
     }
     case ND_ASSIGN: {
+        if (type_is_struct(n->lhs->ty)) {
+            int dst = lower_object_addr(c, n->lhs);
+            int src = lower_object_addr(c, n->rhs);
+            int val = fresh(c);
+
+            emit_memcpy(c, dst, src, type_size(n->lhs->ty));
+            emit(c, (Instr){ .op = LIR_MOVI, .dst = val, .a = lir_imm(0) });
+            return val;
+        }
         int val = lower_expr(c, n->rhs);
         if (n->lhs->kind == ND_VAR) {
             int home = lir_home_vreg(c->lf, n->lhs->offset);
@@ -693,6 +967,22 @@ static int lower_expr(LowerCtx *c, Node *n)
                 return val;
             }
             emit_store_slot(c, val, n->lhs->ty, n->lhs->offset);
+            return val;
+        }
+        if (n->lhs->kind == ND_MEMBER) {
+            Member *m = member_meta(n->lhs);
+            if (m->is_bitfield && m->bit_width > 0) {
+                lower_bitfield_store(c, n->lhs, m, val);
+                return val;
+            }
+            int addr = lower_member_addr(c, n->lhs);
+            emit(c, (Instr){
+                .op = LIR_STORE,
+                .a = lir_mem(addr, 0),
+                .b = lir_vreg(val),
+                .w = store_lir_width(n->lhs->ty),
+                .aux = store_width_bytes(n->lhs->ty),
+            });
             return val;
         }
         int addr = lower_addr(c, n->lhs);

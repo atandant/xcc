@@ -16,6 +16,11 @@ typedef enum {
     LIR_MUL,
     LIR_DIV,
     LIR_MOD,
+    LIR_AND,
+    LIR_OR,
+    LIR_SHL,
+    LIR_SHR,
+    LIR_SAR,
     LIR_NEG,
     LIR_SETCC,
     LIR_BR,
@@ -24,6 +29,7 @@ typedef enum {
     LIR_CONV,
     LIR_CALL,
     LIR_RET,
+    LIR_MEMCPY,   /* a=dst addr, b=src addr, aux=size bytes */
 } LirOp;
 
 typedef enum {

@@ -11,6 +11,7 @@
 #include "arena.h"
 #include "diag.h"
 #include "parser.h"
+#include "sema_typedef.h"
 
 int yycolumn = 1;
 
@@ -99,14 +100,22 @@ static int has_long_suffix(const char *text)
 "else"              { return ELSE; }
 "while"             { return WHILE; }
 "for"               { return FOR; }
+"typedef"           { return TYPEDEF; }
+"struct"            { return STRUCT; }
 "sizeof"            { return SIZEOF; }
 
+"->"                { return ARROW; }
 "=="                { return EQ; }
 "!="                { return NE; }
 "<="                { return LE; }
 ">="                { return GE; }
 
-[A-Za-z_][A-Za-z0-9_]*  { yylval.str = arena_strdup(yytext); return IDENT; }
+[A-Za-z_][A-Za-z0-9_]*  {
+                              yylval.str = arena_strdup(yytext);
+                              if (typedef_lookup(yytext))
+                                  return TYPEDEF_NAME;
+                              return IDENT;
+                          }
 0[xX][0-9a-fA-F]+([Ll])? { yylval.num.val = scan_hex(yytext);
                           yylval.num.is_long = has_long_suffix(yytext);
                           yylval.num.is_hex = 1;
@@ -135,7 +144,7 @@ static int has_long_suffix(const char *text)
                           yylval.num.is_hex = 0;
                           yylval.num.is_octal = 0; return NUM; }
 
-[-+*/%=<>(){};,&\[\]]   { return yytext[0]; }
+[-+*/%=<>(){};,&.:\[\]]  { return yytext[0]; }
 
 .                   { diag_error_at(scan_loc(),
                                     "stray '%c' in program", yytext[0]); }

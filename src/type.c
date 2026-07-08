@@ -64,6 +64,14 @@ Type *type_func(Type *ret, Type **params, int nparams, int prototyped)
     return t;
 }
 
+Type *type_typedef_ref(char *name)
+{
+    Type *t = arena_alloc_zeroed(sizeof(Type));
+    t->kind = TY_TYPEDEF_REF;
+    t->ref_name = name;
+    return t;
+}
+
 /* ---- predicates ---- */
 
 int type_is_void(Type *ty)    { return ty && ty->kind == TY_VOID; }
@@ -113,7 +121,118 @@ int type_is_unsigned(Type *ty)
 
 int type_is_pointer(Type *ty) { return ty && ty->kind == TY_PTR; }
 
+int type_is_typedef_ref(Type *ty)
+{
+    return ty && ty->kind == TY_TYPEDEF_REF;
+}
+
+const char *type_typedef_ref_name(Type *ty)
+{
+    return type_is_typedef_ref(ty) ? ty->ref_name : NULL;
+}
+
 int type_is_array(Type *ty)   { return ty && ty->kind == TY_ARRAY; }
+
+int type_is_struct(Type *ty)  { return ty && ty->kind == TY_STRUCT; }
+
+int type_struct_is_complete(Type *ty)
+{
+    return type_is_struct(ty) && ty->is_complete;
+}
+
+const char *type_struct_tag(Type *ty)
+{
+    return type_is_struct(ty) ? ty->tag : NULL;
+}
+
+static int align_up(int off, int align)
+{
+    if (align <= 1)
+        return off;
+    return (off + align - 1) & ~(align - 1);
+}
+
+void type_struct_layout(Type *ty)
+{
+    int off = 0;
+    int max_align = 1;
+    int unit_off = 0;
+    int unit_bits = 0;
+    int unit_size = 0;
+
+    if (!type_is_struct(ty))
+        return;
+
+    for (int i = 0; i < ty->nmembers; i++) {
+        Member *m = &ty->members[i];
+
+        if (m->is_bitfield) {
+            int width = m->bit_width;
+            int bsize = (int)sizeof(int);
+
+            if (width == 0) {
+                if (unit_bits > 0) {
+                    off = unit_off + unit_size;
+                    unit_bits = 0;
+                    unit_size = 0;
+                }
+                continue;
+            }
+
+            if (unit_size == 0 || unit_bits + width > bsize * 8) {
+                if (unit_bits > 0)
+                    off = unit_off + unit_size;
+                unit_off = align_up(off, bsize);
+                off = unit_off;
+                unit_bits = 0;
+                unit_size = bsize;
+            }
+
+            m->offset = unit_off;
+            m->bit_offset = unit_bits;
+            unit_bits += width;
+            if (bsize > max_align)
+                max_align = bsize;
+        } else {
+            Type *mty = m->ty;
+            int ma;
+
+            if (unit_bits > 0) {
+                off = unit_off + unit_size;
+                unit_bits = 0;
+                unit_size = 0;
+            }
+            ma = type_align(mty);
+            if (ma > max_align)
+                max_align = ma;
+            off = align_up(off, ma);
+            m->offset = off;
+            m->bit_offset = 0;
+            off += type_size(mty);
+        }
+    }
+
+    if (unit_bits > 0)
+        off = unit_off + unit_size;
+
+    ty->align = max_align > 0 ? max_align : 1;
+    ty->size = off > 0 ? align_up(off, ty->align) : 0;
+}
+
+Member *type_struct_member(Type *ty, const char *name, int *out_index)
+{
+    if (!type_is_struct(ty) || !name)
+        return NULL;
+
+    for (int i = 0; i < ty->nmembers; i++) {
+        if (ty->members[i].name && strcmp(ty->members[i].name, name) == 0) {
+            if (out_index)
+                *out_index = i;
+            return &ty->members[i];
+        }
+    }
+    return NULL;
+}
 
 int type_is_scalar(Type *ty)
 {
@@ -127,13 +246,15 @@ int type_is_object(Type *ty)
 
 int type_is_complete(Type *ty)
 {
-    if (!ty || type_is_void(ty) || ty->kind == TY_FUNC)
+    if (!ty || type_is_void(ty) || ty->kind == TY_FUNC || type_is_typedef_ref(ty))
         return 0;
+    if (type_is_pointer(ty))
+        return 1;
+    if (type_is_struct(ty))
+        return ty->is_complete;
     if (type_is_array(ty) && type_array_count(ty) == 0)
         return 0;
     if (type_is_array(ty) && !type_is_complete(type_array_elem(ty)))
-        return 0;
-    if (type_is_pointer(ty) && !type_is_complete(type_ptr_elem(ty)))
         return 0;
     return 1;
 }
@@ -173,6 +294,11 @@ int type_same(Type *a, Type *b)
                     return 0;
         }
         return 1;
+    case TY_TYPEDEF_REF:
+        return a->ref_name && b->ref_name &&
+               strcmp(a->ref_name, b->ref_name) == 0;
+    case TY_STRUCT:
+        return a->tag && b->tag && strcmp(a->tag, b->tag) == 0;
     }
     return 0;
 }
@@ -208,6 +334,9 @@ int type_assignable(Type *dst, Type *src)
 
     if (type_is_pointer(dst) && type_is_pointer(src))
         return type_compatible(dst, src);
+
+    if (type_is_struct(dst) && type_is_struct(src))
+        return type_same(dst, src);
 
     return 0;
 }
@@ -488,6 +617,15 @@ const char *type_name(Type *ty)
     }
     case TY_FUNC:
         return "function";
+    case TY_TYPEDEF_REF:
+        return ty->ref_name ? ty->ref_name : "<typedef-ref>";
+    case TY_STRUCT: {
+        const char *tag = ty->tag ? ty->tag : "<anon>";
+        size_t n = strlen(tag) + 8;
+        char *buf = arena_alloc(n);
+        snprintf(buf, n, "struct %s", tag);
+        return buf;
+    }
     }
     return "<type>";
 }
