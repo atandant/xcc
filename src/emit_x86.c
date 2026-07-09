@@ -3,6 +3,7 @@
 #include "lir.h"
 #include "regalloc.h"
 #include "type.h"
+#include "abi_sysv_amd64.h"
 
 #include <assert.h>
 #include <limits.h>
@@ -510,6 +511,39 @@ static void emit_binop_into(EmitCtx *c, Instr *ins, int dst_phys, LirWidth w,
     invalidate_rax(c);
 }
 
+static void emit_reg_to_stack(EmitCtx *c, int phys, int offset, int bytes)
+{
+    switch (bytes) {
+    case 1:
+        fprintf(c->out, "  mov %s, %d(%%rbp)\n", reg8_name(phys), offset);
+        return;
+    case 2:
+        fprintf(c->out, "  mov %s, %d(%%rbp)\n", reg16_name(phys), offset);
+        return;
+    case 4:
+        fprintf(c->out, "  mov %s, %d(%%rbp)\n", reg32_name(phys), offset);
+        return;
+    default:
+        fprintf(c->out, "  mov %s, %d(%%rbp)\n", reg64_name(phys), offset);
+        return;
+    }
+}
+
+static void emit_record_param_spill(EmitCtx *c, const TargetDesc *td, Param *p)
+{
+    AbiArgPlan ap;
+    Type *ty = type_decay(p->ty);
+
+    abi_arg_plan(ty, &ap);
+    emit_reg_to_stack(c, td->arg_regs[p->abi_gpr_start], p->offset,
+                      ap.size < 8 ? ap.size : 8);
+    if (ap.kind == ABI_ARG_GPR_PAIR) {
+        int tail = ap.size - 8;
+        emit_reg_to_stack(c, td->arg_regs[p->abi_gpr_start + 1],
+                          p->offset + 8, tail < 8 ? tail : 8);
+    }
+}
+
 static void emit_arg_reg_store(EmitCtx *c, int phys, Type *ty, int offset)
 {
     TypeScalarInfo si;
@@ -554,11 +588,18 @@ static void emit_instr(EmitCtx *c, Instr *ins)
 
     case LIR_MOV:
         if (ins->dst == LIR_NO_VREG) {
-            load_operand(c, ins->a, "%rax", LIR_W8);
-            if (ins->b.kind == OPND_PHYS)
-                fprintf(c->out, "  mov %%rax, %s\n",
-                        reg64_name(ins->b.u.phys));
-            invalidate_rax(c);
+            if (ins->b.kind == OPND_PHYS) {
+                load_operand(c, ins->a, reg64_name(ins->b.u.phys), LIR_W8);
+                if (ins->b.u.phys == PHYS_RAX) {
+                    if (ins->a.kind == OPND_VREG)
+                        c->rax_vreg = ins->a.u.vreg;
+                    else
+                        c->rax_vreg = -1;
+                }
+            } else {
+                load_operand(c, ins->a, "%rax", LIR_W8);
+                invalidate_rax(c);
+            }
             return;
         }
         if (ins->a.kind == OPND_VREG && ins->a.u.vreg == ins->dst)
@@ -916,13 +957,19 @@ void emit_x86_function(LirFn *lf, Function *fn, AllocResult *alloc,
 
     emit_prologue(&ctx);
 
-    int i = 0;
-    for (Param *p = fn->params; p; p = p->next, i++) {
-        if (i < 6) {
-            if (lir_home_vreg(lf, p->offset) != LIR_NO_VREG)
-                continue;
-            emit_arg_reg_store(&ctx, td->arg_regs[i], type_decay(p->ty), p->offset);
-        }
+    if (fn->abi_ret_sret)
+        fprintf(out, "  mov %%rdi, %d(%%rbp)\n", fn->abi_sret_offset);
+
+    for (Param *p = fn->params; p; p = p->next) {
+        if (p->abi_gpr_start < 0)
+            continue;
+        if (lir_home_vreg(lf, p->offset) != LIR_NO_VREG)
+            continue;
+        if (abi_type_is_record_pass(type_decay(p->ty)))
+            emit_record_param_spill(&ctx, td, p);
+        else
+            emit_arg_reg_store(&ctx, td->arg_regs[p->abi_gpr_start],
+                               type_decay(p->ty), p->offset);
     }
 
     for (int j = 0; j < lf->ninstr; j++) {

@@ -209,8 +209,6 @@ xcc-error|error_sizeof_incomplete_struct.c|1|invalid application of sizeof to in
 xcc-error|error_sizeof_incomplete_type.c|1|invalid application of sizeof to incomplete type
 xcc-error|error_sizeof_void.c|1|invalid application of sizeof to void type
 xcc-error|error_stray_char.c|1|stray '@' in program
-xcc-error|error_struct_byval_param.c|1|passing struct type 'struct S' by value is not supported
-xcc-error|error_struct_byval_return.c|1|returning struct type 'struct S' by value is not supported
 xcc-error|error_struct_cmp.c|1|invalid operands to comparison
 xcc-error|error_struct_condition.c|1|condition has non-scalar type 'struct S'
 xcc-error|error_struct_incomplete.c|1|variable 's' has incomplete type 'struct S'
@@ -454,6 +452,13 @@ run|struct_array_init.c|40|
 run|struct_array_member.c|33|
 run|struct_assign.c|42|
 run|struct_assign_copy.c|1|
+run|struct_byval_16.c|9|
+run|struct_byval_assign_call.c|33|
+run|struct_byval_param_small.c|42|
+run|struct_byval_return_expr.c|7|
+run|struct_byval_return_small.c|7|
+run|struct_byval_return_sret.c|99|
+run|struct_byval_sret_chain.c|5|
 run|struct_decl_local.c|8|
 run|struct_forward.c|8|
 run|struct_init_full.c|30|
@@ -510,6 +515,8 @@ run|u_mixed_promote.c|50|
 run|unary_precedence.c|4|
 run|union_assign.c|55|
 run|union_basic.c|42|
+run|union_byval_param.c|55|
+run|union_byval_return.c|88|
 run|union_in_struct.c|99|
 run|union_overlap.c|1|
 run|union_ptr_member.c|7|

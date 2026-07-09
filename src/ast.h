@@ -99,6 +99,9 @@ struct Param {
     Type *decl_spec;   /* parsed specifier when declarator pending  */
     Declarator *decl;  /* parsed declarator (sema → ty)             */
     int offset;        /* stack offset from frame pointer (sema)     */
+    int abi_gpr_start; /* first SysV arg-reg slot (0=rdi..5=r9); -1 stack */
+    int abi_ngpr;      /* consecutive GPR slots (0 = stack-only arg)   */
+    int abi_stack_bytes; /* bytes on caller stack when abi_ngpr == 0    */
     Param *next;
 };
 
@@ -127,6 +130,9 @@ struct Function {
     int is_definition; /* 1 if it has a body; 0 if just a prototype   */
     Node *body;        /* linked list of statements (NULL for decl)  */
     int locals_size;   /* named locals + spilled reg-param homes (sema) */
+    int abi_ret_sret;  /* 1: return >16 bytes via hidden pointer in RDI */
+    int abi_sret_offset; /* frame slot holding incoming sret pointer    */
+    int abi_call_scratch; /* ephemeral stack for orphan sret call results */
     FrameLocal *frame_locals;
     int nframe_locals;
     Function *next;    /* next function in the translation unit       */

@@ -61,14 +61,14 @@ tests.
 | **`struct`** (tagged, forward-decl, layout), **`.` / `->`**, struct assign (`LIR_MEMCPY`), bitfields | |
 | **`union`** (tagged, forward-decl, overlap layout), member access, union assign | |
 | **`enum`** (tagged/anonymous, enumerator constants, enum variables as `int`) | |
-| `struct S *` / `union U *` parameters and returns | struct/union by-value param/return (ABI deferred) |
+| `struct S *` / `union U *` parameters and returns, struct/union by-value param/return | |
 
 **Brace initializer scope (deferred):** file-scope/static aggregate init;
 string literals for `char[]`; nested brace init for pointer-to-array types.
 
-**Struct/union ABI (deferred, D17):** passing or returning a struct or union by
-value is rejected with a clear error until SysV AMD64 struct classification is
-implemented. Use pointers (`struct S *`, `union U *`) instead.
+**Struct/union ABI:** passing or returning a struct or union by value is fully
+supported (following SysV AMD64 classification: <= 16 bytes in GPRs, > 16 bytes
+via sret/stack).
 
 > Locals use type-aware stack layout (`char` 1 byte, `int` 4 bytes, `long` and
 > pointers 8 bytes). On x86-64 Linux (SysV LP64), `long` is 64 bits — the same

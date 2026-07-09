@@ -5,6 +5,7 @@
 #include "sema_typedef.h"
 #include "sema_struct.h"
 #include "sema_enum.h"
+#include "abi_sysv_amd64.h"
 #include "diag.h"
 #include "intconst.h"
 
@@ -706,9 +707,9 @@ static void sema_finish_function_types(Function *fn)
 {
     fn->ret_ty = typedef_resolve_type(fn->ret_ty, fn->loc);
 
-    if (type_is_record(fn->ret_ty) && type_struct_is_complete(fn->ret_ty))
+    if (type_is_record(fn->ret_ty) && !type_struct_is_complete(fn->ret_ty))
         diag_error_at(fn->loc,
-                      "returning struct type '%s' by value is not supported",
+                      "return type '%s' is incomplete",
                       type_name(fn->ret_ty));
 
     for (Param *p = fn->params; p; p = p->next) {
@@ -722,9 +723,9 @@ static void sema_finish_function_types(Function *fn)
         } else if (p->ty) {
             p->ty = typedef_resolve_type(p->ty, fn->loc);
         }
-        if (type_is_record(p->ty) && type_struct_is_complete(p->ty))
+        if (type_is_record(p->ty) && !type_struct_is_complete(p->ty))
             diag_error_at(fn->loc,
-                          "passing struct type '%s' by value is not supported",
+                          "parameter type '%s' is incomplete",
                           type_name(p->ty));
     }
     func_rebuild_type(fn);
@@ -1252,8 +1253,167 @@ static void resolve_stmt(Node *s)
     }
 }
 
+static void sema_scan_call_member_scratch(Node *n, int *maxsz)
+{
+    if (!n || !maxsz)
+        return;
+
+    if (n->kind == ND_MEMBER && n->lhs && n->lhs->kind == ND_CALL &&
+        abi_type_is_record_pass(n->lhs->ty)) {
+        int sz = type_size(n->lhs->ty);
+        if (sz > *maxsz)
+            *maxsz = sz;
+    }
+
+    switch (n->kind) {
+    case ND_MEMBER:
+        sema_scan_call_member_scratch(n->lhs, maxsz);
+        return;
+    case ND_CALL:
+        for (Node *a = n->args; a; a = a->next)
+            sema_scan_call_member_scratch(a, maxsz);
+        return;
+    case ND_ASSIGN:
+        sema_scan_call_member_scratch(n->lhs, maxsz);
+        sema_scan_call_member_scratch(n->rhs, maxsz);
+        return;
+    case ND_RETURN:
+    case ND_EXPR_STMT:
+    case ND_NEG:
+    case ND_ADDR:
+    case ND_DEREF:
+    case ND_CAST:
+        sema_scan_call_member_scratch(n->operand, maxsz);
+        return;
+    case ND_BINOP:
+        sema_scan_call_member_scratch(n->lhs, maxsz);
+        sema_scan_call_member_scratch(n->rhs, maxsz);
+        return;
+    case ND_DECL:
+        sema_scan_call_member_scratch(n->init, maxsz);
+        return;
+    case ND_INIT_LIST:
+        for (Node *e = n->body; e; e = e->next)
+            sema_scan_call_member_scratch(e, maxsz);
+        return;
+    case ND_IF:
+        sema_scan_call_member_scratch(n->cond, maxsz);
+        sema_scan_call_member_scratch(n->then_body, maxsz);
+        sema_scan_call_member_scratch(n->else_body, maxsz);
+        return;
+    case ND_WHILE:
+    case ND_FOR:
+        sema_scan_call_member_scratch(n->init, maxsz);
+        sema_scan_call_member_scratch(n->cond, maxsz);
+        sema_scan_call_member_scratch(n->step, maxsz);
+        sema_scan_call_member_scratch(n->then_body, maxsz);
+        return;
+    case ND_BLOCK:
+        for (Node *s = n->body; s; s = s->next)
+            sema_scan_call_member_scratch(s, maxsz);
+        return;
+    default:
+        return;
+    }
+}
+
+static void sema_scan_sret_call_scratch(Node *n, int *maxsz);
+
+static int sret_call_needs_scratch(Node *call)
+{
+    AbiRetPlan rp;
+    Type *ret;
+
+    if (!call || call->kind != ND_CALL || !call->func_ty)
+        return 0;
+    ret = call->func_ty->ret;
+    if (!abi_type_is_record_pass(ret))
+        return 0;
+    abi_ret_plan(ret, &rp);
+    return rp.kind == ABI_RET_SRET;
+}
+
+static void sema_scan_sret_call_args(Node *call, int *maxsz)
+{
+    if (!call || call->kind != ND_CALL)
+        return;
+    for (Node *a = call->args; a; a = a->next)
+        sema_scan_sret_call_scratch(a, maxsz);
+}
+
+static void sema_scan_sret_call_scratch(Node *n, int *maxsz)
+{
+    if (!n || !maxsz)
+        return;
+
+    switch (n->kind) {
+    case ND_CALL:
+        if (sret_call_needs_scratch(n)) {
+            int sz = type_size(n->func_ty->ret);
+            if (sz > *maxsz)
+                *maxsz = sz;
+        }
+        sema_scan_sret_call_args(n, maxsz);
+        return;
+    case ND_ASSIGN:
+        if (n->rhs && n->rhs->kind == ND_CALL && sret_call_needs_scratch(n->rhs))
+            sema_scan_sret_call_args(n->rhs, maxsz);
+        else
+            sema_scan_sret_call_scratch(n->rhs, maxsz);
+        return;
+    case ND_RETURN:
+        if (n->operand && n->operand->kind == ND_CALL &&
+            sret_call_needs_scratch(n->operand))
+            sema_scan_sret_call_args(n->operand, maxsz);
+        else
+            sema_scan_sret_call_scratch(n->operand, maxsz);
+        return;
+    case ND_EXPR_STMT:
+    case ND_NEG:
+    case ND_ADDR:
+    case ND_DEREF:
+    case ND_CAST:
+        sema_scan_sret_call_scratch(n->operand, maxsz);
+        return;
+    case ND_BINOP:
+        sema_scan_sret_call_scratch(n->lhs, maxsz);
+        sema_scan_sret_call_scratch(n->rhs, maxsz);
+        return;
+    case ND_DECL:
+        if (n->init && n->init->kind == ND_CALL && sret_call_needs_scratch(n->init))
+            sema_scan_sret_call_args(n->init, maxsz);
+        else
+            sema_scan_sret_call_scratch(n->init, maxsz);
+        return;
+    case ND_INIT_LIST:
+        for (Node *e = n->body; e; e = e->next)
+            sema_scan_sret_call_scratch(e, maxsz);
+        return;
+    case ND_IF:
+        sema_scan_sret_call_scratch(n->cond, maxsz);
+        sema_scan_sret_call_scratch(n->then_body, maxsz);
+        sema_scan_sret_call_scratch(n->else_body, maxsz);
+        return;
+    case ND_WHILE:
+    case ND_FOR:
+        sema_scan_sret_call_scratch(n->init, maxsz);
+        sema_scan_sret_call_scratch(n->cond, maxsz);
+        sema_scan_sret_call_scratch(n->step, maxsz);
+        sema_scan_sret_call_scratch(n->then_body, maxsz);
+        return;
+    case ND_BLOCK:
+        for (Node *s = n->body; s; s = s->next)
+            sema_scan_sret_call_scratch(s, maxsz);
+        return;
+    default:
+        return;
+    }
+}
+
 static void sema_function(Function *fn)
 {
+    AbiRetPlan ret_plan;
+
     scope_reset();
     typedef_enter_scope();
     cur_ret_ty = fn->ret_ty;
@@ -1261,17 +1421,50 @@ static void sema_function(Function *fn)
 
     enter_scope();
 
-    /* Parameters become the outermost locals. The first six live in argument
-     * registers and get spilled into negative slots; the rest are passed on
-     * the stack and referenced in place at positive frame-pointer offsets. */
-    int i = 0;
-    for (Param *p = fn->params; p; p = p->next, i++) {
+    abi_ret_plan(fn->ret_ty, &ret_plan);
+    fn->abi_ret_sret = (ret_plan.kind == ABI_RET_SRET);
+    fn->abi_sret_offset = 0;
+    fn->abi_call_scratch = 0;
+
+    if (fn->abi_ret_sret)
+        fn->abi_sret_offset = scope_alloc_local(type_ptr(type_void()));
+
+    int gpr_slot = fn->abi_ret_sret ? 1 : 0;
+    int stack_off = 0;
+
+    for (Param *p = fn->params; p; p = p->next) {
         Type *pty = type_decay(p->ty);
 
-        if (i < 6)
+        p->abi_stack_bytes = 0;
+        if (abi_type_is_record_pass(pty)) {
+            AbiArgPlan ap;
+
+            abi_arg_plan(pty, &ap);
+            if (ap.kind == ABI_ARG_STACK) {
+                p->offset = 16 + stack_off;
+                p->abi_gpr_start = -1;
+                p->abi_ngpr = 0;
+                p->abi_stack_bytes = abi_stack_arg_bytes(ap.size);
+                stack_off += p->abi_stack_bytes;
+            } else {
+                p->offset = scope_alloc_local(pty);
+                p->abi_gpr_start = gpr_slot;
+                p->abi_ngpr = ap.ngpr;
+                gpr_slot += ap.ngpr;
+            }
+        } else if (gpr_slot < 6) {
             p->offset = scope_alloc_local(pty);
-        else
-            p->offset = 16 + 8 * (i - 6);
+            p->abi_gpr_start = gpr_slot;
+            p->abi_ngpr = 1;
+            gpr_slot++;
+        } else {
+            p->offset = 16 + stack_off;
+            p->abi_gpr_start = -1;
+            p->abi_ngpr = 0;
+            p->abi_stack_bytes = 8;
+            stack_off += 8;
+        }
+
         if (p->name) {
             if (scope_declared_here(p->name))
                 diag_error_at(fn->loc, "redefinition of parameter '%s'",
@@ -1281,7 +1474,21 @@ static void sema_function(Function *fn)
         }
     }
 
+    if (gpr_slot > 6)
+        diag_error_at(fn->loc, "too many register arguments for '%s'",
+                      fn->name);
+
     resolve_stmt_list(fn->body);
+
+    {
+        int max_scratch = 0;
+        sema_scan_sret_call_scratch(fn->body, &max_scratch);
+        sema_scan_call_member_scratch(fn->body, &max_scratch);
+        if (max_scratch > 0)
+            fn->abi_call_scratch = scope_alloc_local(
+                type_array(type_char(), max_scratch));
+    }
+
     scope_export_frame_locals(&fn->frame_locals, &fn->nframe_locals);
     leave_scope();
     typedef_leave_scope();

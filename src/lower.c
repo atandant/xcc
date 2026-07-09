@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include "lower.h"
 #include "target.h"
+#include "abi_sysv_amd64.h"
 #include "diag.h"
 #include "arena.h"
 
@@ -125,16 +126,19 @@ static int can_promote(Function *fn, Type *ty, int offset)
 
 static void lower_params(LowerCtx *c)
 {
-    int i = 0;
-    for (Param *p = c->fn->params; p; p = p->next, i++) {
+    for (Param *p = c->fn->params; p; p = p->next) {
         Type *pty = type_decay(p->ty);
+
         if (!can_promote(c->fn, pty, p->offset))
             continue;
         int v = fresh(c);
         lir_bind_home(c->lf, p->offset, v);
-        if (i < X86_SYSV.nargs_reg)
+        if (p->abi_gpr_start >= 0)
             emit(c, (Instr){
-                .op = LIR_MOV, .dst = v, .a = lir_phys(X86_SYSV.arg_regs[i]) });
+                .op = LIR_MOV,
+                .dst = v,
+                .a = lir_phys(X86_SYSV.arg_regs[p->abi_gpr_start]),
+            });
         else
             emit_load_slot(c, v, pty, p->offset);
     }
@@ -328,6 +332,7 @@ static int is_ptr_int_arith(BinOp op, Node *lhs, Node *rhs)
 static int lower_addr(LowerCtx *c, Node *n);
 static int lower_expr(LowerCtx *c, Node *n);
 static int lower_member_addr(LowerCtx *c, Node *n);
+static int lower_call_ex(LowerCtx *c, Node *n, int result_off);
 
 static void lower_init_from_type(LowerCtx *c, Type *ty, Node **pcursor, int base_off)
 {
@@ -564,6 +569,20 @@ static int lower_member_addr(LowerCtx *c, Node *n)
     Type *sty = n->lhs->ty;
     Member *m = &sty->members[n->member_index];
     int dst = fresh(c);
+
+    if (n->lhs->kind == ND_CALL && abi_type_is_record_pass(n->lhs->ty)) {
+        int tmp = c->fn->abi_call_scratch;
+
+        if (!tmp)
+            diag_fatal("internal error: struct call result needs scratch slot");
+        (void)lower_call_ex(c, n->lhs, tmp);
+        emit(c, (Instr){
+            .op = LIR_LEA,
+            .dst = dst,
+            .a = lir_mem(LIR_FP, tmp + m->offset),
+        });
+        return dst;
+    }
 
     if (n->lhs->kind == ND_VAR && !n->lhs->var_decay) {
         emit(c, (Instr){
@@ -894,14 +913,160 @@ static void lower_binop(LowerCtx *c, int dst, BinOp op, Node *lhs, Node *rhs,
     }
 }
 
-static int lower_call(LowerCtx *c, Node *n)
+#define CALL_DEST_NONE INT_MIN
+#define CALL_SRET_FORWARD (INT_MIN + 1)
+
+static int lower_addr_off(LowerCtx *c, int offset)
 {
+    int v = fresh(c);
+    emit(c, (Instr){
+        .op = LIR_LEA,
+        .dst = v,
+        .a = lir_mem(LIR_FP, offset),
+    });
+    return v;
+}
+
+static void lower_load_bytes_off(LowerCtx *c, int dst, int addr, int off, int bytes)
+{
+    emit(c, (Instr){
+        .op = LIR_LOAD,
+        .dst = dst,
+        .a = lir_mem(addr, off),
+        .w = bytes >= 8 ? LIR_W8 : LIR_W4,
+        .sgn = LIR_SGN_Z,
+        .aux = bytes >= 8 ? 8 : bytes,
+    });
+}
+
+static void lower_store_call_result_to_off(LowerCtx *c, int off, const AbiRetPlan *rp)
+{
+    int v = fresh(c);
+    int bytes = rp->size < 8 ? rp->size : 8;
+
+    emit(c, (Instr){
+        .op = LIR_MOV,
+        .dst = v,
+        .a = lir_phys(PHYS_RAX),
+    });
+    emit(c, (Instr){
+        .op = LIR_STORE,
+        .a = lir_mem(LIR_FP, off),
+        .b = lir_vreg(v),
+        .w = bytes >= 8 ? LIR_W8 : LIR_W4,
+        .aux = bytes,
+    });
+    if (rp->kind != ABI_RET_GPR_PAIR)
+        return;
+
+    {
+        int tail = rp->size - 8;
+        int v2 = fresh(c);
+
+        emit(c, (Instr){
+            .op = LIR_MOV,
+            .dst = v2,
+            .a = lir_phys(PHYS_RDX),
+        });
+        emit(c, (Instr){
+            .op = LIR_STORE,
+            .a = lir_mem(LIR_FP, off + 8),
+            .b = lir_vreg(v2),
+            .w = LIR_W8,
+            .aux = tail < 8 ? tail : 8,
+        });
+    }
+}
+
+static int lower_marshal_record_arg(LowerCtx *c, Node *arg, Operand *reg_slots,
+                                    int *nreg, Operand *stack_slots,
+                                    int *nstack)
+{
+    AbiArgPlan ap;
+    Type *ty = arg->ty;
+    int addr = lower_object_addr(c, arg);
+
+    abi_arg_plan(ty, &ap);
+    if (ap.kind == ABI_ARG_STACK) {
+        int nslots = abi_stack_arg_bytes(ap.size) / 8;
+        int i;
+
+        for (i = 0; i < nslots; i++) {
+            int v = fresh(c);
+            int chunk = (i == nslots - 1) ?
+                        (ap.size - i * 8) : 8;
+
+            lower_load_bytes_off(c, v, addr, i * 8, chunk < 8 ? chunk : 8);
+            stack_slots[(*nstack)++] = lir_vreg(v);
+        }
+        return 0;
+    }
+
+    {
+        int v0 = fresh(c);
+        int chunk0 = ap.size < 8 ? ap.size : 8;
+
+        lower_load_bytes_off(c, v0, addr, 0, chunk0);
+        reg_slots[(*nreg)++] = lir_vreg(v0);
+    }
+    if (ap.kind == ABI_ARG_GPR_PAIR) {
+        int v1 = fresh(c);
+        int chunk1 = ap.size - 8;
+
+        lower_load_bytes_off(c, v1, addr, 8, chunk1 < 8 ? chunk1 : 8);
+        reg_slots[(*nreg)++] = lir_vreg(v1);
+    }
+    return 0;
+}
+
+static int lower_call_ex(LowerCtx *c, Node *n, int result_off)
+{
+    Type *ret_ty = n->func_ty ? n->func_ty->ret : type_int();
+    AbiRetPlan ret_plan;
+    Operand reg_slots[6];
+    Operand stack_slots[256];
+    int nreg = 0;
+    int nstack = 0;
+    int total;
+    Operand *args;
+    int i;
+    Node *a;
+
     if (n->nargs > XCC_MAX_CALL_ARGS)
         diag_fatal("internal error: too many call arguments");
 
-    Operand *args = arena_alloc((size_t)n->nargs * sizeof(*args));
-    int i = 0;
-    for (Node *a = n->args; a; a = a->next, i++) {
+    abi_ret_plan(ret_ty, &ret_plan);
+
+    if (ret_plan.kind == ABI_RET_SRET) {
+        int dest = result_off;
+        int v;
+
+        if (dest == CALL_DEST_NONE) {
+            dest = c->fn->abi_call_scratch;
+            if (!dest)
+                diag_fatal("internal error: sret call without destination");
+        }
+        if (dest == CALL_SRET_FORWARD) {
+            v = fresh(c);
+            emit(c, (Instr){
+                .op = LIR_LOAD,
+                .dst = v,
+                .a = lir_mem(LIR_FP, c->fn->abi_sret_offset),
+                .w = LIR_W8,
+                .aux = 8,
+            });
+            reg_slots[nreg++] = lir_vreg(v);
+        } else {
+            reg_slots[nreg++] = lir_vreg(lower_addr_off(c, dest));
+        }
+    }
+
+    for (a = n->args; a; a = a->next) {
+        if (abi_type_is_record_pass(a->ty)) {
+            lower_marshal_record_arg(c, a, reg_slots, &nreg, stack_slots, &nstack);
+            continue;
+        }
+
         int v = lower_expr(c, a);
         if (lir_is_home_vreg(c->lf, v)) {
             int off = vreg_home_offset(c->lf, v);
@@ -912,20 +1077,128 @@ static int lower_call(LowerCtx *c, Node *n)
                 }
             }
         }
-        args[i] = lir_vreg(v);
+
+        if (nreg < 6)
+            reg_slots[nreg++] = lir_vreg(v);
+        else
+            stack_slots[nstack++] = lir_vreg(v);
     }
+
+    if (nreg > 6)
+        diag_fatal("internal error: too many register arguments at call");
+
+    total = nreg + nstack;
+    args = arena_alloc((size_t)total * sizeof(*args));
+    for (i = 0; i < nreg; i++)
+        args[i] = reg_slots[i];
+    for (i = 0; i < nstack; i++)
+        args[nreg + i] = stack_slots[i];
 
     emit(c, (Instr){
         .op = LIR_CALL,
         .call_name = n->name,
-        .nargs = n->nargs,
+        .nargs = total,
         .call_args = args,
     });
+
+    if (abi_type_is_record_pass(ret_ty)) {
+        if (ret_plan.kind == ABI_RET_SRET) {
+            int dest = result_off;
+
+            if (dest == CALL_DEST_NONE)
+                dest = c->fn->abi_call_scratch;
+            return lower_addr_off(c, dest);
+        }
+        if (result_off != CALL_DEST_NONE) {
+            lower_store_call_result_to_off(c, result_off, &ret_plan);
+            return fresh(c);
+        }
+        return fresh(c);
+    }
 
     int dst = fresh(c);
     emit(c, (Instr){
         .op = LIR_MOV, .dst = dst, .a = lir_phys(PHYS_RAX) });
     return dst;
+}
+
+static int lower_call(LowerCtx *c, Node *n)
+{
+    return lower_call_ex(c, n, CALL_DEST_NONE);
+}
+
+static void lower_return_record(LowerCtx *c, Node *n, Type *ret_ty)
+{
+    AbiRetPlan rp;
+    int addr;
+
+    abi_ret_plan(ret_ty, &rp);
+
+    if (n->kind == ND_CALL) {
+        if (rp.kind == ABI_RET_SRET)
+            (void)lower_call_ex(c, n, CALL_SRET_FORWARD);
+        else
+            (void)lower_call_ex(c, n, CALL_DEST_NONE);
+        emit(c, (Instr){ .op = LIR_JMP, .label = c->ret_label });
+        return;
+    }
+
+    if (rp.kind == ABI_RET_SRET) {
+        int src = lower_object_addr(c, n);
+        int dst = fresh(c);
+
+        emit(c, (Instr){
+            .op = LIR_LOAD,
+            .dst = dst,
+            .a = lir_mem(LIR_FP, c->fn->abi_sret_offset),
+            .w = LIR_W8,
+            .aux = 8,
+        });
+        emit(c, (Instr){
+            .op = LIR_MEMCPY,
+            .a = lir_vreg(dst),
+            .b = lir_vreg(src),
+            .aux = rp.size,
+        });
+        emit(c, (Instr){ .op = LIR_JMP, .label = c->ret_label });
+        return;
+    }
+
+    addr = lower_object_addr(c, n);
+    if (rp.kind == ABI_RET_GPR_PAIR) {
+        int v0 = fresh(c);
+        int v1 = fresh(c);
+
+        lower_load_bytes_off(c, v0, addr, 0, 8);
+        lower_load_bytes_off(c, v1, addr, 8, rp.size - 8);
+        emit(c, (Instr){
+            .op = LIR_MOV,
+            .dst = LIR_NO_VREG,
+            .a = lir_vreg(v0),
+            .b = lir_phys(PHYS_RAX),
+        });
+        emit(c, (Instr){
+            .op = LIR_MOV,
+            .dst = LIR_NO_VREG,
+            .a = lir_vreg(v1),
+            .b = lir_phys(PHYS_RDX),
+        });
+        emit(c, (Instr){ .op = LIR_JMP, .label = c->ret_label });
+        return;
+    }
+
+    {
+        int v0 = fresh(c);
+
+        lower_load_bytes_off(c, v0, addr, 0, rp.size < 8 ? rp.size : 8);
+        emit(c, (Instr){
+            .op = LIR_MOV,
+            .dst = LIR_NO_VREG,
+            .a = lir_vreg(v0),
+            .b = lir_phys(PHYS_RAX),
+        });
+    }
+    emit(c, (Instr){ .op = LIR_JMP, .label = c->ret_label });
 }
 
 static int lower_expr(LowerCtx *c, Node *n)
@@ -948,6 +1221,8 @@ static int lower_expr(LowerCtx *c, Node *n)
         return dst;
     }
     case ND_CALL:
+        if (n->func_ty && abi_type_is_record_pass(n->func_ty->ret))
+            return lower_call_ex(c, n, CALL_DEST_NONE);
         return lower_call(c, n);
     case ND_NEG: {
         int v = lower_expr(c, n->operand);
@@ -1015,6 +1290,12 @@ static int lower_expr(LowerCtx *c, Node *n)
     }
     case ND_ASSIGN: {
         if (type_is_record(n->lhs->ty)) {
+            if (n->rhs->kind == ND_CALL &&
+                abi_type_is_record_pass(n->lhs->ty) &&
+                n->lhs->kind == ND_VAR) {
+                int val = lower_call_ex(c, n->rhs, n->lhs->offset);
+                return val;
+            }
             int dst = lower_object_addr(c, n->lhs);
 
             if (is_struct_scalar_cast(n->rhs)) {
@@ -1119,6 +1400,10 @@ static void lower_stmt(LowerCtx *c, Node *n)
 {
     switch (n->kind) {
     case ND_RETURN: {
+        if (n->operand && abi_type_is_record_pass(c->fn->ret_ty)) {
+            lower_return_record(c, n->operand, c->fn->ret_ty);
+            return;
+        }
         if (n->operand) {
             int v = lower_expr(c, n->operand);
             emit(c, (Instr){
@@ -1144,6 +1429,11 @@ static void lower_stmt(LowerCtx *c, Node *n)
                     emit(c, (Instr){
                         .op = LIR_MOV, .dst = v, .a = lir_vreg(val) });
             }
+            return;
+        }
+        if (n->init && n->init->kind == ND_CALL &&
+            abi_type_is_record_pass(n->ty)) {
+            (void)lower_call_ex(c, n->init, n->offset);
             return;
         }
         if (n->init && n->init->kind == ND_INIT_LIST) {
