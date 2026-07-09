@@ -3,7 +3,6 @@
 #include "sema_scope.h"
 #include "sema_functab.h"
 #include "sema_typedef.h"
-#include "sema_struct.h"
 #include "sema_enum.h"
 #include "abi_sysv_amd64.h"
 #include "diag.h"
