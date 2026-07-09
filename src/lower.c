@@ -360,6 +360,11 @@ static void lower_init_from_type(LowerCtx *c, Type *ty, Node **pcursor, int base
         }
         return;
     }
+    if (type_is_union(ty)) {
+        if (ty->nmembers > 0)
+            lower_init_from_type(c, ty->members[0].ty, pcursor, base_off);
+        return;
+    }
     {
         Node *e = *pcursor;
         int v;
@@ -1009,7 +1014,7 @@ static int lower_expr(LowerCtx *c, Node *n)
         return dst;
     }
     case ND_ASSIGN: {
-        if (type_is_struct(n->lhs->ty)) {
+        if (type_is_record(n->lhs->ty)) {
             int dst = lower_object_addr(c, n->lhs);
 
             if (is_struct_scalar_cast(n->rhs)) {

@@ -251,6 +251,29 @@ StructField *struct_field_append_bit(StructField *list, Type *spec, Declarator *
     return struct_field_append(list, spec, decl, loc);
 }
 
+Enumerator *enumerator_new(char *name, Node *value, SourceLoc loc)
+{
+    Enumerator *e = arena_alloc_zeroed(sizeof(*e));
+    e->name = name;
+    e->value = value;
+    e->loc = loc;
+    e->next = NULL;
+    return e;
+}
+
+Enumerator *enumerator_append(Enumerator *list, Enumerator *e)
+{
+    Enumerator *tail;
+
+    if (!list)
+        return e;
+    tail = list;
+    while (tail->next)
+        tail = tail->next;
+    tail->next = e;
+    return list;
+}
+
 static void member_append(Member **members, int *nmembers, Member *src)
 {
     Member *m;

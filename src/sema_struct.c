@@ -15,6 +15,7 @@ typedef struct {
     char *tag;
     Type *ty;
     SourceLoc loc;
+    int is_union;   /* struct and union share one tag namespace (C89 3.1.2.3) */
 } StructTagEntry;
 
 static StructTagEntry tags[MAX_STRUCT_TAGS];
@@ -34,10 +35,10 @@ Type *struct_tag_lookup(const char *tag)
     return NULL;
 }
 
-static Type *struct_type_new(char *tag)
+static Type *struct_type_new(char *tag, int is_union)
 {
     Type *t = arena_alloc_zeroed(sizeof(Type));
-    t->kind = TY_STRUCT;
+    t->kind = is_union ? TY_UNION : TY_STRUCT;
     t->tag = tag;
     t->is_complete = 0;
     t->size = 0;
@@ -45,7 +46,7 @@ static Type *struct_type_new(char *tag)
     return t;
 }
 
-static void struct_tag_register(char *tag, Type *ty, SourceLoc loc)
+static void struct_tag_register(char *tag, Type *ty, int is_union, SourceLoc loc)
 {
     if (ntags >= MAX_STRUCT_TAGS) {
         diag_error_at(loc, "too many struct tags");
@@ -54,7 +55,32 @@ static void struct_tag_register(char *tag, Type *ty, SourceLoc loc)
     tags[ntags].tag = tag;
     tags[ntags].ty = ty;
     tags[ntags].loc = loc;
+    tags[ntags].is_union = is_union;
     ntags++;
+}
+
+/* Return the existing entry for `tag`, or NULL. Reports a kind mismatch
+ * (`struct S` vs `union S`) since both share the tag namespace. */
+static StructTagEntry *struct_tag_entry(const char *tag, int is_union,
+                                        SourceLoc loc, int *mismatch)
+{
+    if (mismatch)
+        *mismatch = 0;
+    for (int i = 0; i < ntags; i++) {
+        if (strcmp(tags[i].tag, tag) != 0)
+            continue;
+        if (tags[i].is_union != is_union) {
+            diag_error_at(loc,
+                          "use of '%s' with tag type that does not match "
+                          "previous declaration", tag);
+            diag_note_at(tags[i].loc, "previous declaration of '%s' is here",
+                         tag);
+            if (mismatch)
+                *mismatch = 1;
+        }
+        return &tags[i];
+    }
+    return NULL;
 }
 
 static int ice_eval(Node *n, long *out)
@@ -103,13 +129,13 @@ static int member_type_ok(Type *ty, SourceLoc loc)
         diag_error_at(loc, "struct member cannot be a function");
         return 0;
     }
-    if (type_is_struct(ty) && !type_struct_is_complete(ty)) {
+    if (type_is_record(ty) && !type_struct_is_complete(ty)) {
         diag_error_at(loc, "struct member has incomplete type '%s'",
                       type_name(ty));
         return 0;
     }
     if (type_is_array(ty) && type_array_elem(ty) &&
-        type_is_struct(type_array_elem(ty)) &&
+        type_is_record(type_array_elem(ty)) &&
         !type_struct_is_complete(type_array_elem(ty))) {
         diag_error_at(loc, "array of incomplete struct type is not allowed");
         return 0;
@@ -121,19 +147,19 @@ static int struct_nest_depth(Type *ty)
 {
     int max = 0;
 
-    if (!type_is_struct(ty) || !type_struct_is_complete(ty))
+    if (!type_is_record(ty) || !type_struct_is_complete(ty))
         return 0;
 
     for (int i = 0; i < ty->nmembers; i++) {
         Type *mty = ty->members[i].ty;
         int d = 0;
 
-        if (type_is_struct(mty))
+        if (type_is_record(mty))
             d = 1 + struct_nest_depth(mty);
         else if (type_is_array(mty)) {
             Type *elem = type_array_elem(mty);
 
-            if (elem && type_is_struct(elem))
+            if (elem && type_is_record(elem))
                 d = 1 + struct_nest_depth(elem);
         }
         if (d > max)
@@ -252,20 +278,26 @@ static int members_compatible(Member *a, int na, Member *b, int nb)
     return 1;
 }
 
-Type *struct_tag_forward(char *tag, SourceLoc loc)
+static Type *record_tag_forward(char *tag, int is_union, SourceLoc loc)
 {
-    Type *ty = struct_tag_lookup(tag);
-    if (ty)
-        return ty;
+    StructTagEntry *e = struct_tag_entry(tag, is_union, loc, NULL);
+    Type *ty;
 
-    ty = struct_type_new(tag);
-    struct_tag_register(tag, ty, loc);
+    if (e)
+        return e->ty;
+
+    ty = struct_type_new(tag, is_union);
+    struct_tag_register(tag, ty, is_union, loc);
     return ty;
 }
 
-Type *struct_tag_define(char *tag, StructField *fields, SourceLoc loc)
+static Type *record_tag_define(char *tag, StructField *fields, int is_union,
+                               SourceLoc loc)
 {
-    Type *ty = struct_tag_lookup(tag);
+    int mismatch = 0;
+    StructTagEntry *e = struct_tag_entry(tag, is_union, loc, &mismatch);
+    Type *ty = (e && !mismatch) ? e->ty : NULL;
+    const char *kw = is_union ? "union" : "struct";
     Member *members;
     int nmembers = 0;
     int i;
@@ -273,7 +305,7 @@ Type *struct_tag_define(char *tag, StructField *fields, SourceLoc loc)
     members = fields_to_members(fields, &nmembers, loc);
     for (i = 0; i < nmembers; i++) {
         if (!members[i].is_bitfield && !member_type_ok(members[i].ty, loc))
-            return ty ? ty : struct_tag_forward(tag, loc);
+            return ty ? ty : record_tag_forward(tag, is_union, loc);
     }
 
     if (ty && type_struct_is_complete(ty)) {
@@ -285,15 +317,15 @@ Type *struct_tag_define(char *tag, StructField *fields, SourceLoc loc)
                     break;
                 }
             }
-            diag_error_at(loc, "redefinition of struct '%s'", tag);
-            diag_note_at(prev, "previous definition of struct '%s' is here", tag);
+            diag_error_at(loc, "redefinition of %s '%s'", kw, tag);
+            diag_note_at(prev, "previous definition of %s '%s' is here", kw, tag);
         }
         return ty;
     }
 
     if (!ty) {
-        ty = struct_type_new(tag);
-        struct_tag_register(tag, ty, loc);
+        ty = struct_type_new(tag, is_union);
+        struct_tag_register(tag, ty, is_union, loc);
     }
 
     ty->members = members;
@@ -303,4 +335,24 @@ Type *struct_tag_define(char *tag, StructField *fields, SourceLoc loc)
     if (!check_struct_translation_limits(ty, loc))
         ty->is_complete = 0;
     return ty;
+}
+
+Type *struct_tag_forward(char *tag, SourceLoc loc)
+{
+    return record_tag_forward(tag, 0, loc);
+}
+
+Type *union_tag_forward(char *tag, SourceLoc loc)
+{
+    return record_tag_forward(tag, 1, loc);
+}
+
+Type *struct_tag_define(char *tag, StructField *fields, SourceLoc loc)
+{
+    return record_tag_define(tag, fields, 0, loc);
+}
+
+Type *union_tag_define(char *tag, StructField *fields, SourceLoc loc)
+{
+    return record_tag_define(tag, fields, 1, loc);
 }

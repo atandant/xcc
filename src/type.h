@@ -15,7 +15,9 @@ typedef enum {
     TY_ARRAY,
     TY_FUNC,
     TY_TYPEDEF_REF, /* parser placeholder: resolve via typedef name in sema */
-    TY_STRUCT
+    TY_STRUCT,
+    TY_UNION,   /* like TY_STRUCT but all members overlap at offset 0    */
+    TY_ENUM     /* enumerated type; behaves as `int` in all expressions  */
 } TypeKind;
 
 typedef enum {
@@ -96,8 +98,12 @@ Type *type_ptr(Type *base);
 Type *type_array(Type *elem, int count);
 Type *type_func(Type *ret, Type **params, int nparams, int prototyped);
 Type *type_typedef_ref(char *name);
+Type *type_enum(char *tag);
 void type_struct_layout(Type *ty);
 int type_is_struct(Type *ty);
+int type_is_union(Type *ty);
+int type_is_record(Type *ty);  /* struct or union */
+int type_is_enum(Type *ty);
 int type_struct_is_complete(Type *ty);
 const char *type_struct_tag(Type *ty);
 Member *type_struct_member(Type *ty, const char *name, int *out_index);

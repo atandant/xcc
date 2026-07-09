@@ -4,6 +4,7 @@
 #include "sema_functab.h"
 #include "sema_typedef.h"
 #include "sema_struct.h"
+#include "sema_enum.h"
 #include "diag.h"
 #include "intconst.h"
 
@@ -59,6 +60,8 @@ static int ice_eval(Node *n, long *out)
             return 0;
         *out = n->val;
         return 1;
+    case ND_VAR:
+        return enum_const_lookup(n->name, out);
     case ND_SIZEOF: {
         Type *ty = n->cast_ty;
 
@@ -267,18 +270,18 @@ static void mark_member_base_address_taken(Node *n)
     }
 }
 
-static Type *member_owner_struct(Node *base)
+static Type *member_owner_record(Node *base)
 {
     if (!base || !base->ty)
         return NULL;
-    if (type_is_struct(base->ty))
+    if (type_is_record(base->ty))
         return base->ty;
     return NULL;
 }
 
-static int struct_cmp_error(Node *lhs, Node *rhs)
+static int record_cmp_error(Node *lhs, Node *rhs)
 {
-    return type_is_struct(lhs->ty) || type_is_struct(rhs->ty);
+    return type_is_record(lhs->ty) || type_is_record(rhs->ty);
 }
 
 /* Equality operands: both integers, compatible pointers, or pointer vs 0. */
@@ -314,7 +317,7 @@ static int sema_array_bound_eval(Node *expr, long *out, SourceLoc loc, void *ctx
 
 static int type_is_aggregate(Type *t)
 {
-    return type_is_array(t) || type_is_struct(t);
+    return type_is_array(t) || type_is_record(t);
 }
 
 /* Number of scalar leaf slots contained in an aggregate type tree. */
@@ -329,6 +332,11 @@ static int type_init_slot_count(Type *t)
         for (i = 0; i < t->nmembers; i++)
             n += type_init_slot_count(t->members[i].ty);
         return n;
+    }
+    if (type_is_union(t)) {
+        if (t->nmembers > 0)
+            return type_init_slot_count(t->members[0].ty);
+        return 1;
     }
     return 1;
 }
@@ -410,10 +418,10 @@ static void pad_aggregate_zeros(Type *t, InitFlat *flat, SourceLoc loc)
             pad_aggregate_zeros(elem, flat, loc);
         return;
     }
-    if (type_is_struct(t)) {
-        int i;
+    if (type_is_record(t)) {
+        int i, n = type_is_union(t) ? 1 : t->nmembers;
 
-        for (i = 0; i < t->nmembers; i++)
+        for (i = 0; i < n; i++)
             pad_aggregate_zeros(t->members[i].ty, flat, loc);
         return;
     }
@@ -507,6 +515,43 @@ static int init_aggregate(Type *t, Node **pcursor, InitFlat *flat,
         return 0;
     }
 
+    if (type_is_union(t)) {
+        Type *mty;
+
+        if (!type_struct_is_complete(t)) {
+            diag_error_at(loc,
+                          "initializer element is not computable for "
+                          "incomplete type '%s'", type_name(t));
+            return 1;
+        }
+        if (t->nmembers == 0) {
+            pad_aggregate_zeros(type_int(), flat, loc);
+            return 0;
+        }
+        mty = t->members[0].ty;
+        if (!*pcursor) {
+            pad_aggregate_zeros(mty, flat, loc);
+            return 0;
+        }
+        if ((*pcursor)->kind == ND_INIT_LIST) {
+            if (type_is_aggregate(mty)) {
+                Node *sub = (*pcursor)->body;
+                Node **subcur = &sub;
+
+                *pcursor = (*pcursor)->next;
+                if (init_aggregate(mty, subcur, flat, loc, excess))
+                    return 1;
+                if (*subcur != NULL)
+                    *excess = 1;
+            } else if (init_scalar_brace_unwrap(pcursor, flat, loc)) {
+                return 1;
+            }
+        } else if (init_aggregate(mty, pcursor, flat, loc, excess)) {
+            return 1;
+        }
+        return 0;
+    }
+
     if (!*pcursor) {
         flat_append(flat, zero_init_expr(t, loc));
         return 0;
@@ -534,8 +579,8 @@ static Node *flatten_brace_init(Type *aty, Node *init, SourceLoc loc)
     if (init_aggregate(aty, &cursor, &flat, loc, &excess))
         return init;
     if (cursor != NULL || excess) {
-        if (type_is_struct(aty))
-            diag_error_at(loc, "excess elements in struct initializer");
+        if (type_is_record(aty))
+            diag_error_at(loc, "excess elements in struct or union initializer");
         else
             diag_error_at(loc, "excess elements in array initializer");
     }
@@ -581,8 +626,10 @@ static Node *check_flat_init_type(Type *t, Node *e, SourceLoc loc, Node *decl)
             e = check_flat_init_type(elem, e, loc, decl);
         return e;
     }
-    if (type_is_struct(t)) {
-        for (i = 0; i < t->nmembers; i++)
+    if (type_is_record(t)) {
+        int i, n = type_is_union(t) ? 1 : t->nmembers;
+
+        for (i = 0; i < n; i++)
             e = check_flat_init_type(t->members[i].ty, e, loc, decl);
         return e;
     }
@@ -640,7 +687,7 @@ static void sema_brace_init(Node *decl)
         return;
     }
 
-    if (type_is_struct(decl->ty) && !type_struct_is_complete(decl->ty)) {
+    if (type_is_record(decl->ty) && !type_struct_is_complete(decl->ty)) {
         diag_error_at(decl->loc,
                       "variable '%s' has incomplete type '%s'",
                       decl->name, type_name(decl->ty));
@@ -659,7 +706,7 @@ static void sema_finish_function_types(Function *fn)
 {
     fn->ret_ty = typedef_resolve_type(fn->ret_ty, fn->loc);
 
-    if (type_is_struct(fn->ret_ty) && type_struct_is_complete(fn->ret_ty))
+    if (type_is_record(fn->ret_ty) && type_struct_is_complete(fn->ret_ty))
         diag_error_at(fn->loc,
                       "returning struct type '%s' by value is not supported",
                       type_name(fn->ret_ty));
@@ -675,7 +722,7 @@ static void sema_finish_function_types(Function *fn)
         } else if (p->ty) {
             p->ty = typedef_resolve_type(p->ty, fn->loc);
         }
-        if (type_is_struct(p->ty) && type_struct_is_complete(p->ty))
+        if (type_is_record(p->ty) && type_struct_is_complete(p->ty))
             diag_error_at(fn->loc,
                           "passing struct type '%s' by value is not supported",
                           type_name(p->ty));
@@ -796,6 +843,7 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
     case ND_VAR: {
         int off;
         Type *decl_ty;
+        long enum_val;
 
         n->var_decay = 0;
         if (!scope_lookup(n->name, &off, &decl_ty)) {
@@ -805,6 +853,14 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
             if (fs) {
                 n->ty = fs->ty;
                 n->is_lvalue = 1;
+            } else if (enum_const_lookup(n->name, &enum_val)) {
+                n->kind = ND_NUM;
+                n->val = enum_val;
+                n->has_long_suffix = 0;
+                n->is_hex_literal = 0;
+                n->is_octal_literal = 0;
+                n->ty = type_int();
+                n->is_lvalue = 0;
             } else {
                 diag_error_at(n->loc, "use of undeclared identifier '%s'",
                               n->name);
@@ -905,7 +961,7 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
                 diag_error_at(n->loc,
                               "invalid operands to arithmetic operator");
         } else if (is_eq_op(n->op)) {
-            if (struct_cmp_error(n->lhs, n->rhs))
+            if (record_cmp_error(n->lhs, n->rhs))
                 diag_error_at(n->loc,
                               "invalid operands to comparison");
             else if (!eq_operands_compatible(n->lhs, n->rhs)) {
@@ -931,7 +987,7 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
             }
             n->ty = type_int();
         } else if (is_rel_op(n->op)) {
-            if (struct_cmp_error(n->lhs, n->rhs))
+            if (record_cmp_error(n->lhs, n->rhs))
                 diag_error_at(n->loc,
                               "invalid operands to comparison");
             else if (!rel_operands_compatible(n->lhs, n->rhs))
@@ -973,7 +1029,7 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
     case ND_MEMBER:
         resolve_expr_ctx(n->lhs, CTX_LVALUE);
         n->var_decay = 0;
-        if (!member_owner_struct(n->lhs)) {
+        if (!member_owner_record(n->lhs)) {
             if (n->lhs->kind != ND_DEREF)
                 diag_error_at(n->loc,
                               "member reference base type is not a structure or union");
@@ -1094,7 +1150,7 @@ static void resolve_stmt(Node *s)
             s->decl = NULL;
             s->decl_spec = NULL;
         }
-        if (type_is_struct(s->ty) && !type_struct_is_complete(s->ty))
+        if (type_is_record(s->ty) && !type_struct_is_complete(s->ty))
             diag_error_at(s->loc,
                           "variable '%s' has incomplete type '%s'",
                           s->name, type_name(s->ty));

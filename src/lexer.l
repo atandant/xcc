@@ -102,6 +102,8 @@ static int has_long_suffix(const char *text)
 "for"               { return FOR; }
 "typedef"           { return TYPEDEF; }
 "struct"            { return STRUCT; }
+"union"             { return UNION; }
+"enum"              { return ENUM; }
 "sizeof"            { return SIZEOF; }
 
 "->"                { return ARROW; }

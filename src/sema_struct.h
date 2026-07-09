@@ -8,11 +8,13 @@
 
 void struct_tag_reset(void);
 
-/* `struct Tag;` — forward declaration (incomplete). */
+/* `struct Tag;` / `union Tag;` — forward declaration (incomplete). */
 Type *struct_tag_forward(char *tag, SourceLoc loc);
+Type *union_tag_forward(char *tag, SourceLoc loc);
 
-/* `struct Tag { ... }` — complete or error on redefinition. */
+/* `struct Tag { ... }` / `union Tag { ... }` — complete or error on redef. */
 Type *struct_tag_define(char *tag, StructField *fields, SourceLoc loc);
+Type *union_tag_define(char *tag, StructField *fields, SourceLoc loc);
 
 /* Lookup an existing tag (complete or incomplete), or NULL. */
 Type *struct_tag_lookup(const char *tag);

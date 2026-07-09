@@ -9,6 +9,7 @@
 #include "sema.h"
 #include "sema_typedef.h"
 #include "sema_struct.h"
+#include "sema_enum.h"
 #include "copts.h"
 #include "codegen.h"
 #include "arena.h"
@@ -119,6 +120,7 @@ int main(int argc, char **argv)
 
     typedef_reset();
     struct_tag_reset();
+    enum_reset();
 
     if (yyparse() != 0 || diag_error_count > 0)
         return 1;

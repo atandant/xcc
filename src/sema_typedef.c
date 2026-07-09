@@ -155,7 +155,7 @@ Type *typedef_resolve_type(Type *ty, SourceLoc loc)
         return base == ty->base ? ty : type_array(base, ty->count);
     }
 
-    if (type_is_struct(ty))
+    if (type_is_record(ty) || type_is_enum(ty))
         return ty;
 
     return ty;

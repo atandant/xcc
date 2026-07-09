@@ -9,6 +9,7 @@
 #include "arena.h"
 #include "sema_typedef.h"
 #include "sema_struct.h"
+#include "sema_enum.h"
 
 extern int yylex(void);
 void yyerror(const char *msg);
@@ -39,11 +40,12 @@ Function *g_program = NULL;
     Declarator *decl;
     TypedefDecl *tdecl;
     StructField *fields;
+    Enumerator *enumr;
 }
 
 %token <num> NUM
 %token <str> IDENT TYPEDEF_NAME
-%token INT CHAR SHORT LONG VOID UNSIGNED SIGNED RETURN IF ELSE WHILE FOR SIZEOF TYPEDEF STRUCT
+%token INT CHAR SHORT LONG VOID UNSIGNED SIGNED RETURN IF ELSE WHILE FOR SIZEOF TYPEDEF STRUCT UNION ENUM
 %token EQ NE LE GE ARROW
 
 %type <node> expr expr_opt arg_expr stmt initializer init_list initializer_opt
@@ -53,9 +55,11 @@ Function *g_program = NULL;
 %type <func> toplevel
 %type <tdecl> typedef_toplevel
 %type <type> type specifier cast_type decl_specifier keyword_specifier struct_specifier
+             union_specifier enum_specifier
 %type <fields> struct_declaration_list struct_declaration struct_declarator_list
                struct_decl_item
-%type <str> struct_tag member_name
+%type <enumr> enumerator_list enumerator
+%type <str> struct_tag enum_tag member_name
 %type <decl> declarator direct_declarator abstract_declarator struct_member_decl
                                   abstract_declarator_opt direct_abstract_declarator
 
@@ -86,6 +90,8 @@ program:
 
 struct_toplevel:
     struct_specifier ';'       { (void)$1; }
+  | union_specifier ';'        { (void)$1; }
+  | enum_specifier ';'         { (void)$1; }
   ;
 
 typedef_toplevel:
@@ -133,11 +139,13 @@ keyword_specifier:
   | SIGNED LONG INT          { $$ = type_long(); }
   ;
 
-/* Declaration specifier: keywords, typedef name, or struct specifier. */
+/* Declaration specifier: keywords, typedef name, or tagged-type specifier. */
 decl_specifier:
     keyword_specifier        { $$ = $1; }
   | TYPEDEF_NAME             { $$ = typedef_lookup($1); }
   | struct_specifier         { $$ = $1; }
+  | union_specifier          { $$ = $1; }
+  | enum_specifier           { $$ = $1; }
   ;
 
 struct_specifier:
@@ -145,6 +153,46 @@ struct_specifier:
         { $$ = struct_tag_forward($2, LOC(@1)); }
   | STRUCT struct_tag '{' struct_declaration_list '}'
         { $$ = struct_tag_define($2, $4, LOC(@1)); }
+  ;
+
+union_specifier:
+    UNION struct_tag
+        { $$ = union_tag_forward($2, LOC(@1)); }
+  | UNION struct_tag '{' struct_declaration_list '}'
+        { $$ = union_tag_define($2, $4, LOC(@1)); }
+  ;
+
+enum_specifier:
+    ENUM enum_tag
+        { $$ = enum_tag_forward($2, LOC(@1)); }
+  | ENUM enum_tag '{' enumerator_list '}'
+        { $$ = enum_tag_define($2, $4, LOC(@1)); }
+  | ENUM '{' enumerator_list '}'
+        { $$ = enum_tag_define(NULL, $3, LOC(@1)); }
+  ;
+
+enum_tag:
+    IDENT                    { $$ = $1; }
+  | TYPEDEF_NAME             { $$ = $1; }
+  ;
+
+enumerator_list:
+    enumerator
+  | enumerator_list ',' enumerator
+        {
+            Enumerator *tail = $1;
+            while (tail->next)
+                tail = tail->next;
+            tail->next = $3;
+            $$ = $1;
+        }
+  ;
+
+enumerator:
+    member_name
+        { $$ = enumerator_new($1, NULL, LOC(@1)); }
+  | member_name '=' arg_expr
+        { $$ = enumerator_new($1, $3, LOC(@1)); }
   ;
 
 /* Struct tags live in a namespace distinct from ordinary identifiers and

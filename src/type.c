@@ -72,6 +72,21 @@ Type *type_typedef_ref(char *name)
     return t;
 }
 
+/* An enumerated type. C89 3.5.2.2: an enum has type `int`; xcc keeps a distinct
+ * kind for diagnostics but reports int width/sign/rank everywhere. */
+Type *type_enum(char *tag)
+{
+    Type *t = arena_alloc_zeroed(sizeof(Type));
+    t->kind = TY_ENUM;
+    t->tag = tag;
+    t->is_complete = 0;
+    t->width = IW_INT;
+    t->sign = IS_SIGNED;
+    t->size = 4;
+    t->align = 4;
+    return t;
+}
+
 /* ---- predicates ---- */
 
 int type_is_void(Type *ty)    { return ty && ty->kind == TY_VOID; }
@@ -107,11 +122,18 @@ int type_is_short(Type *ty)
     return ty && ty->kind == TY_INT && ty->width == IW_SHORT;
 }
 
-int type_is_integer(Type *ty) { return ty && ty->kind == TY_INT; }
+int type_is_integer(Type *ty)
+{
+    return ty && (ty->kind == TY_INT || ty->kind == TY_ENUM);
+}
 
 int type_is_signed(Type *ty)
 {
-    return ty && ty->kind == TY_INT && ty->sign == IS_SIGNED;
+    if (!ty)
+        return 0;
+    if (ty->kind == TY_ENUM)
+        return 1;
+    return ty->kind == TY_INT && ty->sign == IS_SIGNED;
 }
 
 int type_is_unsigned(Type *ty)
@@ -135,14 +157,23 @@ int type_is_array(Type *ty)   { return ty && ty->kind == TY_ARRAY; }
 
 int type_is_struct(Type *ty)  { return ty && ty->kind == TY_STRUCT; }
 
+int type_is_union(Type *ty)   { return ty && ty->kind == TY_UNION; }
+
+int type_is_record(Type *ty)
+{
+    return ty && (ty->kind == TY_STRUCT || ty->kind == TY_UNION);
+}
+
+int type_is_enum(Type *ty)    { return ty && ty->kind == TY_ENUM; }
+
 int type_struct_is_complete(Type *ty)
 {
-    return type_is_struct(ty) && ty->is_complete;
+    return type_is_record(ty) && ty->is_complete;
 }
 
 const char *type_struct_tag(Type *ty)
 {
-    return type_is_struct(ty) ? ty->tag : NULL;
+    return type_is_record(ty) ? ty->tag : NULL;
 }
 
 static int align_up(int off, int align)
@@ -160,8 +191,30 @@ void type_struct_layout(Type *ty)
     int unit_bits = 0;
     int unit_size = 0;
 
-    if (!type_is_struct(ty))
+    if (!type_is_record(ty))
         return;
+
+    /* Union: every member (bit-field or not) starts at offset 0; the object is
+     * as large as its widest member, aligned to the strictest member. */
+    if (type_is_union(ty)) {
+        int sz = 0;
+
+        for (int i = 0; i < ty->nmembers; i++) {
+            Member *m = &ty->members[i];
+            int ma = type_align(m->ty);
+            int ms = m->is_bitfield ? (int)sizeof(int) : type_size(m->ty);
+
+            m->offset = 0;
+            m->bit_offset = 0;
+            if (ma > max_align)
+                max_align = ma;
+            if (ms > sz)
+                sz = ms;
+        }
+        ty->align = max_align > 0 ? max_align : 1;
+        ty->size = sz > 0 ? align_up(sz, ty->align) : 0;
+        return;
+    }
 
     for (int i = 0; i < ty->nmembers; i++) {
         Member *m = &ty->members[i];
@@ -221,7 +274,7 @@ void type_struct_layout(Type *ty)
 
 Member *type_struct_member(Type *ty, const char *name, int *out_index)
 {
-    if (!type_is_struct(ty) || !name)
+    if (!type_is_record(ty) || !name)
         return NULL;
 
     for (int i = 0; i < ty->nmembers; i++) {
@@ -286,7 +339,7 @@ int type_is_complete(Type *ty)
         return 0;
     if (type_is_pointer(ty))
         return 1;
-    if (type_is_struct(ty))
+    if (type_is_record(ty) || type_is_enum(ty))
         return ty->is_complete;
     if (type_is_array(ty) && type_array_count(ty) == 0)
         return 0;
@@ -334,6 +387,8 @@ int type_same(Type *a, Type *b)
         return a->ref_name && b->ref_name &&
                strcmp(a->ref_name, b->ref_name) == 0;
     case TY_STRUCT:
+    case TY_UNION:
+    case TY_ENUM:
         return a->tag && b->tag && strcmp(a->tag, b->tag) == 0;
     }
     return 0;
@@ -371,7 +426,7 @@ int type_assignable(Type *dst, Type *src)
     if (type_is_pointer(dst) && type_is_pointer(src))
         return type_compatible(dst, src);
 
-    if (type_is_struct(dst) && type_is_struct(src))
+    if (type_is_record(dst) && type_is_record(src))
         return type_same(dst, src);
 
     return 0;
@@ -430,8 +485,18 @@ int type_int_rank(Type *ty)
 
 int type_int_info(Type *ty, TypeIntInfo *out)
 {
-    if (!ty || ty->kind != TY_INT)
+    if (!ty || (ty->kind != TY_INT && ty->kind != TY_ENUM))
         return 0;
+
+    /* C89 3.5.2.2: an enumeration has type int. */
+    if (ty->kind == TY_ENUM) {
+        if (out) {
+            out->width = 4;
+            out->rank = 3;
+            out->is_signed = 1;
+        }
+        return 1;
+    }
 
     if (out)
         out->is_signed = type_is_signed(ty) && !type_is_plain_char(ty);
@@ -510,7 +575,11 @@ static Type *type_unsigned_same_width(Type *ty)
  * On LP64 xcc, int holds every char/short value (signed or unsigned). */
 Type *type_int_promote(Type *ty)
 {
-    if (!ty || ty->kind != TY_INT)
+    if (!ty)
+        return ty;
+    if (ty->kind == TY_ENUM)   /* an enum promotes to int */
+        return type_int();
+    if (ty->kind != TY_INT)
         return ty;
     if (ty->width == IW_CHAR || ty->width == IW_SHORT)
         return type_int();
@@ -655,11 +724,16 @@ const char *type_name(Type *ty)
         return "function";
     case TY_TYPEDEF_REF:
         return ty->ref_name ? ty->ref_name : "<typedef-ref>";
-    case TY_STRUCT: {
+    case TY_STRUCT:
+    case TY_UNION:
+    case TY_ENUM: {
+        const char *kw = ty->kind == TY_STRUCT ? "struct"
+                       : ty->kind == TY_UNION  ? "union"
+                                               : "enum";
         const char *tag = ty->tag ? ty->tag : "<anon>";
-        size_t n = strlen(tag) + 8;
+        size_t n = strlen(kw) + strlen(tag) + 2;
         char *buf = arena_alloc(n);
-        snprintf(buf, n, "struct %s", tag);
+        snprintf(buf, n, "%s %s", kw, tag);
         return buf;
     }
     }

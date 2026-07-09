@@ -150,6 +150,16 @@ struct StructField {
     StructField *next;
 };
 
+/* One enumerator in an enum declaration list (parser → enum_tag_define).
+ * `value` is the optional `= constant-expression`; NULL means implicit. */
+typedef struct Enumerator Enumerator;
+struct Enumerator {
+    char *name;
+    Node *value;
+    SourceLoc loc;
+    Enumerator *next;
+};
+
 extern TypedefDecl *g_typedef_decls;
 
 Node *node_num(long v, SourceLoc loc);
@@ -182,6 +192,8 @@ StructField *struct_field_append(StructField *list, Type *spec, Declarator *decl
                                  SourceLoc loc);
 StructField *struct_field_append_bit(StructField *list, Type *spec, Declarator *decl,
                                      Node *bit_width, SourceLoc loc);
+Enumerator *enumerator_new(char *name, Node *value, SourceLoc loc);
+Enumerator *enumerator_append(Enumerator *list, Enumerator *e);
 Member *struct_fields_to_members(StructField *fields, int *out_n, SourceLoc loc);
 NodeList *stmt_list_new(void);
 NodeList *stmt_list_append(NodeList *list, Node *s);

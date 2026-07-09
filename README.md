@@ -33,16 +33,16 @@ make
 ## Status (v0.0.1.7)
 
 The pipeline runs end to end (lex → parse → sema → lower → liveness →
-regalloc → emit → `.s` → gcc) with a typed semantic layer and 510+ acceptance
+regalloc → emit → `.s` → gcc) with a typed semantic layer and 540+ acceptance
 tests.
 
 | Supported | Not yet |
 | --- | --- |
-| `int`, `char`, `long`, `void`, pointers (`*`, `&`, dereference) | unions, enums |
-| `unsigned` (`char`/`short`/`int`/`long`), usual arithmetic conversions | function pointers |
-| parenthesized declarators (`int (*p)[3]`), casts (`(int (*)[3])`) | preprocessor (`#include`, `#define`) |
-| N-dimensional arrays, `[]` subscript, `ptr ± int/long`, `ptr - ptr`, param decay | multiple translation units |
-| typed declarations, parameters, returns | `-W` CLI flags |
+| `int`, `char`, `long`, `void`, pointers (`*`, `&`, dereference) | function pointers |
+| `unsigned` (`char`/`short`/`int`/`long`), usual arithmetic conversions | preprocessor (`#include`, `#define`) |
+| parenthesized declarators (`int (*p)[3]`), casts (`(int (*)[3])`) | multiple translation units |
+| N-dimensional arrays, `[]` subscript, `ptr ± int/long`, `ptr - ptr`, param decay | `-W` CLI flags |
+| typed declarations, parameters, returns | |
 | **brace initializers** for scalar arrays and structs (partial init zero-fills) | |
 | unsized `T a[] = {…}` / `T a[][N] = {…}` bound inference (flat or nested) | |
 | scalar brace init `int x = {3};`, `int *p = {0};` | |
@@ -57,15 +57,18 @@ tests.
 | `int`/`long` promotions; `ptr - ptr` → `long` | |
 | warnings (`implicit` decl, unprototyped calls, `char` overflow, …) | |
 | `file:line:col` diagnostics, carets, `note:` spans, color (`auto`) | |
-| **`typedef`**, **`struct`** (tagged, forward-decl, layout), **`.` / `->`**, struct assign (`LIR_MEMCPY`), bitfields | |
-| `struct S *` parameters and returns | struct by-value param/return (ABI deferred) |
+| **`typedef`** (scoped names, declarator application) | |
+| **`struct`** (tagged, forward-decl, layout), **`.` / `->`**, struct assign (`LIR_MEMCPY`), bitfields | |
+| **`union`** (tagged, forward-decl, overlap layout), member access, union assign | |
+| **`enum`** (tagged/anonymous, enumerator constants, enum variables as `int`) | |
+| `struct S *` / `union U *` parameters and returns | struct/union by-value param/return (ABI deferred) |
 
 **Brace initializer scope (deferred):** file-scope/static aggregate init;
 string literals for `char[]`; nested brace init for pointer-to-array types.
 
-**Struct ABI (deferred, D17):** passing or returning a struct by value is
-rejected with a clear error until SysV AMD64 struct classification is
-implemented. Use pointers (`struct S *`) instead.
+**Struct/union ABI (deferred, D17):** passing or returning a struct or union by
+value is rejected with a clear error until SysV AMD64 struct classification is
+implemented. Use pointers (`struct S *`, `union U *`) instead.
 
 > Locals use type-aware stack layout (`char` 1 byte, `int` 4 bytes, `long` and
 > pointers 8 bytes). On x86-64 Linux (SysV LP64), `long` is 64 bits — the same
@@ -134,7 +137,11 @@ committed.
 - `0.0.1.5` — `long` (LP64 64-bit), literal suffixes, promotions, `ptr - ptr` ✓
 - `0.0.1.6` — LIR lowering, liveness, linear-scan register allocation ✓
 - `0.0.1.6` — `sizeof` (compile-time fold, abstract declarator types) ✓
-- later — preprocessor, struct-by-value ABI, and enough to compile real projects
+- `0.0.1.7` — `typedef` (scoped names, declarator application) ✓
+- `0.0.1.7` — `struct` (tags, forward-decl, layout, `.`/`->`, assign, bitfields) ✓
+- `0.0.1.7` — `union` (tags, forward-decl, overlap layout, member access, assign) ✓
+- `0.0.1.7` — `enum` (tagged/anonymous, enumerator ICEs, enum variables) ✓
+- later — preprocessor, struct/union-by-value ABI, and enough to compile real projects
 
 ## License
 

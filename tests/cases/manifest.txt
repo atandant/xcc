@@ -139,6 +139,12 @@ run|deref_int_pointer_read.c|7|
 run|deref_int_pointer_write.c|9|
 run|div_assoc.c|5|
 run|div_mod.c|5|
+run|enum_anonymous.c|6|
+run|enum_basic.c|2|
+run|enum_explicit_values.c|11|
+run|enum_prev_ref.c|3|
+run|enum_sizeof.c|4|
+run|enum_tagged_var.c|1|
 run|equality_precedence.c|1|
 xcc-error|error_addr_arith_non_lvalue.c|1|cannot take address of non-lvalue
 xcc-error|error_addr_assign_result.c|1|cannot take address of non-lvalue
@@ -174,6 +180,7 @@ xcc-error|error_conflicting_return_pointer.c|1|conflicting types for 'f'
 xcc-error|error_conflicting_return_type.c|1|conflicting types for 'f'
 xcc-error|error_deref_int.c|1|cannot dereference non-pointer type 'int'
 xcc-error|error_deref_void_pointer.c|1|dereference of void pointer
+xcc-error|error_enum_nonconst.c|1|enumerator value is not an integer constant expression
 xcc-error|error_function_redefinition.c|1|redefinition of 'f'
 xcc-error|error_hex_unsigned_long_overflow.c|1|integer constant out of range
 xcc-error|error_long_literal_overflow.c|1|integer constant out of range
@@ -210,11 +217,13 @@ xcc-error|error_struct_incomplete.c|1|variable 's' has incomplete type 'struct S
 xcc-error|error_struct_member_limit.c|1|struct exceeds translation limit of 127 members
 xcc-error|error_struct_nest_limit.c|1|struct nesting exceeds translation limit of 6 levels
 xcc-error|error_subscript_nonscalar.c|1|cannot dereference non-pointer type 'int'
+xcc-error|error_tag_kind_mismatch.c|1|use of 'S' with tag type that does not match previous declaration
 xcc-error|error_too_few_args.c|1|too few arguments to function 'add'
 xcc-error|error_too_many_args.c|1|too many arguments to function 'id'
 xcc-error|error_typedef_redef.c|1|redefinition of typedef 'Foo'
 xcc-error|error_ty_ptr_eq_mismatch.c|1|comparison between incompatible pointer types 'int *' and 'char *'
 xcc-error|error_undeclared.c|1|use of undeclared identifier 'x'
+xcc-error|error_union_incomplete.c|1|variable 'u' has incomplete type 'union U'
 xcc-error|error_void_condition.c|1|condition has non-scalar type 'void'
 xcc-error|error_void_local.c|1|variable 'x' has non-object type 'void'
 xcc-error|error_void_return_value.c|1|void function 'f' should not return a value
@@ -499,6 +508,12 @@ run|u_index_unsigned.c|77|
 run|u_long_decl.c|17|
 run|u_mixed_promote.c|50|
 run|unary_precedence.c|4|
+run|union_assign.c|55|
+run|union_basic.c|42|
+run|union_in_struct.c|99|
+run|union_overlap.c|1|
+run|union_ptr_member.c|7|
+run|union_sizeof.c|8|
 run|unsized_int_1d.c|6|
 run|unsized_long_1d.c|60|
 run|unsized_md_flat.c|5|
