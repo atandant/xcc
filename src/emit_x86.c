@@ -125,6 +125,38 @@ static int vreg_phys(EmitCtx *c, int v)
     return c->alloc->vreg_reg[v];
 }
 
+static int callee_saved_count(AllocResult *alloc)
+{
+    int n = 0;
+
+    for (int i = 0; i < PHYS_COUNT; i++) {
+        if (alloc->used_callee_saved & (1u << i))
+            n++;
+    }
+    return n;
+}
+
+static int callee_save_area(AllocResult *alloc)
+{
+    int n = callee_saved_count(alloc);
+
+    return n * 8 + (n & 1 ? 8 : 0);
+}
+
+static long fp_disp(EmitCtx *c, long disp)
+{
+    if (disp <= (long)INT_MIN + 1)
+        return disp;
+    if (disp < 0)
+        return disp - callee_save_area(c->alloc);
+    return disp;
+}
+
+static int vreg_off(EmitCtx *c, int v)
+{
+    return (int)fp_disp(c, c->alloc->vreg_off[v]);
+}
+
 static int dst_phys(EmitCtx *c, int dst, int *phys)
 {
     int p = vreg_phys(c, dst);
@@ -145,7 +177,7 @@ static void materialize_vreg(EmitCtx *c, int v, const char *reg)
         if (strcmp(pn, reg) != 0)
             fprintf(c->out, "  mov %s, %s\n", pn, reg);
     } else {
-        fprintf(c->out, "  mov %d(%%rbp), %s\n", c->alloc->vreg_off[v], reg);
+        fprintf(c->out, "  mov %d(%%rbp), %s\n", vreg_off(c, v), reg);
     }
 
     if (strcmp(reg, "%rax") == 0)
@@ -162,7 +194,7 @@ static void store_vreg_value(EmitCtx *c, int v, const char *reg)
         if (strcmp(pn, reg) != 0)
             fprintf(c->out, "  mov %s, %s\n", reg, pn);
     } else {
-        fprintf(c->out, "  mov %s, %d(%%rbp)\n", reg, c->alloc->vreg_off[v]);
+        fprintf(c->out, "  mov %s, %d(%%rbp)\n", reg, vreg_off(c, v));
     }
 
     if (strcmp(reg, "%rax") == 0)
@@ -178,7 +210,7 @@ static int spilled_vreg_off(EmitCtx *c, Operand op)
     int v = op.u.vreg;
     if (c->alloc->vreg_reg[v] >= 0)
         return INT_MAX;
-    return c->alloc->vreg_off[v];
+    return vreg_off(c, v);
 }
 
 static void emit_vreg_slot(EmitCtx *c, int v, const char *reg)
@@ -194,13 +226,15 @@ static void store_vreg_slot(EmitCtx *c, int v, const char *reg)
 static void load_mem_addr(EmitCtx *c, Operand mem, const char *reg)
 {
     if (mem.u.mem.base == LIR_FP) {
+        long disp = fp_disp(c, mem.u.mem.disp);
+
         if (mem.u.mem.index == LIR_NO_IDX) {
-            fprintf(c->out, "  lea %ld(%%rbp), %s\n", mem.u.mem.disp, reg);
+            fprintf(c->out, "  lea %ld(%%rbp), %s\n", disp, reg);
             return;
         }
         emit_vreg_slot(c, mem.u.mem.index, "%r11");
         fprintf(c->out, "  lea %ld(%%rbp,%%r11,%d), %s\n",
-                mem.u.mem.disp, mem.u.mem.scale, reg);
+                disp, mem.u.mem.scale, reg);
         return;
     }
 
@@ -368,7 +402,7 @@ static void emit_cmp(EmitCtx *c, Operand a, Operand b, LirWidth w)
     }
 
     if (b.kind == OPND_VREG) {
-        int off = c->alloc->vreg_off[b.u.vreg];
+        int off = vreg_off(c, b.u.vreg);
         if (w == LIR_W4)
             fprintf(c->out, "  cmpl %d(%%rbp), %s\n", off, ar);
         else
@@ -402,7 +436,7 @@ static void emit_store_mem(EmitCtx *c, Operand mem, LirWidth w, int bytes)
 
 static void emit_load_fp_slot(EmitCtx *c, Operand mem, int bytes, LirSign sgn)
 {
-    long off = mem.u.mem.disp;
+    long off = fp_disp(c, mem.u.mem.disp);
     switch (bytes) {
     case 1:
         if (sgn == LIR_SGN_S)
@@ -427,7 +461,7 @@ static void emit_load_fp_slot(EmitCtx *c, Operand mem, int bytes, LirSign sgn)
 
 static void emit_store_fp_slot(EmitCtx *c, Operand mem, int bytes)
 {
-    long off = mem.u.mem.disp;
+    long off = fp_disp(c, mem.u.mem.disp);
     switch (bytes) {
     case 1:
         fprintf(c->out, "  mov %%al, %ld(%%rbp)\n", off);
@@ -533,14 +567,15 @@ static void emit_record_param_spill(EmitCtx *c, const TargetDesc *td, Param *p)
 {
     AbiArgPlan ap;
     Type *ty = type_decay(p->ty);
+    int off = (int)fp_disp(c, p->offset);
 
     abi_arg_plan(ty, &ap);
-    emit_reg_to_stack(c, td->arg_regs[p->abi_gpr_start], p->offset,
+    emit_reg_to_stack(c, td->arg_regs[p->abi_gpr_start], off,
                       ap.size < 8 ? ap.size : 8);
     if (ap.kind == ABI_ARG_GPR_PAIR) {
         int tail = ap.size - 8;
         emit_reg_to_stack(c, td->arg_regs[p->abi_gpr_start + 1],
-                          p->offset + 8, tail < 8 ? tail : 8);
+                          off + 8, tail < 8 ? tail : 8);
     }
 }
 
@@ -548,19 +583,20 @@ static void emit_arg_reg_store(EmitCtx *c, int phys, Type *ty, int offset)
 {
     TypeScalarInfo si;
     int w = type_scalar_info(ty, &si) ? si.width : 8;
+    int off = (int)fp_disp(c, offset);
 
     switch (w) {
     case 1:
-        fprintf(c->out, "  mov %s, %d(%%rbp)\n", reg8_name(phys), offset);
+        fprintf(c->out, "  mov %s, %d(%%rbp)\n", reg8_name(phys), off);
         return;
     case 2:
-        fprintf(c->out, "  mov %s, %d(%%rbp)\n", reg16_name(phys), offset);
+        fprintf(c->out, "  mov %s, %d(%%rbp)\n", reg16_name(phys), off);
         return;
     case 4:
-        fprintf(c->out, "  mov %s, %d(%%rbp)\n", reg32_name(phys), offset);
+        fprintf(c->out, "  mov %s, %d(%%rbp)\n", reg32_name(phys), off);
         return;
     default:
-        fprintf(c->out, "  mov %s, %d(%%rbp)\n", reg64_name(phys), offset);
+        fprintf(c->out, "  mov %s, %d(%%rbp)\n", reg64_name(phys), off);
         return;
     }
 }
@@ -917,6 +953,7 @@ static const int x86_callee_save_order[] = {
 static void emit_prologue(EmitCtx *c)
 {
     AllocResult *alloc = c->alloc;
+    int save_pad = callee_saved_count(alloc) & 1 ? 8 : 0;
 
     fprintf(c->out, "  push %%rbp\n");
     fprintf(c->out, "  mov %%rsp, %%rbp\n");
@@ -925,6 +962,8 @@ static void emit_prologue(EmitCtx *c)
         if (alloc->used_callee_saved & (1u << r))
             fprintf(c->out, "  push %s\n", reg64_name(r));
     }
+    if (save_pad)
+        fprintf(c->out, "  sub $%d, %%rsp\n", save_pad);
     if (alloc->frame_size)
         fprintf(c->out, "  sub $%d, %%rsp\n", alloc->frame_size);
 }
@@ -932,9 +971,12 @@ static void emit_prologue(EmitCtx *c)
 static void emit_epilogue(EmitCtx *c)
 {
     AllocResult *alloc = c->alloc;
+    int save_pad = callee_saved_count(alloc) & 1 ? 8 : 0;
 
     if (alloc->frame_size)
         fprintf(c->out, "  add $%d, %%rsp\n", alloc->frame_size);
+    if (save_pad)
+        fprintf(c->out, "  add $%d, %%rsp\n", save_pad);
     for (int i = 4; i >= 0; i--) {
         int r = x86_callee_save_order[i];
         if (alloc->used_callee_saved & (1u << r))
@@ -958,7 +1000,8 @@ void emit_x86_function(LirFn *lf, Function *fn, AllocResult *alloc,
     emit_prologue(&ctx);
 
     if (fn->abi_ret_sret)
-        fprintf(out, "  mov %%rdi, %d(%%rbp)\n", fn->abi_sret_offset);
+        fprintf(out, "  mov %%rdi, %ld(%%rbp)\n",
+                fp_disp(&ctx, fn->abi_sret_offset));
 
     for (Param *p = fn->params; p; p = p->next) {
         if (p->abi_gpr_start < 0)
