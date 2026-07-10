@@ -181,6 +181,7 @@ xcc-error|error_conflicting_return_type.c|1|conflicting types for 'f'|
 xcc-error|error_deref_int.c|1|cannot dereference non-pointer type 'int'|
 xcc-error|error_deref_void_pointer.c|1|dereference of void pointer|
 xcc-error|error_enum_nonconst.c|1|enumerator value is not an integer constant expression|
+xcc-error|error_fnptr_arith.c|1|invalid operands to arithmetic operator|
 xcc-error|error_function_redefinition.c|1|redefinition of 'f'|
 xcc-error|error_hex_unsigned_long_overflow.c|1|integer constant out of range|
 xcc-error|error_long_literal_overflow.c|1|integer constant out of range|
@@ -228,6 +229,16 @@ xcc-error|error_void_return_value.c|1|void function 'f' should not return a valu
 run|expr_stmt_effect.c|7||
 run|falloff_non_main_returns_zero.c|0||
 run|fallthrough.c|0||
+run|fnptr_cast_void.c|2||
+run|fnptr_decay_addr.c|7||
+run|fnptr_decl_call.c|42||
+run|fnptr_eq_null.c|1||
+run|fnptr_param.c|11||
+run|fnptr_postfix.c|10||
+run|fnptr_return.c|4||
+run|fnptr_struct_member.c|6||
+run|fnptr_typedef.c|5||
+run|fnptr_typedef_func.c|9||
 run|for_body_block_scope.c|10||
 run|for_condition_assignment.c|3||
 run|for_count_sum.c|10||
@@ -537,6 +548,8 @@ run|void_param_no_args.c|9||
 run|void_ptr_assign_from_int_ptr.c|0||
 run|void_ptr_decl.c|0||
 xcc-warning|warn_char_value_narrowing.c|0|conversion from 'int' to 'char' may alter value|-Wall
+xcc-warning|warn_fnptr_unprototyped.c|0|call to function pointer without a prototype|
+xcc-warning|warn_fnptr_void_implicit.c|0|conversion between 'int (*)(int)' and 'void *' without a cast|-Wall
 xcc-warning|warn_implicit_function_decl.c|0|implicit declaration of function 'foo'|
 run|warn_implicit_function_decl_nowarn.c|0||-Wno-implicit-function-declaration
 xcc-warning|warn_implicit_void_pointer.c|0|conversion from 'int *' to 'void *' without a cast|-Wall

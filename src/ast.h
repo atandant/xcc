@@ -11,6 +11,7 @@
 typedef struct Node Node;
 
 typedef struct Declarator Declarator;
+typedef struct ParamClause ParamClause;
 struct Declarator {
     char *name;
     int nptr;
@@ -20,6 +21,7 @@ struct Declarator {
     Node *dims_paren_outer[MAX_DECL_DIMS];
     int was_paren;     /* `(` declarator `)` with no following `[]` yet */
     Declarator *inner; /* set when `[]` immediately follows `( declarator )` */
+    ParamClause *func_params; /* `D(params)` suffix; NULL if not a function declarator */
     Node *bit_width_expr; /* struct bit-field `: width`; NULL if ordinary member */
 };
 
@@ -37,7 +39,7 @@ typedef enum {
     ND_EXPR_STMT,  /* operand;                     */
     ND_DECL,       /* type-specifier declarator [= init]; */
     ND_INIT_LIST,  /* brace initializer: body chain of expr / nested lists */
-    ND_CALL,       /* name(args...)                */
+    ND_CALL,       /* callee(args...)              */
     ND_IF,         /* if (cond) then [else else]   */
     ND_WHILE,      /* while (cond) body            */
     ND_FOR,        /* for (init; cond; step) body  */
@@ -61,13 +63,16 @@ struct Node {
 
     Type *ty;          /* expression type (filled by sema)          */
     int is_lvalue;     /* 1 if this expression is an lvalue (sema)  */
-    int var_decay;     /* ND_VAR: 1 → address of array object (sema) */
+    int var_decay;     /* ND_VAR: array decay address (sema); legacy alias */
 
     long val;          /* ND_NUM                                    */
     int has_long_suffix; /* ND_NUM: literal had an L/l suffix (C89 3.1.5) */
     int is_hex_literal;  /* ND_NUM: 0x/0X constant (C89 3.1.5 typing) */
     int is_octal_literal; /* ND_NUM: 0-prefixed octal (C89 3.1.5 typing) */
-    char *name;        /* ND_VAR, ND_DECL                           */
+    char *name;        /* ND_VAR, ND_DECL; ND_CALL direct callee name */
+    Node *callee;      /* ND_CALL: callee expression (sema)         */
+    int call_direct;   /* ND_CALL: 1 → emit direct call by name     */
+    int func_decay;    /* ND_VAR: 1 → function/array address escape  */
     int offset;        /* stack offset from frame pointer (sema)     */
 
     BinOp op;          /* ND_BINOP                                  */
@@ -107,11 +112,11 @@ struct Param {
 
 /* Result of parsing a parenthesized parameter list. `prototyped` is 0 for a
  * bare `()` (unspecified args, C89) and 1 for `(void)` or a real list. */
-typedef struct {
+struct ParamClause {
     Param *head;
     int count;
     int prototyped;
-} ParamClause;
+};
 
 typedef struct {
     int offset;
@@ -185,7 +190,7 @@ Node *node_decl(char *name, Type *spec_ty, Declarator *decl, Node *init,
                 SourceLoc loc);
 Node *node_init_list(Node *items, SourceLoc loc);
 Node *init_list_append(Node *head, Node *item);
-Node *node_call(char *name, NodeList *args, SourceLoc loc);
+Node *node_call(Node *callee, NodeList *args, SourceLoc loc);
 Node *node_if(Node *cond, Node *then_body, Node *else_body, SourceLoc loc);
 Node *node_while(Node *cond, Node *body, SourceLoc loc);
 Node *node_for(Node *init, Node *cond, Node *step, Node *body, SourceLoc loc);
@@ -221,6 +226,7 @@ Declarator *declarator_ptr(Declarator *d);
 Declarator *declarator_add_dim(Declarator *d, Node *dim, int after_paren);
 Declarator *declarator_paren_group(Declarator *d);
 Declarator *declarator_paren_outer(Declarator *d, Node *dim);
+Declarator *declarator_func(Declarator *d, ParamClause *pc);
 int declarator_was_paren(const Declarator *d);
 char *declarator_name(const Declarator *d);
 

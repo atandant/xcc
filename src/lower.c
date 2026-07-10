@@ -1019,6 +1019,14 @@ static int lower_marshal_record_arg(LowerCtx *c, Node *arg, Operand *reg_slots,
     return 0;
 }
 
+/* For (*fp)(...), use the fnptr value — not the dereferenced function type. */
+static int lower_call_callee(LowerCtx *c, Node *n)
+{
+    if (n->kind == ND_DEREF && n->operand && type_is_function_pointer(n->operand->ty))
+        return lower_expr(c, n->operand);
+    return lower_expr(c, n);
+}
+
 static int lower_call_ex(LowerCtx *c, Node *n, int result_off)
 {
     Type *ret_ty = n->func_ty ? n->func_ty->ret : type_int();
@@ -1094,12 +1102,20 @@ static int lower_call_ex(LowerCtx *c, Node *n, int result_off)
     for (i = 0; i < nstack; i++)
         args[nreg + i] = stack_slots[i];
 
-    emit(c, (Instr){
-        .op = LIR_CALL,
-        .call_name = n->name,
-        .nargs = total,
-        .call_args = args,
-    });
+    {
+        int call_reg = 0;
+
+        if (!n->call_direct)
+            call_reg = lower_call_callee(c, n->callee);
+        emit(c, (Instr){
+            .op = LIR_CALL,
+            .call_name = n->call_direct ? n->name : NULL,
+            .call_indirect = n->call_direct ? 0 : 1,
+            .call_reg = call_reg,
+            .nargs = total,
+            .call_args = args,
+        });
+    }
 
     if (abi_type_is_record_pass(ret_ty)) {
         if (ret_plan.kind == ABI_RET_SRET) {
@@ -1203,6 +1219,16 @@ static void lower_return_record(LowerCtx *c, Node *n, Type *ret_ty)
 
 static int lower_expr(LowerCtx *c, Node *n)
 {
+    if (n->func_decay && n->kind == ND_VAR) {
+        int dst = fresh(c);
+
+        emit(c, (Instr){
+            .op = LIR_LEA_SYM,
+            .dst = dst,
+            .sym_name = n->name,
+        });
+        return dst;
+    }
     if (n->var_decay)
         return lower_addr(c, n);
 
@@ -1235,6 +1261,16 @@ static int lower_expr(LowerCtx *c, Node *n)
         int dst = fresh(c);
         switch (n->operand->kind) {
         case ND_VAR:
+            if (n->operand->ty && n->operand->ty->kind == TY_FUNC) {
+                int dst = fresh(c);
+
+                emit(c, (Instr){
+                    .op = LIR_LEA_SYM,
+                    .dst = dst,
+                    .sym_name = n->operand->name,
+                });
+                return dst;
+            }
             emit(c, (Instr){
                 .op = LIR_LEA,
                 .dst = dst,

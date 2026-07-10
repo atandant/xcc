@@ -123,6 +123,7 @@ int type_is_integer(Type *ty);
 int type_is_signed(Type *ty);
 int type_is_unsigned(Type *ty);
 int type_is_pointer(Type *ty);
+int type_is_function_pointer(Type *ty);
 int type_is_scalar(Type *ty);
 int type_is_object(Type *ty);
 int type_is_complete(Type *ty);

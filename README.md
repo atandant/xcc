@@ -33,16 +33,17 @@ make
 ## Status (v0.0.1.7)
 
 The pipeline runs end to end (lex → parse → sema → lower → liveness →
-regalloc → emit → `.s` → gcc) with a typed semantic layer and 540+ acceptance
+regalloc → emit → `.s` → gcc) with a typed semantic layer and 565+ acceptance
 tests.
 
 | Supported | Not yet |
 | --- | --- |
-| `int`, `char`, `long`, `void`, pointers (`*`, `&`, dereference) | function pointers |
-| `unsigned` (`char`/`short`/`int`/`long`), usual arithmetic conversions | preprocessor (`#include`, `#define`) |
-| parenthesized declarators (`int (*p)[3]`), casts (`(int (*)[3])`) | multiple translation units |
+| `int`, `char`, `long`, `void`, pointers (`*`, `&`, dereference) | preprocessor (`#include`, `#define`) |
+| `unsigned` (`char`/`short`/`int`/`long`), usual arithmetic conversions | multiple translation units |
+| parenthesized declarators (`int (*p)[3]`), casts (`(int (*)[3])`) | |
 | N-dimensional arrays, `[]` subscript, `ptr ± int/long`, `ptr - ptr`, param decay | |
 | typed declarations, parameters, returns | |
+| **function pointers** (declarators, typedef, casts, indirect calls) | |
 | **brace initializers** for scalar arrays and structs (partial init zero-fills) | |
 | unsized `T a[] = {…}` / `T a[][N] = {…}` bound inference (flat or nested) | |
 | scalar brace init `int x = {3};`, `int *p = {0};` | |
@@ -66,6 +67,11 @@ tests.
 
 **Brace initializer scope (deferred):** file-scope/static aggregate init;
 string literals for `char[]`; nested brace init for pointer-to-array types.
+
+**Function pointers (deferred):** arrays of function pointers (`int (*a[3])(int)`);
+brace initializers for fnptrs; nested declarators such as
+`int (*(*x)(int))(char)` (use typedefs); file-scope definitions whose return
+type is a function pointer without a typedef (e.g. `int (*f(void))(int) { … }`).
 
 **Struct/union ABI:** passing or returning a struct or union by value is fully
 supported (following SysV AMD64 classification: <= 16 bytes in GPRs, > 16 bytes
@@ -146,6 +152,7 @@ committed.
 - `0.0.1.7` — `struct` (tags, forward-decl, layout, `.`/`->`, assign, bitfields) ✓
 - `0.0.1.7` — `union` (tags, forward-decl, overlap layout, member access, assign) ✓
 - `0.0.1.7` — `enum` (tagged/anonymous, enumerator ICEs, enum variables) ✓
+- `0.0.1.7` — function pointers (declarators, typedef, casts, indirect calls) ✓
 - later — preprocessor, struct/union-by-value ABI, and enough to compile real projects
 
 ## License

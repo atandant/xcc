@@ -158,6 +158,7 @@ int cosfold_expr(Node **np)
         changed |= cosfold_expr(&n->rhs);
         return changed;
     case ND_CALL:
+        changed |= cosfold_expr(&n->callee);
         for (Node **ap = &n->args; *ap; ap = &(*ap)->next)
             changed |= cosfold_expr(ap);
         return changed;

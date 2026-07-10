@@ -263,6 +263,7 @@ static int prop_expr(Node **np, int rvalue, int allow_subst)
         }
         return changed;
     case ND_CALL:
+        changed |= prop_expr(&n->callee, 1, 0);
         return prop_expr_list(&n->args, 0);
     case ND_NUM:
     case ND_VAR:

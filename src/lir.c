@@ -161,6 +161,7 @@ static const char *op_name(LirOp op)
     case LIR_LOAD:  return "load";
     case LIR_STORE: return "store";
     case LIR_LEA:   return "lea";
+    case LIR_LEA_SYM: return "lea_sym";
     case LIR_ADD:   return "add";
     case LIR_SUB:   return "sub";
     case LIR_MUL:   return "mul";
@@ -271,6 +272,9 @@ void lir_dump_fn(LirFn *fn, FILE *out)
         case LIR_LEA:
             dump_operand(out, ins->a);
             break;
+        case LIR_LEA_SYM:
+            fprintf(out, "%s", ins->sym_name ? ins->sym_name : "?");
+            break;
         case LIR_ADD:
         case LIR_SUB:
         case LIR_MUL:
@@ -301,7 +305,10 @@ void lir_dump_fn(LirFn *fn, FILE *out)
             fprintf(out, "L%d", ins->label);
             break;
         case LIR_CALL:
-            fprintf(out, "%s(", ins->call_name);
+            if (ins->call_indirect)
+                fprintf(out, "*v%d(", ins->call_reg);
+            else
+                fprintf(out, "%s(", ins->call_name);
             for (int a = 0; a < ins->nargs; a++) {
                 if (a)
                     fprintf(out, ", ");

@@ -257,6 +257,8 @@ struct_member_decl:
         { $$ = declarator_add_dim($1, $3, declarator_was_paren($1)); }
   | struct_member_decl '[' ']'
         { $$ = declarator_add_dim($1, NULL, declarator_was_paren($1)); }
+  | struct_member_decl '(' param_clause ')'
+        { $$ = declarator_func($1, $3); }
   ;
 
 specifier:
@@ -279,6 +281,10 @@ declarator:
   | direct_declarator
   ;
 
+/* SHELVED: nested function-pointer declarators such as
+ *   int (*(*x)(int))(char)
+ * (legal C89, parser/declarator builder not yet). Use typedefs meanwhile. */
+
 direct_declarator:
     IDENT %prec PREC_STRUCT_MEMBER_END
         { $$ = declarator_ident($1); }
@@ -290,6 +296,8 @@ direct_declarator:
         { $$ = declarator_add_dim($1, $3, declarator_was_paren($1)); }
   | direct_declarator '[' ']'
         { $$ = declarator_add_dim($1, NULL, declarator_was_paren($1)); }
+  | direct_declarator '(' param_clause ')'
+        { $$ = declarator_func($1, $3); }
   ;
 
 abstract_declarator_opt:
@@ -313,6 +321,8 @@ direct_abstract_declarator:
         { $$ = declarator_add_dim($1, $3, declarator_was_paren($1)); }
   | direct_abstract_declarator '[' ']'
         { $$ = declarator_add_dim($1, NULL, declarator_was_paren($1)); }
+  | direct_abstract_declarator '(' param_clause ')'
+        { $$ = declarator_func($1, $3); }
   ;
 
 param_clause:
@@ -411,7 +421,7 @@ arg_expr:
                                $$->is_hex_literal = $1.is_hex;
                                $$->is_octal_literal = $1.is_octal; }
   | IDENT                    { $$ = node_var($1, LOC(@1)); }
-  | IDENT '(' arg_clause ')' { $$ = node_call($1, $3, LOC(@1)); }
+  | arg_expr '(' arg_clause ')' { $$ = node_call($1, $3, LOC(@2)); }
   | arg_expr '=' arg_expr    { $$ = node_assign($1, $3, LOC(@2)); }
   | arg_expr '+' arg_expr    { $$ = node_binop(OP_ADD, $1, $3, LOC(@2)); }
   | arg_expr '-' arg_expr    { $$ = node_binop(OP_SUB, $1, $3, LOC(@2)); }

@@ -143,6 +143,11 @@ int type_is_unsigned(Type *ty)
 
 int type_is_pointer(Type *ty) { return ty && ty->kind == TY_PTR; }
 
+int type_is_function_pointer(Type *ty)
+{
+    return type_is_pointer(ty) && ty->base && ty->base->kind == TY_FUNC;
+}
+
 int type_is_typedef_ref(Type *ty)
 {
     return ty && ty->kind == TY_TYPEDEF_REF;
@@ -405,6 +410,13 @@ int type_compatible(Type *a, Type *b)
         return 1;
 
     if (type_is_pointer(a) && type_is_pointer(b)) {
+        if (a->base && a->base->kind == TY_FUNC) {
+            if (!b->base || b->base->kind != TY_FUNC)
+                return 0;
+            return type_same(a->base, b->base);
+        }
+        if (b->base && b->base->kind == TY_FUNC)
+            return 0;
         if (is_void_ptr(a) || is_void_ptr(b))
             return 1;
         return type_same(a->base, b->base);
@@ -658,6 +670,8 @@ Type *type_decay(Type *ty)
 {
     if (type_is_array(ty))
         return type_ptr(type_array_elem(ty));
+    if (ty && ty->kind == TY_FUNC)
+        return type_ptr(ty);
     return ty;
 }
 
@@ -707,6 +721,38 @@ const char *type_name(Type *ty)
         return base;
     }
     case TY_PTR: {
+        if (ty->base && ty->base->kind == TY_FUNC) {
+            Type *fn = ty->base;
+            const char *ret = type_name(fn->ret);
+            size_t n = strlen(ret) + 16;
+
+            if (!fn->prototyped)
+                n += 4;
+            else if (fn->nparams == 0)
+                n += 6;
+            else {
+                for (int i = 0; i < fn->nparams; i++)
+                    n += strlen(type_name(fn->params[i])) + 2;
+            }
+
+            char *buf = arena_alloc(n);
+            int pos = snprintf(buf, n, "%s (*)(", ret);
+
+            if (!fn->prototyped)
+                pos += snprintf(buf + pos, n - (size_t)pos, ")");
+            else if (fn->nparams == 0)
+                pos += snprintf(buf + pos, n - (size_t)pos, "void)");
+            else {
+                for (int i = 0; i < fn->nparams; i++) {
+                    if (i > 0)
+                        pos += snprintf(buf + pos, n - (size_t)pos, ", ");
+                    pos += snprintf(buf + pos, n - (size_t)pos, "%s",
+                                    type_name(fn->params[i]));
+                }
+                snprintf(buf + pos, n - (size_t)pos, ")");
+            }
+            return buf;
+        }
         const char *inner = type_name(ty->base);
         size_t n = strlen(inner) + 3;
         char *buf = arena_alloc(n);
@@ -721,7 +767,7 @@ const char *type_name(Type *ty)
         return buf;
     }
     case TY_FUNC:
-        return "function";
+        return type_func_sig(ty);
     case TY_TYPEDEF_REF:
         return ty->ref_name ? ty->ref_name : "<typedef-ref>";
     case TY_STRUCT:

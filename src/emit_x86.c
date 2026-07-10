@@ -694,6 +694,11 @@ static void emit_instr(EmitCtx *c, Instr *ins)
         store_vreg_slot(c, ins->dst, "%rax");
         return;
 
+    case LIR_LEA_SYM:
+        fprintf(c->out, "  leaq %s(%%rip), %%rax\n", ins->sym_name);
+        store_vreg_slot(c, ins->dst, "%rax");
+        return;
+
     case LIR_ADD:
     case LIR_SUB:
     case LIR_MUL:
@@ -906,7 +911,12 @@ static void emit_instr(EmitCtx *c, Instr *ins)
             load_operand(c, ins->call_args[i], reg64_name(preg), LIR_W8);
         }
         fprintf(c->out, "  mov $0, %%al\n");
-        fprintf(c->out, "  call %s\n", ins->call_name);
+        if (ins->call_indirect) {
+            load_operand(c, lir_vreg(ins->call_reg), "%rax", LIR_W8);
+            fprintf(c->out, "  call *%%rax\n");
+        } else {
+            fprintf(c->out, "  call %s\n", ins->call_name);
+        }
         return;
     }
 

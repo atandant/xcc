@@ -138,7 +138,15 @@ static int expr_assignable_to(Type *dst, Node *src)
         return 0;
     if (type_assignable(dst, src->ty))
         return 1;
-    return type_is_pointer(dst) && is_null_ptr_constant(src);
+    if (type_is_pointer(dst) && is_null_ptr_constant(src))
+        return 1;
+    if (type_is_pointer(dst) && type_is_function_pointer(src->ty) &&
+        is_void_ptr_type(dst))
+        return 1;
+    if (type_is_function_pointer(dst) && type_is_pointer(src->ty) &&
+        is_void_ptr_type(src->ty))
+        return 1;
+    return 0;
 }
 
 /* char storage is unsigned byte-wide (movzbl); warn on out-of-range constants. */
@@ -161,11 +169,21 @@ static void warn_value_conversion(SourceLoc loc, Type *dst, Node *src)
     }
 
     if (type_is_pointer(dst) && type_is_pointer(src->ty) &&
-        type_assignable(dst, src->ty) && !type_same(dst, src->ty) &&
-        (is_void_ptr_type(dst) || is_void_ptr_type(src->ty))) {
-        diag_warn(W_IMPLICIT_VOID_POINTER, loc,
-                  "conversion from '%s' to '%s' without a cast",
-                  type_name(src->ty), type_name(dst));
+        !type_same(dst, src->ty)) {
+        int dst_fn = dst->base && dst->base->kind == TY_FUNC;
+        int src_fn = src->ty->base && src->ty->base->kind == TY_FUNC;
+
+        if (dst_fn || src_fn) {
+            if (is_void_ptr_type(dst) || is_void_ptr_type(src->ty))
+                diag_warn(W_IMPLICIT_VOID_POINTER, loc,
+                          "conversion between '%s' and '%s' without a cast",
+                          type_name(src->ty), type_name(dst));
+        } else if (type_assignable(dst, src->ty) &&
+                   (is_void_ptr_type(dst) || is_void_ptr_type(src->ty))) {
+            diag_warn(W_IMPLICIT_VOID_POINTER, loc,
+                      "conversion from '%s' to '%s' without a cast",
+                      type_name(src->ty), type_name(dst));
+        }
     }
 }
 
@@ -206,6 +224,7 @@ static void check_init_from_self(Node *n, Node *decl)
         check_init_from_self(n->rhs, decl);
         return;
     case ND_CALL:
+        check_init_from_self(n->callee, decl);
         for (Node *a = n->args; a; a = a->next)
             check_init_from_self(a, decl);
         return;
@@ -295,6 +314,8 @@ static int eq_operands_compatible(Node *lhs, Node *rhs)
 
 static int rel_operands_compatible(Node *lhs, Node *rhs)
 {
+    if (type_is_function_pointer(lhs->ty) || type_is_function_pointer(rhs->ty))
+        return 0;
     return (type_is_integer(lhs->ty) && type_is_integer(rhs->ty)) ||
            (type_is_pointer(lhs->ty) && type_is_pointer(rhs->ty) &&
             type_compatible(lhs->ty, rhs->ty));
@@ -748,6 +769,8 @@ static int check_arith_binop(Node *n)
     }
 
     if (n->op == OP_ADD) {
+        if (type_is_function_pointer(l) || type_is_function_pointer(r))
+            return 0;
         /* C89 3.3.6: integer operand may be char, int, or long (after
          * integral promotion for narrower types). */
         if (type_is_pointer(l) && type_is_integer(r)) {
@@ -761,6 +784,8 @@ static int check_arith_binop(Node *n)
     }
 
     if (n->op == OP_SUB) {
+        if (type_is_function_pointer(l) || type_is_function_pointer(r))
+            return 0;
         if (type_is_pointer(l) && type_is_integer(r)) {
             n->ty = l;
             return 1;
@@ -791,11 +816,17 @@ static void resolve_expr_ctx(Node *n, ExprCtx ctx)
 
     resolve_expr_inner(n, ctx);
 
-    /* C89 3.2.2.1: arrays and functions do not decay inside sizeof. */
-    if (ctx == CTX_RVALUE && type_is_array(n->ty)) {
-        n->ty = type_decay(n->ty);
-        n->is_lvalue = 0;
-        n->var_decay = 1;
+    /* C89 3.2.2.1: arrays and functions do not decay inside sizeof or &. */
+    if (ctx == CTX_RVALUE) {
+        if (type_is_array(n->ty)) {
+            n->ty = type_decay(n->ty);
+            n->is_lvalue = 0;
+            n->var_decay = 1;
+        } else if (n->ty && n->ty->kind == TY_FUNC) {
+            n->ty = type_decay(n->ty);
+            n->is_lvalue = 0;
+            n->func_decay = 1;
+        }
     }
 }
 
@@ -846,13 +877,13 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
         long enum_val;
 
         n->var_decay = 0;
+        n->func_decay = 0;
         if (!scope_lookup(n->name, &off, &decl_ty)) {
-            FuncSym *fs = (ctx == CTX_SIZEOF_OPERAND) ? functab_find(n->name)
-                                                      : NULL;
+            FuncSym *fs = functab_find(n->name);
 
             if (fs) {
                 n->ty = fs->ty;
-                n->is_lvalue = 1;
+                n->is_lvalue = 0;
             } else if (enum_const_lookup(n->name, &enum_val)) {
                 n->kind = ND_NUM;
                 n->val = enum_val;
@@ -878,64 +909,100 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
     case ND_CALL: {
         int off;
         FuncSym *s = NULL;
+        Type *fty = NULL;
 
         n->ty = type_int();
         n->func_ty = NULL;
+        n->call_direct = 0;
         n->is_lvalue = 0;
         n->var_decay = 0;
         if (n->nargs > XCC_MAX_CALL_ARGS) {
             diag_error_at(n->loc, "too many arguments in function call");
         }
+        if (!n->callee) {
+            diag_error_at(n->loc, "called object is not a function");
+            return;
+        }
+        if (n->callee->kind == ND_VAR) {
+            if (!scope_lookup(n->callee->name, &off, NULL) &&
+                !functab_find(n->callee->name)) {
+                FuncSym *imp = functab_add(n->callee->name,
+                                           type_func(type_int(), NULL, 0, 0),
+                                           0, 1, n->loc);
+                if (imp)
+                    diag_warn(W_IMPLICIT_FUNCTION_DECLARATION, n->loc,
+                              "implicit declaration of function '%s'",
+                              n->callee->name);
+            }
+        }
+        resolve_expr_ctx(n->callee, CTX_RVALUE);
         for (Node *a = n->args; a; a = a->next)
             resolve_expr_ctx(a, CTX_RVALUE);
 
-        if (scope_lookup(n->name, &off, NULL)) {
-            diag_error_at(n->loc, "called object '%s' is not a function",
-                          n->name);
-        } else {
-            s = functab_find(n->name);
-            if (!s) {
-                s = functab_add(n->name, type_func(type_int(), NULL, 0, 0), 0, 1,
-                                n->loc);
-                if (s)
-                    diag_warn(W_IMPLICIT_FUNCTION_DECLARATION, n->loc,
-                              "implicit declaration of function '%s'", n->name);
+        if (n->callee->kind == ND_VAR) {
+            Type *decl_ty = NULL;
+
+            if (scope_lookup(n->callee->name, &off, &decl_ty)) {
+                if (type_is_function_pointer(decl_ty))
+                    fty = decl_ty->base;
+                else
+                    diag_error_at(n->loc, "called object '%s' is not a function",
+                                  n->callee->name);
             } else {
-                if (s->implicit)
-                    diag_warn(W_IMPLICIT_FUNCTION_DECLARATION, n->loc,
-                              "implicit declaration of function '%s'",
-                              n->name);
+                s = functab_find(n->callee->name);
+                if (s) {
+                    fty = s->ty;
+                    n->call_direct = 1;
+                    n->name = s->name;
+                } else {
+                    diag_error_at(n->loc, "called object '%s' is not a function",
+                                  n->callee->name);
+                }
+            }
+        } else if (type_is_function_pointer(n->callee->ty)) {
+            fty = n->callee->ty->base;
+        } else {
+            diag_error_at(n->loc, "called object is not a function or function pointer");
+        }
+
+        if (fty) {
+            if (s) {
                 if (!s->ty->prototyped && !s->implicit)
                     diag_warn(W_CALL_WITHOUT_PROTOTYPE, n->loc,
                               "call to function '%s' without a prototype",
-                              n->name);
-                if (s->ty->prototyped && s->ty->nparams != n->nargs) {
-                    if (n->nargs < s->ty->nparams)
-                        diag_error_at(n->loc,
-                                      "too few arguments to function '%s'",
-                                      n->name);
+                              s->name);
+            } else if (!fty->prototyped) {
+                diag_warn(W_CALL_WITHOUT_PROTOTYPE, n->loc,
+                          "call to function pointer without a prototype");
+            }
+            if (fty->prototyped && fty->nparams != n->nargs) {
+                const char *callee_name = n->name ? n->name : "function";
+
+                if (n->nargs < fty->nparams)
+                    diag_error_at(n->loc,
+                                  "too few arguments to function '%s'",
+                                  callee_name);
+                else
+                    diag_error_at(n->loc,
+                                  "too many arguments to function '%s'",
+                                  callee_name);
+            } else if (fty->prototyped) {
+                int i = 0;
+                const char *callee_name = n->name ? n->name : "function pointer";
+
+                for (Node *a = n->args; a; a = a->next, i++) {
+                    if (!expr_assignable_to(fty->params[i], a))
+                        diag_error_at(a->loc,
+                                      "passing '%s' to parameter of type '%s' in call to '%s'",
+                                      type_name(a->ty),
+                                      type_name(fty->params[i]),
+                                      callee_name);
                     else
-                        diag_error_at(n->loc,
-                                      "too many arguments to function '%s'",
-                                      n->name);
-                } else if (s->ty->prototyped) {
-                    int i = 0;
-                    for (Node *a = n->args; a; a = a->next, i++) {
-                        if (!expr_assignable_to(s->ty->params[i], a))
-                            diag_error_at(a->loc,
-                                          "passing '%s' to parameter of type '%s' in call to '%s'",
-                                          type_name(a->ty),
-                                          type_name(s->ty->params[i]),
-                                          n->name);
-                        else
-                            warn_value_conversion(a->loc, s->ty->params[i], a);
-                    }
+                        warn_value_conversion(a->loc, fty->params[i], a);
                 }
             }
-            if (s) {
-                n->func_ty = s->ty;
-                n->ty = s->ty->ret;
-            }
+            n->func_ty = fty;
+            n->ty = fty->ret;
         }
         return;
     }
@@ -1010,6 +1077,11 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
     case ND_ADDR:
         resolve_expr_ctx(n->operand, CTX_ADDR_OPERAND);
         n->var_decay = 0;
+        if (n->operand->ty && n->operand->ty->kind == TY_FUNC) {
+            n->ty = type_ptr(n->operand->ty);
+            n->is_lvalue = 0;
+            return;
+        }
         if (!expr_is_lvalue(n->operand))
             diag_error_at(n->loc, "cannot take address of non-lvalue");
         else if (n->operand->kind == ND_VAR)
@@ -1067,6 +1139,9 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
             diag_note_at(n->loc,
                          "xcc supports void * conversions but not void * dereference");
             n->ty = type_int();
+        } else if (n->operand->ty->base->kind == TY_FUNC) {
+            n->ty = n->operand->ty->base;
+            n->is_lvalue = 0;
         } else {
             n->ty = n->operand->ty->base;
             n->is_lvalue = 1;

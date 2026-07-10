@@ -157,6 +157,10 @@ static void instr_use_def(LirFn *lf, int i, const TargetDesc *td, Liveness *lv,
         add_def(defs, nd, ins->dst);
         return;
 
+    case LIR_LEA_SYM:
+        add_def(defs, nd, ins->dst);
+        return;
+
     case LIR_ADD:
     case LIR_SUB:
     case LIR_MUL:
@@ -186,6 +190,8 @@ static void instr_use_def(LirFn *lf, int i, const TargetDesc *td, Liveness *lv,
         return;
 
     case LIR_CALL:
+        if (ins->call_indirect)
+            add_use(uses, nu, ins->call_reg);
         for (int a = 0; a < ins->nargs; a++)
             operand_vreg_uses(ins->call_args[a], uses, nu);
         block_caller_saved(lv, td, i);

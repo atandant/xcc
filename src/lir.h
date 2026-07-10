@@ -11,6 +11,7 @@ typedef enum {
     LIR_LOAD,
     LIR_STORE,
     LIR_LEA,
+    LIR_LEA_SYM,
     LIR_ADD,
     LIR_SUB,
     LIR_MUL,
@@ -95,6 +96,9 @@ struct Instr {
     ConvKind conv;
     int label;
     char *call_name;
+    int call_indirect;
+    int call_reg;
+    char *sym_name;
     int nargs;
     Operand *call_args;
     int aux; /* LOAD/STORE: in-memory byte width (1, 2, 4, 8) */

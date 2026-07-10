@@ -141,10 +141,12 @@ Node *init_list_append(Node *head, Node *item)
     return head;
 }
 
-Node *node_call(char *name, NodeList *args, SourceLoc loc)
+Node *node_call(Node *callee, NodeList *args, SourceLoc loc)
 {
     Node *n = new_node(ND_CALL, loc);
-    n->name = name;
+    n->callee = callee;
+    n->name = (callee && callee->kind == ND_VAR) ? callee->name : NULL;
+    n->call_direct = 0;
     n->args = stmt_list_head(args);
     n->nargs = 0;
     for (Node *a = n->args; a; a = a->next)
@@ -500,6 +502,14 @@ Declarator *declarator_paren_outer(Declarator *d, Node *dim)
     return wrap;
 }
 
+Declarator *declarator_func(Declarator *d, ParamClause *pc)
+{
+    if (!d)
+        d = declarator_empty();
+    d->func_params = pc;
+    return d;
+}
+
 int declarator_was_paren(const Declarator *d)
 {
     return d && d->was_paren;
@@ -634,11 +644,50 @@ static int declarator_has_suffix_arrays(const Declarator *d)
     return declarator_has_suffix_arrays(d->inner);
 }
 
+static Type *type_func_from_params(Type *ret, ParamClause *pc, SourceLoc loc)
+{
+    Type **ptypes = NULL;
+    int n = 0;
+
+    if (pc && pc->head) {
+        for (Param *p = pc->head; p; p = p->next)
+            n++;
+        if (n > 0) {
+            ptypes = arena_alloc((size_t)n * sizeof(*ptypes));
+            int i = 0;
+            for (Param *p = pc->head; p; p = p->next, i++) {
+                Type *pty;
+
+                if (p->decl)
+                    pty = type_apply_declarator(p->decl_spec, p->decl, loc);
+                else if (p->decl_spec)
+                    pty = p->decl_spec;
+                else
+                    pty = p->ty;
+                ptypes[i] = type_decay(pty);
+            }
+        }
+    }
+
+    /* C89: a function type cannot be returned by value; decay to pointer. */
+    if (ret && ret->kind == TY_FUNC)
+        ret = type_ptr(ret);
+    return type_func(ret, ptypes, n, pc ? pc->prototyped : 0);
+}
+
 static Type *apply_decl_leaf(Type *base, const Declarator *d, SourceLoc loc,
                              DeclDimEvalFn eval, void *ctx)
 {
     Type *ty = base;
     int i;
+
+    if (d->inner) {
+        if (d->inner->was_paren || d->inner->func_params ||
+            d->inner->ndims_paren_outer > 0)
+            ty = type_apply_declarator_cb(ty, d->inner, loc, eval, ctx);
+        else
+            ty = apply_decl_leaf(ty, d->inner, loc, eval, ctx);
+    }
 
     for (i = 0; i < d->nptr; i++)
         ty = type_ptr(ty);
@@ -667,6 +716,16 @@ Type *type_apply_declarator_cb(Type *base, Declarator *d, SourceLoc loc,
         for (i = d->ndims_paren_outer - 1; i >= 0; i--)
             ty = make_array_dim(ty, d->dims_paren_outer[i], loc, eval, ctx);
         return apply_decl_leaf(ty, d->inner, loc, eval, ctx);
+    }
+
+    if (d->func_params) {
+        /* SHELVED: nested fnptr declarators such as int (*(*x)(int))(char)
+         * need a func suffix on an inner pointer-to-fnptr chain; only the
+         * outermost `(...)()` suffix is handled today. Use typedefs meanwhile. */
+        ty = type_func_from_params(base, d->func_params, loc);
+        if (d->inner)
+            return apply_decl_leaf(ty, d->inner, loc, eval, ctx);
+        return ty;
     }
 
     if (d->was_paren && d->inner)
