@@ -41,7 +41,7 @@ tests.
 | `int`, `char`, `long`, `void`, pointers (`*`, `&`, dereference) | function pointers |
 | `unsigned` (`char`/`short`/`int`/`long`), usual arithmetic conversions | preprocessor (`#include`, `#define`) |
 | parenthesized declarators (`int (*p)[3]`), casts (`(int (*)[3])`) | multiple translation units |
-| N-dimensional arrays, `[]` subscript, `ptr ± int/long`, `ptr - ptr`, param decay | `-W` CLI flags |
+| N-dimensional arrays, `[]` subscript, `ptr ± int/long`, `ptr - ptr`, param decay | |
 | typed declarations, parameters, returns | |
 | **brace initializers** for scalar arrays and structs (partial init zero-fills) | |
 | unsized `T a[] = {…}` / `T a[][N] = {…}` bound inference (flat or nested) | |
@@ -56,6 +56,7 @@ tests.
 | `L`/`l` literal suffixes; `0x` hex literals (C89 typing) | |
 | `int`/`long` promotions; `ptr - ptr` → `long` | |
 | warnings (`implicit` decl, unprototyped calls, `char` overflow, …) | |
+| `-W` / `-Wno-` / `-Wall` / `-Werror` CLI flags (`--help-warnings`) | |
 | `file:line:col` diagnostics, carets, `note:` spans, color (`auto`) | |
 | **`typedef`** (scoped names, declarator application) | |
 | **`struct`** (tagged, forward-decl, layout), **`.` / `->`**, struct assign (`LIR_MEMCPY`), bitfields | |
@@ -114,7 +115,11 @@ and **regalloc** assign registers or spill slots; **emit_x86** prints AT&T
 assembly. Scalar locals and parameters that are not address-taken may live in
 registers across loops; arrays and address-taken locals stay on the stack.
 
-Debug flags: `--emit-lir` (LIR before allocation), `--emit-lir-alloc` (after).
+Debug flags: `--xcc-dump-lir` (LIR before allocation), `--xcc-dump-lir-alloc` (after).
+
+Warning flags: `-W<name>`, `-Wno-<name>`, `-Wall`, `-w`, `-Werror` — see
+`--help-warnings` for the catalog. xcc `-Wall` enables warnings that default to
+off; it is not gcc `-Wall`.
 
 ## Build & test
 

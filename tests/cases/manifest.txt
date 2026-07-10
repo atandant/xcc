@@ -1,548 +1,552 @@
-# kind|file|expected-code|expected-stderr-substring
-run|accept_pointer_param.c|5|
-run|accept_pointer_return.c|11|
-run|accept_pointer_store.c|42|
-run|accept_void_ptr_roundtrip.c|9|
-run|addr_diff_vars_ne.c|0|
-run|addr_int_to_void_ptr.c|0|
-run|addr_local_char.c|0|
-run|addr_local_int.c|0|
-run|addr_local_pointer_typecheck.c|0|
-run|addr_param_int.c|0|
-run|addr_ptr_compare_self.c|1|
-run|addr_ptr_eq_same_addr.c|1|
-run|addr_ptr_eq_void.c|1|
-run|addr_ptr_eq_zero.c|1|
-run|addr_ptr_ne_diff_addr.c|1|
-run|addr_ptr_truthy.c|1|
-run|addr_ptr_while_truthy.c|1|
-run|addr_same_var_eq.c|1|
-run|arith.c|13|
-run|array_addr_of_elem.c|3|
-run|array_assign_ptr.c|6|
-run|array_char_store.c|65|
-run|array_char_stride.c|99|
-run|array_condition_decay.c|1|
-run|array_decay_to_ptr.c|7|
-run|array_deref_ptr_arith.c|10|
-run|array_int_adjacent.c|2|
-run|array_int_store_load.c|3|
-run|array_param_bracket_n.c|4|
-run|array_param_decay.c|11|
-run|array_ptr_arith_int_plus.c|5|
-run|array_ptr_arith_minus.c|3|
-run|array_ptr_arith_plus.c|9|
-run|array_ptr_eq_same_array.c|1|
-run|array_ptr_from_subscript.c|8|
-run|array_ptr_relational.c|6|
-run|array_return_ptr_param.c|5|
-run|array_subscript_assign.c|42|
-run|array_while_index.c|6|
-run|assign_chain.c|12|
-run|assign_expr.c|7|
-run|bitfield_init.c|3|
-run|bitfield_layout_padding.c|3|
-run|bitfield_load.c|7|
-run|bitfield_signed.c|254|
-run|bitfield_sizeof.c|8|
-run|bitfield_store.c|253|
-run|block_comment_multiline.c|12|
-xcc-warning|block_scope_initializer_self.c|0|initializer refers to 'x' before its value is defined
-run|block_scope_restored.c|3|
-run|block_scope_shadow.c|7|
-run|block_statement.c|9|
-run|brace_char.c|198|
-run|brace_comma.c|5|
-run|brace_int_1d.c|6|
-run|brace_int_fold.c|9|
-run|brace_int_partial.c|5|
-run|brace_int_zero.c|0|
-run|brace_long_1d.c|60|
-run|brace_long_fold.c|16|
-run|brace_long_md_flat.c|4|
-run|brace_long_neg.c|5|
-run|brace_long_partial.c|42|
-run|brace_md_flat.c|7|
-run|brace_md_nested.c|4|
-run|brace_ptr_addrs.c|1|
-run|brace_ptr_zero.c|1|
-run|brace_scalar_int.c|3|
-run|brace_scalar_trailing.c|7|
-run|brace_short_1d.c|6|
-run|brace_short_fold.c|10|
-run|brace_short_md.c|7|
-run|brace_short_neg.c|1|
-run|brace_short_partial.c|12|
-run|brace_short_trailing_comma.c|6|
-run|brace_trailing_comma.c|6|
-run|brace_trailing_comma_md.c|4|
-run|brace_trailing_comma_single.c|9|
-run|brace_uchar_1d.c|60|
-run|brace_uint_1d.c|155|
-run|brace_uint_partial.c|3|
-run|brace_uint_zero.c|0|
-run|brace_ulong_1d.c|15|
-run|brace_ulong_zero.c|0|
-run|call_arg_local_before_assignment.c|23|
-run|call_expr_statement.c|5|
-run|call_forward_implicit.c|6|
-run|call_many_args.c|36|
-run|call_nested_args.c|21|
-run|call_no_args.c|9|
-run|call_pointer_param_ok.c|0|
-run|call_prototype_before_definition.c|14|
-run|call_two_args.c|17|
-run|call_unprototyped_allows_any_arity.c|11|
-run|call_unprototyped_pointer_temporarily_ok.c|0|
-run|call_void_pointer_arg.c|0|
-run|cast_binds_before_add.c|45|
-run|cast_char_neg_unsigned.c|255|
-run|cast_char_promote_observable.c|44|
-run|cast_char_ptr_deref.c|200|
-run|cast_char_runtime.c|44|
-run|cast_char_to_int.c|65|
-run|cast_char_to_long.c|65|
-run|cast_int_noop.c|5|
-run|cast_int_to_char_trunc.c|44|
-run|cast_int_to_long.c|42|
-run|cast_int_to_long_expr.c|30|
-run|cast_int_to_long_neg.c|0|
-run|cast_int_to_short_trunc.c|112|
-run|cast_long_in_arith.c|30|
-run|cast_long_roundtrip.c|100|
-run|cast_long_to_int.c|100|
-run|cast_long_to_int_narrow.c|2|
-run|cast_null_ptr_constant.c|1|
-run|cast_ptr_through_void_ptr.c|7|
-run|cast_ptr_to_int_hygiene.c|1|
-run|cast_ptr_to_long.c|0|
-run|cast_ptr_to_long_eq.c|1|
-run|cast_struct_ptr.c|9|
-run|cast_struct_scalar.c|5|
-run|cast_subscript_precedence.c|3|
-run|cast_to_struct_ptr.c|3|
-run|cast_uint_to_ulong_zero_extend.c|1|
-run|cast_ushort_runtime_trunc.c|255|
-run|cast_void_discard.c|3|
-xcc-error|cast_void_operand_error.c|1|operand of cast has non-scalar type 'void'
-run|char_decl_local.c|3|
-run|char_deref_truncate.c|44|
-run|char_ptr_decl.c|0|
-run|char_truncate_store.c|44|
-run|cmp.c|1|
-run|cmp_chain.c|3|
-run|cmp_false.c|0|
-run|cmp_precedence.c|1|
-run|comment_line.c|7|
-run|comparison_truth_values.c|6|
-run|deref_int_pointer_read.c|7|
-run|deref_int_pointer_write.c|9|
-run|div_assoc.c|5|
-run|div_mod.c|5|
-run|enum_anonymous.c|6|
-run|enum_basic.c|2|
-run|enum_explicit_values.c|11|
-run|enum_prev_ref.c|3|
-run|enum_sizeof.c|4|
-run|enum_tagged_var.c|1|
-run|equality_precedence.c|1|
-xcc-error|error_addr_arith_non_lvalue.c|1|cannot take address of non-lvalue
-xcc-error|error_addr_assign_result.c|1|cannot take address of non-lvalue
-xcc-error|error_addr_call_non_lvalue.c|1|cannot take address of non-lvalue
-xcc-error|error_addr_int_to_char_ptr.c|1|incompatible types assigning 'int *' to 'char *'
-xcc-error|error_addr_neg_non_lvalue.c|1|cannot take address of non-lvalue
-xcc-error|error_addr_non_lvalue.c|1|cannot take address of non-lvalue
-xcc-error|error_addr_ptr_eq_int.c|1|comparison between pointer type 'int *' and integer type 'int'
-xcc-error|error_addr_ptr_ordering.c|1|invalid operands to relational operator
-xcc-error|error_addr_wrong_ptr_level.c|1|incompatible types assigning 'int *' to 'int * *'
-xcc-error|error_array_assign.c|1|incompatible types assigning 'int *' to 'int[2]'
-xcc-error|error_array_bound_not_ice.c|1|array size is not an integer constant expression
-xcc-error|error_array_size_overflow.c|1|array size overflows
-xcc-error|error_array_to_scalar.c|1|incompatible types assigning 'int *' to 'int'
-xcc-error|error_array_zero_size.c|1|array size is missing or zero for 'a'
-xcc-error|error_arrow_not_ptr.c|1|cannot dereference non-pointer type 'struct Point'
-xcc-error|error_assign_int_to_pointer.c|1|incompatible types assigning 'int' to 'int *'
-xcc-error|error_assign_long_overflow_ice.c|1|incompatible types assigning 'long' to 'int *'
-xcc-error|error_assign_long_to_pointer.c|1|incompatible types assigning 'long' to 'int *'
-xcc-error|error_assign_pointer_to_int.c|1|incompatible types assigning 'int *' to 'int'
-xcc-error|error_bitfield_addr.c|1|cannot take address of bit-field
-xcc-error|error_bitfield_type.c|1|bit-field has invalid type
-xcc-error|error_block_scope_expired.c|1|use of undeclared identifier 'x'
-xcc-error|error_brace_excess.c|1|excess elements in array initializer
-xcc-error|error_called_local.c|1|called object 'f' is not a function
-xcc-error|error_call_int_expected_pointer.c|1|passing 'int' to parameter of type 'int *' in call to 'f'
-xcc-error|error_call_pointer_expected_int.c|1|passing 'int *' to parameter of type 'int' in call to 'f'
-xcc-error|error_cast_struct_nested.c|1|cast to non-scalar type 'struct Outer'
-xcc-error|error_cast_struct_value.c|1|operand of cast has non-scalar type 'struct S'
-xcc-error|error_conflicting_param_count.c|1|conflicting types for 'f'
-xcc-error|error_conflicting_param_type.c|1|conflicting types for 'f'
-xcc-error|error_conflicting_return_pointer.c|1|conflicting types for 'f'
-xcc-error|error_conflicting_return_type.c|1|conflicting types for 'f'
-xcc-error|error_deref_int.c|1|cannot dereference non-pointer type 'int'
-xcc-error|error_deref_void_pointer.c|1|dereference of void pointer
-xcc-error|error_enum_nonconst.c|1|enumerator value is not an integer constant expression
-xcc-error|error_function_redefinition.c|1|redefinition of 'f'
-xcc-error|error_hex_unsigned_long_overflow.c|1|integer constant out of range
-xcc-error|error_long_literal_overflow.c|1|integer constant out of range
-xcc-error|error_long_suffix_ll.c|1|invalid suffix on integer constant
-xcc-error|error_long_suffix_unsigned.c|1|invalid suffix on integer constant
-xcc-error|error_member_missing.c|1|no member named 'z' in 'struct Point'
-xcc-error|error_member_not_struct.c|1|member reference base type is not a structure or union
-xcc-error|error_neg_array.c|1|invalid operand to unary minus
-xcc-error|error_non_lvalue_arith_assign.c|1|assignment to non-lvalue
-xcc-error|error_non_lvalue_assign.c|1|assignment to non-lvalue
-xcc-error|error_non_lvalue_call_assign.c|1|assignment to non-lvalue
-xcc-error|error_non_lvalue_cmp_assign.c|1|assignment to non-lvalue
-xcc-error|error_non_lvalue_neg_assign.c|1|assignment to non-lvalue
-xcc-error|error_octal_stray8.c|1|invalid digit in octal constant
-xcc-error|error_param_redefinition.c|1|redefinition of parameter 'x'
-xcc-error|error_parse_missing_semicolon.c|1|syntax error, unexpected RETURN, expecting ';'
-xcc-error|error_ptr_mul_int.c|1|invalid operands to arithmetic operator
-xcc-error|error_ptr_plus_ptr.c|1|invalid operands to arithmetic operator
-xcc-error|error_redeclaration.c|1|redeclaration of 'a'
-xcc-error|error_redeclaration_nested_same_scope.c|1|redeclaration of 'x'
-xcc-error|error_return_pointer_from_int.c|1|returning 'int *' from a function returning 'int'
-xcc-error|error_scalar_braces.c|1|too many braces around scalar initializer
-xcc-error|error_scalar_excess.c|1|excess elements in scalar initializer
-xcc-error|error_sizeof_function.c|1|invalid application of sizeof to function type
-xcc-error|error_sizeof_incomplete_struct.c|1|invalid application of sizeof to incomplete type
-xcc-error|error_sizeof_incomplete_type.c|1|invalid application of sizeof to incomplete type
-xcc-error|error_sizeof_void.c|1|invalid application of sizeof to void type
-xcc-error|error_stray_char.c|1|stray '@' in program
-xcc-error|error_struct_cmp.c|1|invalid operands to comparison
-xcc-error|error_struct_condition.c|1|condition has non-scalar type 'struct S'
-xcc-error|error_struct_incomplete.c|1|variable 's' has incomplete type 'struct S'
-xcc-error|error_struct_member_limit.c|1|struct exceeds translation limit of 127 members
-xcc-error|error_struct_nest_limit.c|1|struct nesting exceeds translation limit of 6 levels
-xcc-error|error_subscript_nonscalar.c|1|cannot dereference non-pointer type 'int'
-xcc-error|error_tag_kind_mismatch.c|1|use of 'S' with tag type that does not match previous declaration
-xcc-error|error_too_few_args.c|1|too few arguments to function 'add'
-xcc-error|error_too_many_args.c|1|too many arguments to function 'id'
-xcc-error|error_typedef_redef.c|1|redefinition of typedef 'Foo'
-xcc-error|error_ty_ptr_eq_mismatch.c|1|comparison between incompatible pointer types 'int *' and 'char *'
-xcc-error|error_undeclared.c|1|use of undeclared identifier 'x'
-xcc-error|error_union_incomplete.c|1|variable 'u' has incomplete type 'union U'
-xcc-error|error_void_condition.c|1|condition has non-scalar type 'void'
-xcc-error|error_void_local.c|1|variable 'x' has non-object type 'void'
-xcc-error|error_void_return_value.c|1|void function 'f' should not return a value
-run|expr_stmt_effect.c|7|
-run|falloff_non_main_returns_zero.c|0|
-run|fallthrough.c|0|
-run|for_body_block_scope.c|10|
-run|for_condition_assignment.c|3|
-run|for_count_sum.c|10|
-run|for_empty_clauses_return.c|3|
-run|for_false_skips_body.c|4|
-run|for_nested_loops.c|12|
-run|for_omitted_cond_return.c|5|
-run|for_omitted_init.c|6|
-run|for_omitted_step.c|8|
-run|for_step_assignment_value.c|10|
-run|ice_cast_ushort_trunc.c|1|
-run|ice_long_zero_eq.c|1|
-run|if_block_then_else.c|13|
-run|if_condition_expression.c|8|
-run|if_dangling_else.c|4|
-run|if_else_false.c|22|
-run|if_else_true.c|11|
-run|if_nested.c|31|
-run|if_no_else_false.c|9|
-run|if_no_else_true.c|3|
-run|if_scope_after_block.c|2|
-run|if_scope_shadow.c|5|
-run|large_immediate_slow_path.c|1|
-run|local_init.c|13|
-run|locals.c|12|
-run|long_arith_add.c|120|
-run|long_arith_div.c|5|
-run|long_arith_mul.c|42|
-run|long_arith_sub.c|50|
-run|long_assign_from_int.c|100|
-run|long_call_pass.c|7|
-run|long_call_return.c|77|
-run|long_chain.c|15|
-run|long_cmp_eq.c|1|
-run|long_cmp_lt.c|1|
-run|long_decl_local.c|99|
-run|long_for.c|10|
-run|long_ice_add_wrap.c|1|
-run|long_index_array.c|8|
-run|long_index_assign.c|55|
-run|long_index_expr.c|6|
-run|long_index_for.c|15|
-run|long_index_while.c|10|
-run|long_int_boundary.c|47|
-run|long_int_decl.c|42|
-run|long_literal_large_div2.c|4|
-run|long_literal_large_div.c|3|
-run|long_literal_mod.c|49|
-run|long_neg.c|42|
-run|long_param.c|55|
-run|long_promote_int_lhs.c|3|
-run|long_promote_int_rhs.c|3|
-run|long_ptr_char.c|90|
-run|long_ptr_minus.c|17|
-run|long_ptr_minus_var.c|33|
-run|long_ptr_plus.c|42|
-run|long_ptr_plus_var.c|11|
-run|long_ptr_rhs.c|15|
-run|long_ptr_subscript.c|99|
-run|long_return_fn.c|42|
-run|long_stack_sum_8.c|8|
-run|long_store_load.c|30|
-run|long_suffix_arith.c|123|
-run|long_suffix_L.c|42|
-run|long_suffix_lower_l.c|200|
-run|long_suffix_mixed.c|123|
-run|long_to_int_narrow.c|2|
-run|long_while.c|6|
-run|lvalue_reassign_chain.c|3|
-run|lvalue_var_is_lvalue.c|7|
-run|many_locals.c|27|
-run|md_2d_char.c|6|
-run|md_2d_explicit_deref.c|1|
-run|md_2d_loop_fill.c|18|
-run|md_2d_param_ptr_to_array.c|30|
-run|md_2d_param_var_index.c|8|
-run|md_2d_row_major.c|5|
-run|md_2d_store_load.c|7|
-run|md_2d_two_cells.c|12|
-run|md_2d_var_index.c|3|
-run|md_3d_store_load.c|9|
-run|mod_precedence.c|8|
-run|negative_div_mod.c|5|
-run|neg.c|3|
-run|nested_blocks_reuse_names.c|16|
-run|null_ptr_assign.c|1|
-run|null_ptr_assign_ice.c|1|
-run|null_ptr_assign_long_ice.c|1|
-run|null_ptr_assign_void_cast.c|1|
-run|null_ptr_call.c|0|
-run|null_ptr_init.c|0|
-run|null_ptr_return.c|1|
-run|octal_literal_012.c|10|
-run|octal_literal_add.c|3|
-run|octal_unsigned_int.c|255|
-run|opt_fold_add.c|30|
-run|opt_fold_chain.c|10|
-run|opt_fold_cmp_eq.c|1|
-run|opt_fold_cmp_gt.c|1|
-run|opt_fold_cmp_lt.c|1|
-run|opt_fold_cmp_ne.c|1|
-run|opt_fold_deep.c|10|
-run|opt_fold_div.c|25|
-run|opt_fold_long_boundary.c|0|
-run|opt_fold_long.c|120|
-run|opt_fold_long_div.c|3|
-run|opt_fold_long_mul.c|42|
-run|opt_fold_long_mul_safe.c|42|
-run|opt_fold_mixed_hex_dec.c|36|
-run|opt_fold_mixed_promote.c|50|
-run|opt_fold_mod.c|2|
-run|opt_fold_mul.c|42|
-run|opt_fold_neg.c|8|
-run|opt_fold_nested.c|20|
-run|opt_fold_octal_add.c|13|
-run|opt_fold_one.c|88|
-run|opt_fold_prop_add.c|15|
-run|opt_fold_prop.c|100|
-run|opt_fold_schar_cast.c|56|
-run|opt_fold_sub.c|63|
-run|opt_fold_u_add.c|30|
-run|opt_fold_u_cast_uchar.c|44|
-run|opt_fold_u_chain.c|20|
-run|opt_fold_uchar_add.c|1|
-run|opt_fold_u_cmp_eq.c|1|
-run|opt_fold_u_cmp_gt.c|1|
-run|opt_fold_u_cmp_lt.c|1|
-run|opt_fold_u_div.c|25|
-run|opt_fold_u_hex.c|48|
-run|opt_fold_u_mod.c|4|
-run|opt_fold_u_mul.c|42|
-run|opt_fold_u_neg.c|251|
-run|opt_fold_ushort_add.c|1|
-run|opt_fold_u_sub.c|33|
-run|opt_fold_u_wrap_add.c|0|
-run|opt_fold_zero.c|0|
-run|opt_prop_assign.c|20|
-run|opt_prop_block.c|12|
-run|opt_prop_chain.c|1|
-run|opt_prop_expr.c|25|
-run|opt_prop_init.c|99|
-run|opt_prop_long.c|50|
-run|opt_prop_long_chain.c|15|
-run|opt_prop_multistmt.c|21|
-run|opt_prop_return_add.c|42|
-run|opt_prop_simple.c|50|
-run|pa_ptr_array_decl.c|1|
-run|param_seventh_stack_arg.c|7|
-run|param_shadow_block.c|8|
-run|paren_grouping.c|25|
-run|pa_row_deref_subscript.c|7|
-run|pa_row_ptr_diff.c|1|
-run|pa_row_ptr_plus_deref.c|4|
-run|pa_row_relational.c|1|
-run|pd_assign_rows.c|11|
-run|pd_cast_row_ptr.c|3|
-run|pd_chain_subscript.c|5|
-run|pd_decl_local.c|30|
-run|pd_param_row.c|6|
-run|pd_row_ptr_diff_named.c|1|
-run|pd_star_paren_subscript.c|9|
-run|pointer_arg_roundtrip.c|5|
-run|pointer_condition_ok.c|5|
-run|pointer_return_roundtrip.c|13|
-run|pointer_store_roundtrip.c|42|
-run|precedence.c|14|
-run|ptr_decl_double.c|5|
-run|ptr_decl_local.c|7|
-run|ptr_decl_param.c|0|
-run|ptr_decl_return.c|0|
-run|ptr_diff_long_adjacent.c|2|
-run|ptr_diff_long_array.c|3|
-run|ptr_diff_long_char_stride.c|5|
-run|ptr_diff_long_int_arr.c|5|
-run|ptr_diff_long_multi.c|3|
-run|ptr_diff_long_reverse.c|254|
-run|ptr_diff_long_same.c|0|
-run|ptr_diff_long_scaled.c|7|
-run|ptr_diff_long_stored.c|4|
-run|reassign.c|21|
-run|recursion_factorial.c|120|
-run|regalloc_addr_taken_stays_mem.c|7|
-run|regalloc_array_stays_mem.c|42|
-run|regalloc_call_across_live.c|10|
-run|regalloc_expr_temps.c|36|
-run|regalloc_loop_accum.c|10|
-run|regalloc_nested_call_args.c|24|
-run|regalloc_promote_loop.c|10|
-run|regalloc_promote_param.c|6|
-run|regalloc_spill_pressure.c|21|
-run|ret_const.c|42|
-run|return_early.c|11|
-run|return_pointer_ok.c|0|
-run|schar_load_neg.c|255|
-run|schar_promote_neg.c|255|
-run|schar_vs_plain.c|200|
-run|short_array_store.c|77|
-run|short_call_return.c|42|
-run|short_decl_local.c|99|
-run|short_deref.c|33|
-run|short_int_decl.c|99|
-run|short_param.c|42|
-run|short_promote_add.c|150|
-run|short_store_load.c|30|
-run|short_truncate_store.c|112|
-run|sizeof_array_bound.c|4|
-run|sizeof_array_bound_md.c|9|
-run|sizeof_array_bound_mul.c|8|
-run|sizeof_array_bound_var.c|12|
-run|sizeof_array_no_decay.c|10|
-run|sizeof_mul_precedence.c|8|
-run|sizeof_multidim.c|24|
-run|sizeof_no_eval.c|0|
-run|sizeof_paren_type.c|22|
-run|sizeof_pointers.c|16|
-run|sizeof_precedence.c|7|
-run|sizeof_ptr_to_array_type.c|8|
-run|sizeof_scalars_sum.c|15|
-run|sizeof_subscript_elem.c|1|
-run|struct_array.c|80|
-run|struct_array_init.c|40|
-run|struct_array_member.c|33|
-run|struct_assign.c|42|
-run|struct_assign_copy.c|1|
-run|struct_byval_16.c|9|
-run|struct_byval_assign_call.c|33|
-run|struct_byval_param_small.c|42|
-run|struct_byval_return_expr.c|7|
-run|struct_byval_return_small.c|7|
-run|struct_byval_return_sret.c|99|
-run|struct_byval_sret_chain.c|5|
-run|struct_decl_local.c|8|
-run|struct_forward.c|8|
-run|struct_init_full.c|30|
-run|struct_init_nested.c|12|
-run|struct_init_nested_partial.c|5|
-run|struct_init_partial.c|7|
-run|struct_init_scalar_brace.c|3|
-run|struct_list_node.c|16|
-run|struct_member_addr.c|7|
-run|struct_member_assign.c|99|
-run|struct_member_load.c|42|
-run|struct_member_long.c|42|
-run|struct_member_nested.c|12|
-run|struct_nested.c|12|
-run|struct_ptr.c|8|
-run|struct_ptr_member_assign.c|55|
-run|struct_ptr_member.c|17|
-run|struct_ptr_param.c|42|
-run|struct_ptr_return.c|17|
-run|struct_sizeof_ice.c|2|
-run|sub_assoc.c|12|
-run|ty_char_param_from_int.c|65|
-run|ty_double_deref_store.c|8|
-run|ty_int_param_from_char.c|7|
-run|ty_null_ptr_eq_false.c|0|
-run|typedef_array.c|15|
-run|typedef_block.c|3|
-run|typedef_chain.c|8|
-run|typedef_char.c|65|
-run|typedef_file_scope.c|11|
-run|typedef_int.c|7|
-run|typedef_long.c|42|
-run|typedef_ptr.c|9|
-run|typedef_shadow.c|5|
-run|typedef_struct_S.c|8|
-run|ty_void_ptr_param_call.c|3|
-run|u_arith_add.c|42|
-run|u_arith_div.c|25|
-run|u_arith_mod.c|4|
-run|u_arith_mul.c|42|
-run|u_arith_sub_wrap.c|253|
-run|u_assign_signed.c|5|
-run|u_cast_uint.c|42|
-run|u_cast_ulong.c|8|
-run|u_compare_eq.c|1|
-run|u_compare_gt_true.c|1|
-run|u_compare_lt_false.c|0|
-run|u_decl_bare.c|7|
-run|u_decl_local.c|42|
-run|u_hex_literal.c|255|
-run|u_index_unsigned.c|77|
-run|u_long_decl.c|17|
-run|u_mixed_promote.c|50|
-run|unary_precedence.c|4|
-run|union_assign.c|55|
-run|union_basic.c|42|
-run|union_byval_param.c|55|
-run|union_byval_return.c|88|
-run|union_in_struct.c|99|
-run|union_overlap.c|1|
-run|union_ptr_member.c|7|
-run|union_sizeof.c|8|
-run|unsized_int_1d.c|6|
-run|unsized_long_1d.c|60|
-run|unsized_md_flat.c|5|
-run|unsized_md_nested.c|7|
-run|unsized_sizeof.c|20|
-run|u_param.c|99|
-run|u_return_fn.c|11|
-run|u_uchar.c|200|
-run|u_ushort.c|42|
-run|u_ushort_large.c|1|
-run|u_while_count.c|3|
-run|void_function_bare_return.c|3|
-run|void_param_no_args.c|9|
-run|void_ptr_assign_from_int_ptr.c|0|
-run|void_ptr_decl.c|0|
-xcc-warning|warn_implicit_function_decl.c|0|implicit declaration of function 'foo'
-xcc-warning|warn_int_to_char_overflow.c|0|overflow in conversion from 'int' to 'char'
-xcc-warning|warn_old_style_definition.c|0|function 'f' defined without a prototype
-xcc-warning|warn_return_type.c|0|non-void function 'f' should return a value
-xcc-warning|warn_unprototyped_call.c|0|call to function 'g' without a prototype
-run|while_assignment_condition.c|4|
-run|while_body_block_scope.c|11|
-run|while_count_sum.c|15|
-run|while_false_skips_body.c|7|
-run|while_nested_if.c|5|
+# kind|file|expected-code|expected-stderr-substring|xcc-args
+run|accept_pointer_param.c|5||
+run|accept_pointer_return.c|11||
+run|accept_pointer_store.c|42||
+run|accept_void_ptr_roundtrip.c|9||
+run|addr_diff_vars_ne.c|0||
+run|addr_int_to_void_ptr.c|0||
+run|addr_local_char.c|0||
+run|addr_local_int.c|0||
+run|addr_local_pointer_typecheck.c|0||
+run|addr_param_int.c|0||
+run|addr_ptr_compare_self.c|1||
+run|addr_ptr_eq_same_addr.c|1||
+run|addr_ptr_eq_void.c|1||
+run|addr_ptr_eq_zero.c|1||
+run|addr_ptr_ne_diff_addr.c|1||
+run|addr_ptr_truthy.c|1||
+run|addr_ptr_while_truthy.c|1||
+run|addr_same_var_eq.c|1||
+run|arith.c|13||
+run|array_addr_of_elem.c|3||
+run|array_assign_ptr.c|6||
+run|array_char_store.c|65||
+run|array_char_stride.c|99||
+run|array_condition_decay.c|1||
+run|array_decay_to_ptr.c|7||
+run|array_deref_ptr_arith.c|10||
+run|array_int_adjacent.c|2||
+run|array_int_store_load.c|3||
+run|array_param_bracket_n.c|4||
+run|array_param_decay.c|11||
+run|array_ptr_arith_int_plus.c|5||
+run|array_ptr_arith_minus.c|3||
+run|array_ptr_arith_plus.c|9||
+run|array_ptr_eq_same_array.c|1||
+run|array_ptr_from_subscript.c|8||
+run|array_ptr_relational.c|6||
+run|array_return_ptr_param.c|5||
+run|array_subscript_assign.c|42||
+run|array_while_index.c|6||
+run|assign_chain.c|12||
+run|assign_expr.c|7||
+run|bitfield_init.c|3||
+run|bitfield_layout_padding.c|3||
+run|bitfield_load.c|7||
+run|bitfield_signed.c|254||
+run|bitfield_sizeof.c|8||
+run|bitfield_store.c|253||
+run|block_comment_multiline.c|12||
+xcc-warning|block_scope_initializer_self.c|0|initializer refers to 'x' before its value is defined|
+run|block_scope_restored.c|3||
+run|block_scope_shadow.c|7||
+run|block_statement.c|9||
+run|brace_char.c|198||
+run|brace_comma.c|5||
+run|brace_int_1d.c|6||
+run|brace_int_fold.c|9||
+run|brace_int_partial.c|5||
+run|brace_int_zero.c|0||
+run|brace_long_1d.c|60||
+run|brace_long_fold.c|16||
+run|brace_long_md_flat.c|4||
+run|brace_long_neg.c|5||
+run|brace_long_partial.c|42||
+run|brace_md_flat.c|7||
+run|brace_md_nested.c|4||
+run|brace_ptr_addrs.c|1||
+run|brace_ptr_zero.c|1||
+run|brace_scalar_int.c|3||
+run|brace_scalar_trailing.c|7||
+run|brace_short_1d.c|6||
+run|brace_short_fold.c|10||
+run|brace_short_md.c|7||
+run|brace_short_neg.c|1||
+run|brace_short_partial.c|12||
+run|brace_short_trailing_comma.c|6||
+run|brace_trailing_comma.c|6||
+run|brace_trailing_comma_md.c|4||
+run|brace_trailing_comma_single.c|9||
+run|brace_uchar_1d.c|60||
+run|brace_uint_1d.c|155||
+run|brace_uint_partial.c|3||
+run|brace_uint_zero.c|0||
+run|brace_ulong_1d.c|15||
+run|brace_ulong_zero.c|0||
+run|call_arg_local_before_assignment.c|23||
+run|call_expr_statement.c|5||
+run|call_forward_implicit.c|6||
+run|call_many_args.c|36||
+run|call_nested_args.c|21||
+run|call_no_args.c|9||
+run|call_pointer_param_ok.c|0||
+run|call_prototype_before_definition.c|14||
+run|call_two_args.c|17||
+run|call_unprototyped_allows_any_arity.c|11||
+run|call_unprototyped_pointer_temporarily_ok.c|0||
+run|call_void_pointer_arg.c|0||
+run|cast_binds_before_add.c|45||
+run|cast_char_neg_unsigned.c|255||
+run|cast_char_promote_observable.c|44||
+run|cast_char_ptr_deref.c|200||
+run|cast_char_runtime.c|44||
+run|cast_char_to_int.c|65||
+run|cast_char_to_long.c|65||
+run|cast_int_noop.c|5||
+run|cast_int_to_char_trunc.c|44||
+run|cast_int_to_long.c|42||
+run|cast_int_to_long_expr.c|30||
+run|cast_int_to_long_neg.c|0||
+run|cast_int_to_short_trunc.c|112||
+run|cast_long_in_arith.c|30||
+run|cast_long_roundtrip.c|100||
+run|cast_long_to_int.c|100||
+run|cast_long_to_int_narrow.c|2||
+run|cast_null_ptr_constant.c|1||
+run|cast_ptr_through_void_ptr.c|7||
+run|cast_ptr_to_int_hygiene.c|1||
+run|cast_ptr_to_long.c|0||
+run|cast_ptr_to_long_eq.c|1||
+run|cast_struct_ptr.c|9||
+run|cast_struct_scalar.c|5||
+run|cast_subscript_precedence.c|3||
+run|cast_to_struct_ptr.c|3||
+run|cast_uint_to_ulong_zero_extend.c|1||
+run|cast_ushort_runtime_trunc.c|255||
+run|cast_void_discard.c|3||
+xcc-error|cast_void_operand_error.c|1|operand of cast has non-scalar type 'void'|
+run|char_decl_local.c|3||
+run|char_deref_truncate.c|44||
+run|char_ptr_decl.c|0||
+run|char_truncate_store.c|44||
+run|cmp.c|1||
+run|cmp_chain.c|3||
+run|cmp_false.c|0||
+run|cmp_precedence.c|1||
+run|comment_line.c|7||
+run|comparison_truth_values.c|6||
+run|deref_int_pointer_read.c|7||
+run|deref_int_pointer_write.c|9||
+run|div_assoc.c|5||
+run|div_mod.c|5||
+run|enum_anonymous.c|6||
+run|enum_basic.c|2||
+run|enum_explicit_values.c|11||
+run|enum_prev_ref.c|3||
+run|enum_sizeof.c|4||
+run|enum_tagged_var.c|1||
+run|equality_precedence.c|1||
+xcc-error|error_addr_arith_non_lvalue.c|1|cannot take address of non-lvalue|
+xcc-error|error_addr_assign_result.c|1|cannot take address of non-lvalue|
+xcc-error|error_addr_call_non_lvalue.c|1|cannot take address of non-lvalue|
+xcc-error|error_addr_int_to_char_ptr.c|1|incompatible types assigning 'int *' to 'char *'|
+xcc-error|error_addr_neg_non_lvalue.c|1|cannot take address of non-lvalue|
+xcc-error|error_addr_non_lvalue.c|1|cannot take address of non-lvalue|
+xcc-error|error_addr_ptr_eq_int.c|1|comparison between pointer type 'int *' and integer type 'int'|
+xcc-error|error_addr_ptr_ordering.c|1|invalid operands to relational operator|
+xcc-error|error_addr_wrong_ptr_level.c|1|incompatible types assigning 'int *' to 'int * *'|
+xcc-error|error_array_assign.c|1|incompatible types assigning 'int *' to 'int[2]'|
+xcc-error|error_array_bound_not_ice.c|1|array size is not an integer constant expression|
+xcc-error|error_array_size_overflow.c|1|array size overflows|
+xcc-error|error_array_to_scalar.c|1|incompatible types assigning 'int *' to 'int'|
+xcc-error|error_array_zero_size.c|1|array size is missing or zero for 'a'|
+xcc-error|error_arrow_not_ptr.c|1|cannot dereference non-pointer type 'struct Point'|
+xcc-error|error_assign_int_to_pointer.c|1|incompatible types assigning 'int' to 'int *'|
+xcc-error|error_assign_long_overflow_ice.c|1|incompatible types assigning 'long' to 'int *'|
+xcc-error|error_assign_long_to_pointer.c|1|incompatible types assigning 'long' to 'int *'|
+xcc-error|error_assign_pointer_to_int.c|1|incompatible types assigning 'int *' to 'int'|
+xcc-error|error_bitfield_addr.c|1|cannot take address of bit-field|
+xcc-error|error_bitfield_type.c|1|bit-field has invalid type|
+xcc-error|error_block_scope_expired.c|1|use of undeclared identifier 'x'|
+xcc-error|error_brace_excess.c|1|excess elements in array initializer|
+xcc-error|error_called_local.c|1|called object 'f' is not a function|
+xcc-error|error_call_int_expected_pointer.c|1|passing 'int' to parameter of type 'int *' in call to 'f'|
+xcc-error|error_call_pointer_expected_int.c|1|passing 'int *' to parameter of type 'int' in call to 'f'|
+xcc-error|error_cast_struct_nested.c|1|cast to non-scalar type 'struct Outer'|
+xcc-error|error_cast_struct_value.c|1|operand of cast has non-scalar type 'struct S'|
+xcc-error|error_conflicting_param_count.c|1|conflicting types for 'f'|
+xcc-error|error_conflicting_param_type.c|1|conflicting types for 'f'|
+xcc-error|error_conflicting_return_pointer.c|1|conflicting types for 'f'|
+xcc-error|error_conflicting_return_type.c|1|conflicting types for 'f'|
+xcc-error|error_deref_int.c|1|cannot dereference non-pointer type 'int'|
+xcc-error|error_deref_void_pointer.c|1|dereference of void pointer|
+xcc-error|error_enum_nonconst.c|1|enumerator value is not an integer constant expression|
+xcc-error|error_function_redefinition.c|1|redefinition of 'f'|
+xcc-error|error_hex_unsigned_long_overflow.c|1|integer constant out of range|
+xcc-error|error_long_literal_overflow.c|1|integer constant out of range|
+xcc-error|error_long_suffix_ll.c|1|invalid suffix on integer constant|
+xcc-error|error_long_suffix_unsigned.c|1|invalid suffix on integer constant|
+xcc-error|error_member_missing.c|1|no member named 'z' in 'struct Point'|
+xcc-error|error_member_not_struct.c|1|member reference base type is not a structure or union|
+xcc-error|error_neg_array.c|1|invalid operand to unary minus|
+xcc-error|error_non_lvalue_arith_assign.c|1|assignment to non-lvalue|
+xcc-error|error_non_lvalue_assign.c|1|assignment to non-lvalue|
+xcc-error|error_non_lvalue_call_assign.c|1|assignment to non-lvalue|
+xcc-error|error_non_lvalue_cmp_assign.c|1|assignment to non-lvalue|
+xcc-error|error_non_lvalue_neg_assign.c|1|assignment to non-lvalue|
+xcc-error|error_octal_stray8.c|1|invalid digit in octal constant|
+xcc-error|error_param_redefinition.c|1|redefinition of parameter 'x'|
+xcc-error|error_parse_missing_semicolon.c|1|syntax error, unexpected RETURN, expecting ';'|
+xcc-error|error_ptr_mul_int.c|1|invalid operands to arithmetic operator|
+xcc-error|error_ptr_plus_ptr.c|1|invalid operands to arithmetic operator|
+xcc-error|error_redeclaration.c|1|redeclaration of 'a'|
+xcc-error|error_redeclaration_nested_same_scope.c|1|redeclaration of 'x'|
+xcc-error|error_return_pointer_from_int.c|1|returning 'int *' from a function returning 'int'|
+xcc-error|error_scalar_braces.c|1|too many braces around scalar initializer|
+xcc-error|error_scalar_excess.c|1|excess elements in scalar initializer|
+xcc-error|error_sizeof_function.c|1|invalid application of sizeof to function type|
+xcc-error|error_sizeof_incomplete_struct.c|1|invalid application of sizeof to incomplete type|
+xcc-error|error_sizeof_incomplete_type.c|1|invalid application of sizeof to incomplete type|
+xcc-error|error_sizeof_void.c|1|invalid application of sizeof to void type|
+xcc-error|error_stray_char.c|1|stray '@' in program|
+xcc-error|error_struct_cmp.c|1|invalid operands to comparison|
+xcc-error|error_struct_condition.c|1|condition has non-scalar type 'struct S'|
+xcc-error|error_struct_incomplete.c|1|variable 's' has incomplete type 'struct S'|
+xcc-error|error_struct_member_limit.c|1|struct exceeds translation limit of 127 members|
+xcc-error|error_struct_nest_limit.c|1|struct nesting exceeds translation limit of 6 levels|
+xcc-error|error_subscript_nonscalar.c|1|cannot dereference non-pointer type 'int'|
+xcc-error|error_tag_kind_mismatch.c|1|use of 'S' with tag type that does not match previous declaration|
+xcc-error|error_too_few_args.c|1|too few arguments to function 'add'|
+xcc-error|error_too_many_args.c|1|too many arguments to function 'id'|
+xcc-error|error_typedef_redef.c|1|redefinition of typedef 'Foo'|
+xcc-error|error_ty_ptr_eq_mismatch.c|1|comparison between incompatible pointer types 'int *' and 'char *'|
+xcc-error|error_undeclared.c|1|use of undeclared identifier 'x'|
+xcc-error|error_union_incomplete.c|1|variable 'u' has incomplete type 'union U'|
+xcc-error|error_void_condition.c|1|condition has non-scalar type 'void'|
+xcc-error|error_void_local.c|1|variable 'x' has non-object type 'void'|
+xcc-error|error_void_return_value.c|1|void function 'f' should not return a value|
+run|expr_stmt_effect.c|7||
+run|falloff_non_main_returns_zero.c|0||
+run|fallthrough.c|0||
+run|for_body_block_scope.c|10||
+run|for_condition_assignment.c|3||
+run|for_count_sum.c|10||
+run|for_empty_clauses_return.c|3||
+run|for_false_skips_body.c|4||
+run|for_nested_loops.c|12||
+run|for_omitted_cond_return.c|5||
+run|for_omitted_init.c|6||
+run|for_omitted_step.c|8||
+run|for_step_assignment_value.c|10||
+run|ice_cast_ushort_trunc.c|1||
+run|ice_long_zero_eq.c|1||
+run|if_block_then_else.c|13||
+run|if_condition_expression.c|8||
+run|if_dangling_else.c|4||
+run|if_else_false.c|22||
+run|if_else_true.c|11||
+run|if_nested.c|31||
+run|if_no_else_false.c|9||
+run|if_no_else_true.c|3||
+run|if_scope_after_block.c|2||
+run|if_scope_shadow.c|5||
+run|large_immediate_slow_path.c|1||
+run|local_init.c|13||
+run|locals.c|12||
+run|long_arith_add.c|120||
+run|long_arith_div.c|5||
+run|long_arith_mul.c|42||
+run|long_arith_sub.c|50||
+run|long_assign_from_int.c|100||
+run|long_call_pass.c|7||
+run|long_call_return.c|77||
+run|long_chain.c|15||
+run|long_cmp_eq.c|1||
+run|long_cmp_lt.c|1||
+run|long_decl_local.c|99||
+run|long_for.c|10||
+run|long_ice_add_wrap.c|1||
+run|long_index_array.c|8||
+run|long_index_assign.c|55||
+run|long_index_expr.c|6||
+run|long_index_for.c|15||
+run|long_index_while.c|10||
+run|long_int_boundary.c|47||
+run|long_int_decl.c|42||
+run|long_literal_large_div2.c|4||
+run|long_literal_large_div.c|3||
+run|long_literal_mod.c|49||
+run|long_neg.c|42||
+run|long_param.c|55||
+run|long_promote_int_lhs.c|3||
+run|long_promote_int_rhs.c|3||
+run|long_ptr_char.c|90||
+run|long_ptr_minus.c|17||
+run|long_ptr_minus_var.c|33||
+run|long_ptr_plus.c|42||
+run|long_ptr_plus_var.c|11||
+run|long_ptr_rhs.c|15||
+run|long_ptr_subscript.c|99||
+run|long_return_fn.c|42||
+run|long_stack_sum_8.c|8||
+run|long_store_load.c|30||
+run|long_suffix_arith.c|123||
+run|long_suffix_L.c|42||
+run|long_suffix_lower_l.c|200||
+run|long_suffix_mixed.c|123||
+run|long_to_int_narrow.c|2||
+run|long_while.c|6||
+run|lvalue_reassign_chain.c|3||
+run|lvalue_var_is_lvalue.c|7||
+run|many_locals.c|27||
+run|md_2d_char.c|6||
+run|md_2d_explicit_deref.c|1||
+run|md_2d_loop_fill.c|18||
+run|md_2d_param_ptr_to_array.c|30||
+run|md_2d_param_var_index.c|8||
+run|md_2d_row_major.c|5||
+run|md_2d_store_load.c|7||
+run|md_2d_two_cells.c|12||
+run|md_2d_var_index.c|3||
+run|md_3d_store_load.c|9||
+run|mod_precedence.c|8||
+run|negative_div_mod.c|5||
+run|neg.c|3||
+run|nested_blocks_reuse_names.c|16||
+run|null_ptr_assign.c|1||
+run|null_ptr_assign_ice.c|1||
+run|null_ptr_assign_long_ice.c|1||
+run|null_ptr_assign_void_cast.c|1||
+run|null_ptr_call.c|0||
+run|null_ptr_init.c|0||
+run|null_ptr_return.c|1||
+run|octal_literal_012.c|10||
+run|octal_literal_add.c|3||
+run|octal_unsigned_int.c|255||
+run|opt_fold_add.c|30||
+run|opt_fold_chain.c|10||
+run|opt_fold_cmp_eq.c|1||
+run|opt_fold_cmp_gt.c|1||
+run|opt_fold_cmp_lt.c|1||
+run|opt_fold_cmp_ne.c|1||
+run|opt_fold_deep.c|10||
+run|opt_fold_div.c|25||
+run|opt_fold_long_boundary.c|0||
+run|opt_fold_long.c|120||
+run|opt_fold_long_div.c|3||
+run|opt_fold_long_mul.c|42||
+run|opt_fold_long_mul_safe.c|42||
+run|opt_fold_mixed_hex_dec.c|36||
+run|opt_fold_mixed_promote.c|50||
+run|opt_fold_mod.c|2||
+run|opt_fold_mul.c|42||
+run|opt_fold_neg.c|8||
+run|opt_fold_nested.c|20||
+run|opt_fold_octal_add.c|13||
+run|opt_fold_one.c|88||
+run|opt_fold_prop_add.c|15||
+run|opt_fold_prop.c|100||
+run|opt_fold_schar_cast.c|56||
+run|opt_fold_sub.c|63||
+run|opt_fold_u_add.c|30||
+run|opt_fold_u_cast_uchar.c|44||
+run|opt_fold_u_chain.c|20||
+run|opt_fold_uchar_add.c|1||
+run|opt_fold_u_cmp_eq.c|1||
+run|opt_fold_u_cmp_gt.c|1||
+run|opt_fold_u_cmp_lt.c|1||
+run|opt_fold_u_div.c|25||
+run|opt_fold_u_hex.c|48||
+run|opt_fold_u_mod.c|4||
+run|opt_fold_u_mul.c|42||
+run|opt_fold_u_neg.c|251||
+run|opt_fold_ushort_add.c|1||
+run|opt_fold_u_sub.c|33||
+run|opt_fold_u_wrap_add.c|0||
+run|opt_fold_zero.c|0||
+run|opt_prop_assign.c|20||
+run|opt_prop_block.c|12||
+run|opt_prop_chain.c|1||
+run|opt_prop_expr.c|25||
+run|opt_prop_init.c|99||
+run|opt_prop_long.c|50||
+run|opt_prop_long_chain.c|15||
+run|opt_prop_multistmt.c|21||
+run|opt_prop_return_add.c|42||
+run|opt_prop_simple.c|50||
+run|pa_ptr_array_decl.c|1||
+run|param_seventh_stack_arg.c|7||
+run|param_shadow_block.c|8||
+run|paren_grouping.c|25||
+run|pa_row_deref_subscript.c|7||
+run|pa_row_ptr_diff.c|1||
+run|pa_row_ptr_plus_deref.c|4||
+run|pa_row_relational.c|1||
+run|pd_assign_rows.c|11||
+run|pd_cast_row_ptr.c|3||
+run|pd_chain_subscript.c|5||
+run|pd_decl_local.c|30||
+run|pd_param_row.c|6||
+run|pd_row_ptr_diff_named.c|1||
+run|pd_star_paren_subscript.c|9||
+run|pointer_arg_roundtrip.c|5||
+run|pointer_condition_ok.c|5||
+run|pointer_return_roundtrip.c|13||
+run|pointer_store_roundtrip.c|42||
+run|precedence.c|14||
+run|ptr_decl_double.c|5||
+run|ptr_decl_local.c|7||
+run|ptr_decl_param.c|0||
+run|ptr_decl_return.c|0||
+run|ptr_diff_long_adjacent.c|2||
+run|ptr_diff_long_array.c|3||
+run|ptr_diff_long_char_stride.c|5||
+run|ptr_diff_long_int_arr.c|5||
+run|ptr_diff_long_multi.c|3||
+run|ptr_diff_long_reverse.c|254||
+run|ptr_diff_long_same.c|0||
+run|ptr_diff_long_scaled.c|7||
+run|ptr_diff_long_stored.c|4||
+run|reassign.c|21||
+run|recursion_factorial.c|120||
+run|regalloc_addr_taken_stays_mem.c|7||
+run|regalloc_array_stays_mem.c|42||
+run|regalloc_call_across_live.c|10||
+run|regalloc_expr_temps.c|36||
+run|regalloc_loop_accum.c|10||
+run|regalloc_nested_call_args.c|24||
+run|regalloc_promote_loop.c|10||
+run|regalloc_promote_param.c|6||
+run|regalloc_spill_pressure.c|21||
+run|ret_const.c|42||
+run|return_early.c|11||
+run|return_pointer_ok.c|0||
+run|schar_load_neg.c|255||
+run|schar_promote_neg.c|255||
+run|schar_vs_plain.c|200||
+run|short_array_store.c|77||
+run|short_call_return.c|42||
+run|short_decl_local.c|99||
+run|short_deref.c|33||
+run|short_int_decl.c|99||
+run|short_param.c|42||
+run|short_promote_add.c|150||
+run|short_store_load.c|30||
+run|short_truncate_store.c|112||
+run|sizeof_array_bound.c|4||
+run|sizeof_array_bound_md.c|9||
+run|sizeof_array_bound_mul.c|8||
+run|sizeof_array_bound_var.c|12||
+run|sizeof_array_no_decay.c|10||
+run|sizeof_mul_precedence.c|8||
+run|sizeof_multidim.c|24||
+run|sizeof_no_eval.c|0||
+run|sizeof_paren_type.c|22||
+run|sizeof_pointers.c|16||
+run|sizeof_precedence.c|7||
+run|sizeof_ptr_to_array_type.c|8||
+run|sizeof_scalars_sum.c|15||
+run|sizeof_subscript_elem.c|1||
+run|struct_array.c|80||
+run|struct_array_init.c|40||
+run|struct_array_member.c|33||
+run|struct_assign.c|42||
+run|struct_assign_copy.c|1||
+run|struct_byval_16.c|9||
+run|struct_byval_assign_call.c|33||
+run|struct_byval_param_small.c|42||
+run|struct_byval_return_expr.c|7||
+run|struct_byval_return_small.c|7||
+run|struct_byval_return_sret.c|99||
+run|struct_byval_sret_chain.c|5||
+run|struct_decl_local.c|8||
+run|struct_forward.c|8||
+run|struct_init_full.c|30||
+run|struct_init_nested.c|12||
+run|struct_init_nested_partial.c|5||
+run|struct_init_partial.c|7||
+run|struct_init_scalar_brace.c|3||
+run|struct_list_node.c|16||
+run|struct_member_addr.c|7||
+run|struct_member_assign.c|99||
+run|struct_member_load.c|42||
+run|struct_member_long.c|42||
+run|struct_member_nested.c|12||
+run|struct_nested.c|12||
+run|struct_ptr.c|8||
+run|struct_ptr_member_assign.c|55||
+run|struct_ptr_member.c|17||
+run|struct_ptr_param.c|42||
+run|struct_ptr_return.c|17||
+run|struct_sizeof_ice.c|2||
+run|sub_assoc.c|12||
+run|ty_char_param_from_int.c|65||
+run|ty_double_deref_store.c|8||
+run|ty_int_param_from_char.c|7||
+run|ty_null_ptr_eq_false.c|0||
+run|typedef_array.c|15||
+run|typedef_block.c|3||
+run|typedef_chain.c|8||
+run|typedef_char.c|65||
+run|typedef_file_scope.c|11||
+run|typedef_int.c|7||
+run|typedef_long.c|42||
+run|typedef_ptr.c|9||
+run|typedef_shadow.c|5||
+run|typedef_struct_S.c|8||
+run|ty_void_ptr_param_call.c|3||
+run|u_arith_add.c|42||
+run|u_arith_div.c|25||
+run|u_arith_mod.c|4||
+run|u_arith_mul.c|42||
+run|u_arith_sub_wrap.c|253||
+run|u_assign_signed.c|5||
+run|u_cast_uint.c|42||
+run|u_cast_ulong.c|8||
+run|u_compare_eq.c|1||
+run|u_compare_gt_true.c|1||
+run|u_compare_lt_false.c|0||
+run|u_decl_bare.c|7||
+run|u_decl_local.c|42||
+run|u_hex_literal.c|255||
+run|u_index_unsigned.c|77||
+run|u_long_decl.c|17||
+run|u_mixed_promote.c|50||
+run|unary_precedence.c|4||
+run|union_assign.c|55||
+run|union_basic.c|42||
+run|union_byval_param.c|55||
+run|union_byval_return.c|88||
+run|union_in_struct.c|99||
+run|union_overlap.c|1||
+run|union_ptr_member.c|7||
+run|union_sizeof.c|8||
+run|unsized_int_1d.c|6||
+run|unsized_long_1d.c|60||
+run|unsized_md_flat.c|5||
+run|unsized_md_nested.c|7||
+run|unsized_sizeof.c|20||
+run|u_param.c|99||
+run|u_return_fn.c|11||
+run|u_uchar.c|200||
+run|u_ushort.c|42||
+run|u_ushort_large.c|1||
+run|u_while_count.c|3||
+run|void_function_bare_return.c|3||
+run|void_param_no_args.c|9||
+run|void_ptr_assign_from_int_ptr.c|0||
+run|void_ptr_decl.c|0||
+xcc-warning|warn_char_value_narrowing.c|0|conversion from 'int' to 'char' may alter value|-Wall
+xcc-warning|warn_implicit_function_decl.c|0|implicit declaration of function 'foo'|
+run|warn_implicit_function_decl_nowarn.c|0||-Wno-implicit-function-declaration
+xcc-warning|warn_implicit_void_pointer.c|0|conversion from 'int *' to 'void *' without a cast|-Wall
+xcc-warning|warn_int_to_char_overflow.c|0|overflow in conversion from 'int' to 'char'|
+xcc-warning|warn_old_style_definition.c|0|function 'f' defined without a prototype|
+xcc-warning|warn_return_type.c|0|non-void function 'f' should return a value|
+xcc-error|warn_return_type_error.c|1|non-void function 'f' should return a value|-Werror=return-type
+xcc-warning|warn_unprototyped_call.c|0|call to function 'g' without a prototype|
+run|while_assignment_condition.c|4||
+run|while_body_block_scope.c|11||
+run|while_count_sum.c|15||
+run|while_false_skips_body.c|7||
+run|while_nested_if.c|5||

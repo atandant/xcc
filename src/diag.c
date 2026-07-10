@@ -23,27 +23,40 @@ static int colors_inited;
 
 typedef struct {
     const char *name;
+    int default_enabled;
     int enabled;
     int as_error;
+    int error_suppress; /* -Wno-error=<name> under global -Werror */
+    int in_wall;        /* enabled by -Wall */
 } WarnOpt;
 
+static int warn_error_global;
+
 static WarnOpt warn_opts[W_COUNT] = {
-    [W_IMPLICIT_FUNCTION_DECLARATION] =
-        { "implicit-function-declaration", 1, 0 },
-    [W_UNPROTOTYPED_FUNCTION_CALL] =
-        { "unprototyped-function-call", 1, 0 },
-    [W_INT_TO_CHAR_OVERFLOW] =
-        { "int-to-char-overflow", 1, 0 },
-    [W_INT_TO_CHAR_CONVERSION] =
-        { "int-to-char-conversion", 0, 0 },
-    [W_RETURN_TYPE] =
-        { "return-type", 1, 0 },
-    [W_OLD_STYLE_FUNCTION_DEFINITION] =
-        { "old-style-function-definition", 1, 0 },
-    [W_POINTER_CONVERSION] =
-        { "pointer-conversion", 0, 0 },
-    [W_INIT_FROM_SELF] =
-        { "init-from-self", 1, 0 },
+    [W_IMPLICIT_FUNCTION_DECLARATION] = {
+        "implicit-function-declaration", 1, 1, 0, 0, 0,
+    },
+    [W_CALL_WITHOUT_PROTOTYPE] = {
+        "call-without-prototype", 1, 1, 0, 0, 0,
+    },
+    [W_CHAR_CONSTANT_OVERFLOW] = {
+        "char-constant-overflow", 1, 1, 0, 0, 0,
+    },
+    [W_CHAR_VALUE_NARROWING] = {
+        "char-value-narrowing", 0, 0, 0, 0, 1,
+    },
+    [W_RETURN_TYPE] = {
+        "return-type", 1, 1, 0, 0, 0,
+    },
+    [W_OLD_STYLE_DEFINITION] = {
+        "old-style-definition", 1, 1, 0, 0, 0,
+    },
+    [W_IMPLICIT_VOID_POINTER] = {
+        "implicit-void-pointer", 0, 0, 0, 0, 1,
+    },
+    [W_SELF_REFERENTIAL_INITIALIZER] = {
+        "self-referential-initializer", 1, 1, 0, 0, 0,
+    },
 };
 
 static void diag_init_colors(void)
@@ -162,7 +175,23 @@ int diag_warn_as_error(DiagWarnId id)
 {
     if (id < 0 || id >= W_COUNT)
         return 0;
-    return warn_opts[id].as_error;
+    if (warn_opts[id].error_suppress)
+        return 0;
+    return warn_error_global || warn_opts[id].as_error;
+}
+
+int diag_warn_default_enabled(DiagWarnId id)
+{
+    if (id < 0 || id >= W_COUNT)
+        return 0;
+    return warn_opts[id].default_enabled;
+}
+
+int diag_warn_in_wall_group(DiagWarnId id)
+{
+    if (id < 0 || id >= W_COUNT)
+        return 0;
+    return warn_opts[id].in_wall;
 }
 
 const char *diag_warn_name(DiagWarnId id)
@@ -184,6 +213,122 @@ void diag_set_warn_as_error(DiagWarnId id, int as_error)
     if (id < 0 || id >= W_COUNT)
         return;
     warn_opts[id].as_error = as_error ? 1 : 0;
+    if (as_error)
+        warn_opts[id].error_suppress = 0;
+}
+
+void diag_set_warn_error_suppress(DiagWarnId id, int suppress)
+{
+    if (id < 0 || id >= W_COUNT)
+        return;
+    warn_opts[id].error_suppress = suppress ? 1 : 0;
+    if (suppress)
+        warn_opts[id].as_error = 0;
+}
+
+static int diag_warn_id_by_name(const char *name)
+{
+    if (!name || !name[0])
+        return -1;
+
+    for (int i = 0; i < W_COUNT; i++) {
+        if (strcmp(warn_opts[i].name, name) == 0)
+            return i;
+    }
+    return -1;
+}
+
+void diag_disable_all_warnings(void)
+{
+    for (int i = 0; i < W_COUNT; i++)
+        warn_opts[i].enabled = 0;
+}
+
+void diag_enable_wall_warnings(void)
+{
+    for (int i = 0; i < W_COUNT; i++) {
+        if (warn_opts[i].in_wall)
+            warn_opts[i].enabled = 1;
+    }
+}
+
+static int diag_apply_named_warn(const char *name, int enable)
+{
+    int id = diag_warn_id_by_name(name);
+
+    if (id < 0)
+        return 1;
+    diag_set_warn_enabled(id, enable);
+    return 0;
+}
+
+static int diag_apply_named_error(const char *name, int as_error)
+{
+    int id = diag_warn_id_by_name(name);
+
+    if (id < 0)
+        return 1;
+    if (as_error)
+        diag_set_warn_as_error(id, 1);
+    else
+        diag_set_warn_error_suppress(id, 1);
+    return 0;
+}
+
+int diag_apply_warn_flag(const char *arg)
+{
+    const char *name;
+
+    if (!arg || strncmp(arg, "-W", 2) != 0)
+        return 2;
+
+    if (strcmp(arg, "-Wall") == 0) {
+        diag_enable_wall_warnings();
+        return 0;
+    }
+    if (strcmp(arg, "-Werror") == 0) {
+        warn_error_global = 1;
+        return 0;
+    }
+    if (strcmp(arg, "-Wno-error") == 0) {
+        warn_error_global = 0;
+        for (int i = 0; i < W_COUNT; i++)
+            warn_opts[i].error_suppress = 0;
+        return 0;
+    }
+
+    if (strncmp(arg, "-Wno-error=", 11) == 0)
+        return diag_apply_named_error(arg + 11, 0);
+    if (strncmp(arg, "-Werror=", 8) == 0)
+        return diag_apply_named_error(arg + 8, 1);
+    if (strncmp(arg, "-Wno-", 5) == 0)
+        return diag_apply_named_warn(arg + 5, 0);
+    if (strncmp(arg, "-W", 2) == 0) {
+        name = arg + 2;
+        if (!name[0])
+            return 2;
+        return diag_apply_named_warn(name, 1);
+    }
+
+    return 2;
+}
+
+void diag_print_warnings_help(FILE *f)
+{
+    fprintf(f, "xcc warnings (use -W<name> / -Wno-<name>):\n\n");
+    for (int i = 0; i < W_COUNT; i++) {
+        const char *state = warn_opts[i].default_enabled ? "on" : "off";
+        const char *wall = warn_opts[i].in_wall ? "  (-Wall)" : "";
+
+        fprintf(f, "  %-32s %s%s\n", warn_opts[i].name, state, wall);
+    }
+    fputs("\nWarning control:\n", f);
+    fputs("  -Wall                 enable warnings that default to off\n", f);
+    fputs("  -w                    disable all warnings\n", f);
+    fputs("  -Werror               treat warnings as errors\n", f);
+    fputs("  -Werror=<name>        treat one warning as an error\n", f);
+    fputs("  -Wno-error            do not treat warnings as errors\n", f);
+    fputs("  -Wno-error=<name>     exempt one warning from -Werror\n", f);
 }
 
 void diag_warn(DiagWarnId id, SourceLoc loc, const char *fmt, ...)

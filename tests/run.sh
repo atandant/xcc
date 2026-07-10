@@ -15,7 +15,7 @@ MANIFEST="$DIR/manifest.txt"
 pass=0
 fail=0
 
-while IFS='|' read -r kind file expected expected_err; do
+while IFS='|' read -r kind file expected expected_err xcc_args; do
     case "$kind" in
         ''|\#*) continue ;;
     esac
@@ -23,7 +23,8 @@ while IFS='|' read -r kind file expected expected_err; do
     src="$DIR/$file"
     case "$kind" in
         run)
-            if ! "$XCC" "$src" -o "$TMP/out.s" 2> "$TMP/err"; then
+            # shellcheck disable=SC2086
+            if ! $XCC $xcc_args "$src" -o "$TMP/out.s" 2> "$TMP/err"; then
                 echo "FAIL $file (xcc error)"
                 sed 's/^/      /' "$TMP/err"
                 fail=$((fail + 1))
@@ -49,7 +50,8 @@ while IFS='|' read -r kind file expected expected_err; do
             fi
             ;;
         xcc-error)
-            if "$XCC" "$src" -o "$TMP/out.s" 2> "$TMP/err"; then
+            # shellcheck disable=SC2086
+            if $XCC $xcc_args "$src" -o "$TMP/out.s" 2> "$TMP/err"; then
                 echo "FAIL $file: expected xcc error, got success"
                 fail=$((fail + 1))
                 continue
@@ -65,7 +67,8 @@ while IFS='|' read -r kind file expected expected_err; do
             fi
             ;;
         xcc-warning)
-            if ! "$XCC" "$src" -o "$TMP/out.s" 2> "$TMP/err"; then
+            # shellcheck disable=SC2086
+            if ! $XCC $xcc_args "$src" -o "$TMP/out.s" 2> "$TMP/err"; then
                 echo "FAIL $file (xcc error, expected warning only)"
                 sed 's/^/      /' "$TMP/err"
                 fail=$((fail + 1))
@@ -87,6 +90,21 @@ while IFS='|' read -r kind file expected expected_err; do
             ;;
     esac
 done < "$MANIFEST"
+
+# CLI-only checks (no dedicated source file).
+if ! $XCC -Wnot-a-real-warning "$DIR/warn_implicit_function_decl.c" -o "$TMP/out.s" 2> "$TMP/err"; then
+    if grep -q "unknown warning option '-Wnot-a-real-warning'" "$TMP/err"; then
+        echo "ok   cli-unknown-wflag"
+        pass=$((pass + 1))
+    else
+        echo "FAIL cli-unknown-wflag: expected unknown warning option diagnostic"
+        sed 's/^/      /' "$TMP/err"
+        fail=$((fail + 1))
+    fi
+else
+    echo "FAIL cli-unknown-wflag: expected failure"
+    fail=$((fail + 1))
+fi
 
 echo "----"
 echo "$pass passed, $fail failed"

@@ -150,11 +150,11 @@ static void warn_value_conversion(SourceLoc loc, Type *dst, Node *src)
     if (type_is_plain_char(dst) && type_is_integer(src->ty) && !type_is_char(src->ty)) {
         if (src->kind == ND_NUM) {
             if (src->val < 0 || src->val > 255)
-                diag_warn(W_INT_TO_CHAR_OVERFLOW, loc,
+                diag_warn(W_CHAR_CONSTANT_OVERFLOW, loc,
                           "overflow in conversion from '%s' to '%s'",
                           type_name(src->ty), type_name(dst));
-        } else if (diag_warn_enabled(W_INT_TO_CHAR_CONVERSION)) {
-            diag_warn(W_INT_TO_CHAR_CONVERSION, loc,
+        } else {
+            diag_warn(W_CHAR_VALUE_NARROWING, loc,
                       "conversion from '%s' to '%s' may alter value",
                       type_name(src->ty), type_name(dst));
         }
@@ -163,7 +163,7 @@ static void warn_value_conversion(SourceLoc loc, Type *dst, Node *src)
     if (type_is_pointer(dst) && type_is_pointer(src->ty) &&
         type_assignable(dst, src->ty) && !type_same(dst, src->ty) &&
         (is_void_ptr_type(dst) || is_void_ptr_type(src->ty))) {
-        diag_warn(W_POINTER_CONVERSION, loc,
+        diag_warn(W_IMPLICIT_VOID_POINTER, loc,
                   "conversion from '%s' to '%s' without a cast",
                   type_name(src->ty), type_name(dst));
     }
@@ -176,7 +176,7 @@ static void check_init_from_self(Node *n, Node *decl)
 
     if (n->kind == ND_VAR && strcmp(n->name, decl->name) == 0 &&
         n->offset == decl->offset) {
-        diag_warn(W_INIT_FROM_SELF, n->loc,
+        diag_warn(W_SELF_REFERENTIAL_INITIALIZER, n->loc,
                   "initializer refers to '%s' before its value is defined",
                   decl->name);
         diag_note_at(n->loc,
@@ -906,7 +906,7 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
                               "implicit declaration of function '%s'",
                               n->name);
                 if (!s->ty->prototyped && !s->implicit)
-                    diag_warn(W_UNPROTOTYPED_FUNCTION_CALL, n->loc,
+                    diag_warn(W_CALL_WITHOUT_PROTOTYPE, n->loc,
                               "call to function '%s' without a prototype",
                               n->name);
                 if (s->ty->prototyped && s->ty->nparams != n->nargs) {

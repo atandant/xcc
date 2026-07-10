@@ -51,7 +51,7 @@ void functab_register(Function *fn)
         if (!functab_add(fn->name, fn->ty, fn->is_definition, 0, fn->loc))
             return;
         if (fn->is_definition && !fn->ty->prototyped)
-            diag_warn(W_OLD_STYLE_FUNCTION_DEFINITION, fn->loc,
+            diag_warn(W_OLD_STYLE_DEFINITION, fn->loc,
                       "function '%s' defined without a prototype", fn->name);
         return;
     }

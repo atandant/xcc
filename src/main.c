@@ -28,13 +28,28 @@ static void usage(FILE *f)
 {
     fprintf(f,
         "xcc 0.0.1 - a C89 compiler (x86-64 AT&T assembly)\n"
-        "usage: xcc [file] [-o out]\n"
+        "usage: xcc [file] [-o out] [options]\n"
         "  file        C source file, or - / omitted for stdin\n"
         "  -o out      output assembly file, or - / omitted for stdout\n"
         "  --help      show this help\n"
+        "  --help-warnings  list warnings and -W flags\n"
         "  --version   show version\n"
-        "  --emit-lir  dump lowered LIR to stdout (debug)\n"
-        "  --emit-lir-alloc  dump LIR live intervals (debug)\n");
+        "  --xcc-dump-lir  dump lowered LIR to stdout (debug)\n"
+        "  --xcc-dump-lir-alloc  dump LIR live intervals (debug)\n"
+        "  -W<name>    enable warning (see --help-warnings)\n"
+        "  -Wno-<name> disable warning\n"
+        "  -Wall       enable warnings that default to off\n"
+        "  -w          disable all warnings\n"
+        "  -Werror     treat warnings as errors\n");
+}
+
+static void unknown_warn_flag(const char *arg)
+{
+    diag_error("unknown warning option '%s'", arg);
+    fputs("xcc: known warnings:", stderr);
+    for (int i = 0; i < W_COUNT; i++)
+        fprintf(stderr, " %s", diag_warn_name(i));
+    fputc('\n', stderr);
 }
 
 static char **load_source_lines(FILE *f, int *out_nlines)
@@ -76,13 +91,27 @@ int main(int argc, char **argv)
         if (strcmp(argv[i], "--help") == 0) {
             usage(stdout);
             return 0;
+        } else if (strcmp(argv[i], "--help-warnings") == 0) {
+            diag_print_warnings_help(stdout);
+            return 0;
         } else if (strcmp(argv[i], "--version") == 0) {
             printf("xcc 0.0.1\n");
             return 0;
-        } else if (strcmp(argv[i], "--emit-lir") == 0) {
+        } else if (strcmp(argv[i], "--xcc-dump-lir") == 0) {
             emit_lir = 1;
-        } else if (strcmp(argv[i], "--emit-lir-alloc") == 0) {
+        } else if (strcmp(argv[i], "--xcc-dump-lir-alloc") == 0) {
             emit_lir_alloc = 1;
+        } else if (strcmp(argv[i], "-w") == 0) {
+            diag_disable_all_warnings();
+        } else if (strncmp(argv[i], "-W", 2) == 0) {
+            int r = diag_apply_warn_flag(argv[i]);
+
+            if (r == 1)
+                unknown_warn_flag(argv[i]);
+            else if (r != 0)
+                diag_error("malformed warning option '%s'", argv[i]);
+            if (r != 0)
+                return 1;
         } else if (strcmp(argv[i], "-o") == 0) {
             if (i + 1 >= argc) {
                 diag_error("-o requires an argument");

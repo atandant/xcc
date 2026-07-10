@@ -780,4 +780,3 @@ const char *type_func_sig(Type *ty)
 }
 
 /* UNDEFER: -Wsign-compare / narrowing unsigned-to-signed assignment warnings. */
-/* UNDEFER: full unsigned short ZEXT cast path in lower (CONV_ZEXT16). */
