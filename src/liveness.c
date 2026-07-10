@@ -177,11 +177,18 @@ static void instr_use_def(LirFn *lf, int i, const TargetDesc *td, Liveness *lv,
 
     case LIR_DIV:
     case LIR_MOD:
+    case LIR_SDIV_POW2:
+    case LIR_SMOD_POW2:
+    case LIR_UDIV_POW2:
+    case LIR_UMOD_POW2:
         operand_vreg_uses(ins->a, uses, nu);
-        operand_vreg_uses(ins->b, uses, nu);
+        if (ins->op == LIR_DIV || ins->op == LIR_MOD)
+            operand_vreg_uses(ins->b, uses, nu);
         add_def(defs, nd, ins->dst);
-        block_phys(lv, td->div_num_reg, i);
-        block_phys(lv, td->div_rem_reg, i);
+        if (ins->op == LIR_DIV || ins->op == LIR_MOD) {
+            block_phys(lv, td->div_num_reg, i);
+            block_phys(lv, td->div_rem_reg, i);
+        }
         return;
 
     case LIR_BR:

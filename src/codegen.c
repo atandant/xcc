@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include "codegen.h"
 #include "lower.h"
+#include "lopt.h"
 #include "regalloc.h"
 #include "emit_x86.h"
 #include "liveness.h"
@@ -14,6 +15,8 @@ void codegen(Function *prog, FILE *out)
             continue;
 
         LirFn *lf = lower_function(fn);
+
+        lopt_function(lf, fn);
 
         Liveness lv;
         liveness_compute(lf, &X86_SYSV, &lv);

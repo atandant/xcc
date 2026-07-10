@@ -1,12 +1,16 @@
 /* SPDX-License-Identifier: MIT */
 #include "lower.h"
+#include "lopt.h"
 #include "target.h"
 #include "abi_sysv_amd64.h"
 #include "diag.h"
 #include "arena.h"
+#include "sema_scope.h"
+#include "type.h"
 
 #include <assert.h>
 #include <limits.h>
+#include <string.h>
 
 typedef struct {
     LirFn *lf;
@@ -259,6 +263,8 @@ static void emit_widen_to_rax(LowerCtx *c, int v, Type *ty)
         return;
     if (type_is_char(ty))
         return;
+    if (load_lir_width(ty) == LIR_W4 && !type_is_short(ty))
+        return;
     if (type_is_short(ty) && load_sign(ty) == LIR_SGN_S) {
         int t = fresh(c);
         emit(c, (Instr){
@@ -415,6 +421,45 @@ static void lower_stmt(LowerCtx *c, Node *n);
 static Member *member_meta(Node *n)
 {
     return &n->lhs->ty->members[n->member_index];
+}
+
+static int var_decl_is_enum(const char *name, Function *fn)
+{
+    Type *ty;
+
+    if (scope_lookup(name, NULL, &ty) && type_is_enum(ty))
+        return 1;
+    for (Param *p = fn->params; p; p = p->next) {
+        if (p->name && strcmp(p->name, name) == 0 && type_is_enum(p->ty))
+            return 1;
+    }
+    return 0;
+}
+
+static int expr_enum_domain(Node *n, Function *fn)
+{
+    if (!n)
+        return 0;
+
+    switch (n->kind) {
+    case ND_VAR:
+        return var_decl_is_enum(n->name, fn);
+    case ND_NUM:
+        return 1;
+    case ND_MEMBER: {
+        Member *m = member_meta(n);
+        return m && type_is_enum(m->ty);
+    }
+    case ND_BINOP:
+        if (n->op == OP_ADD || n->op == OP_SUB)
+            return expr_enum_domain(n->lhs, fn) &&
+                   expr_enum_domain(n->rhs, fn);
+        return 0;
+    case ND_CAST:
+        return expr_enum_domain(n->operand, fn);
+    default:
+        return 0;
+    }
 }
 
 static int emit_binop_imm(LowerCtx *c, LirOp op, int dst, int lhs, long imm)
@@ -882,14 +927,47 @@ static void lower_binop(LowerCtx *c, int dst, BinOp op, Node *lhs, Node *rhs,
             .w = (LirWidth)w });
         return;
     case OP_DIV:
-        emit(c, (Instr){
-            .op = LIR_DIV, .dst = dst, .a = lir_vreg(vl), .b = rb,
-            .w = (LirWidth)w, .sgn = sgn });
-        return;
     case OP_MOD:
+        if (rhs->kind == ND_NUM && fits_imm32(rhs->val)) {
+            int k = lopt_imm_pow2_log2(rhs->val);
+
+            if (k >= 0) {
+                LirOp pop;
+
+                if (op == OP_MOD) {
+                    if (sgn == LIR_SGN_U || expr_enum_domain(lhs, c->fn))
+                        pop = LIR_UMOD_POW2;
+                    else
+                        pop = LIR_SMOD_POW2;
+                } else {
+                    if (sgn == LIR_SGN_U || expr_enum_domain(lhs, c->fn))
+                        pop = LIR_UDIV_POW2;
+                    else
+                        pop = LIR_SDIV_POW2;
+                }
+                emit(c, (Instr){
+                    .op = pop,
+                    .dst = dst,
+                    .a = lir_vreg(vl),
+                    .aux = k,
+                    .w = (LirWidth)w,
+                    .sgn = sgn,
+                });
+                return;
+            }
+        }
+        if (rhs->kind == ND_NUM && fits_imm32(rhs->val))
+            rb = lir_imm(rhs->val);
+        else
+            rb = lir_vreg(lower_expr(c, rhs));
         emit(c, (Instr){
-            .op = LIR_MOD, .dst = dst, .a = lir_vreg(vl), .b = rb,
-            .w = (LirWidth)w, .sgn = sgn });
+            .op = (op == OP_DIV) ? LIR_DIV : LIR_MOD,
+            .dst = dst,
+            .a = lir_vreg(vl),
+            .b = rb,
+            .w = (LirWidth)w,
+            .sgn = sgn,
+        });
         return;
     case OP_EQ:
     case OP_NE:

@@ -167,6 +167,10 @@ static const char *op_name(LirOp op)
     case LIR_MUL:   return "mul";
     case LIR_DIV:   return "div";
     case LIR_MOD:   return "mod";
+    case LIR_SDIV_POW2: return "sdiv_pow2";
+    case LIR_SMOD_POW2: return "smod_pow2";
+    case LIR_UDIV_POW2: return "udiv_pow2";
+    case LIR_UMOD_POW2: return "umod_pow2";
     case LIR_AND:   return "and";
     case LIR_OR:    return "or";
     case LIR_SHL:   return "shl";
@@ -280,6 +284,10 @@ void lir_dump_fn(LirFn *fn, FILE *out)
         case LIR_MUL:
         case LIR_DIV:
         case LIR_MOD:
+        case LIR_SDIV_POW2:
+        case LIR_SMOD_POW2:
+        case LIR_UDIV_POW2:
+        case LIR_UMOD_POW2:
         case LIR_AND:
         case LIR_OR:
         case LIR_SHL:
@@ -287,9 +295,15 @@ void lir_dump_fn(LirFn *fn, FILE *out)
         case LIR_SAR:
         case LIR_SETCC:
             dump_operand(out, ins->a);
-            fprintf(out, ", ");
-            dump_operand(out, ins->b);
-            fprintf(out, " %c", ins->w == LIR_W4 ? '4' : '8');
+            if (ins->op == LIR_SDIV_POW2 || ins->op == LIR_SMOD_POW2 ||
+                ins->op == LIR_UDIV_POW2 || ins->op == LIR_UMOD_POW2) {
+                fprintf(out, " 2^%d %c", ins->aux,
+                        ins->w == LIR_W4 ? '4' : '8');
+            } else {
+                fprintf(out, ", ");
+                dump_operand(out, ins->b);
+                fprintf(out, " %c", ins->w == LIR_W4 ? '4' : '8');
+            }
             if (ins->op == LIR_SETCC)
                 fprintf(out, " %s", cc_name(ins->cc));
             break;

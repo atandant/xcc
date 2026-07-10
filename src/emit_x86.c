@@ -486,6 +486,84 @@ static void emit_w4_result(EmitCtx *c, int phys, const char *scratch)
         fprintf(c->out, "  movslq %s, %%rax\n", scratch);
 }
 
+static void emit_pow2_store(EmitCtx *c, Instr *ins)
+{
+    store_vreg_slot(c, ins->dst, "%rax");
+    invalidate_rax(c);
+}
+
+static void emit_umod_pow2(EmitCtx *c, Instr *ins)
+{
+    long mask = (1L << ins->aux) - 1L;
+
+    load_operand(c, ins->a, "%rax", ins->w);
+    if (ins->w == LIR_W4) {
+        fprintf(c->out, "  and $%ld, %%eax\n", mask);
+        fprintf(c->out, "  cltq\n");
+    } else {
+        fprintf(c->out, "  and $%ld, %%rax\n", mask);
+    }
+    emit_pow2_store(c, ins);
+}
+
+static void emit_udiv_pow2(EmitCtx *c, Instr *ins)
+{
+    load_operand(c, ins->a, "%rax", ins->w);
+    if (ins->w == LIR_W4) {
+        fprintf(c->out, "  shr $%d, %%eax\n", ins->aux);
+        fprintf(c->out, "  cltq\n");
+    } else {
+        fprintf(c->out, "  shr $%d, %%rax\n", ins->aux);
+    }
+    emit_pow2_store(c, ins);
+}
+
+static void emit_smod_pow2(EmitCtx *c, Instr *ins)
+{
+    long mask = (1L << ins->aux) - 1L;
+
+    load_operand(c, ins->a, "%rax", ins->w);
+    if (ins->w == LIR_W4) {
+        fprintf(c->out, "  mov %%eax, %%ecx\n");
+        fprintf(c->out, "  sar $31, %%ecx\n");
+        fprintf(c->out, "  and $%ld, %%ecx\n", mask);
+        fprintf(c->out, "  lea (%%rax,%%rcx), %%eax\n");
+        fprintf(c->out, "  and $%ld, %%eax\n", mask);
+        fprintf(c->out, "  sub %%ecx, %%eax\n");
+        fprintf(c->out, "  cltq\n");
+    } else {
+        fprintf(c->out, "  mov %%rax, %%rcx\n");
+        fprintf(c->out, "  sar $63, %%rcx\n");
+        fprintf(c->out, "  and $%ld, %%rcx\n", mask);
+        fprintf(c->out, "  lea (%%rax,%%rcx), %%rax\n");
+        fprintf(c->out, "  and $%ld, %%rax\n", mask);
+        fprintf(c->out, "  sub %%rcx, %%rax\n");
+    }
+    emit_pow2_store(c, ins);
+}
+
+static void emit_sdiv_pow2(EmitCtx *c, Instr *ins)
+{
+    long mask = (1L << ins->aux) - 1L;
+
+    load_operand(c, ins->a, "%rax", ins->w);
+    if (ins->w == LIR_W4) {
+        fprintf(c->out, "  mov %%eax, %%ecx\n");
+        fprintf(c->out, "  sar $31, %%ecx\n");
+        fprintf(c->out, "  and $%ld, %%ecx\n", mask);
+        fprintf(c->out, "  lea (%%rax,%%rcx), %%eax\n");
+        fprintf(c->out, "  sar $%d, %%eax\n", ins->aux);
+        fprintf(c->out, "  cltq\n");
+    } else {
+        fprintf(c->out, "  mov %%rax, %%rcx\n");
+        fprintf(c->out, "  sar $63, %%rcx\n");
+        fprintf(c->out, "  and $%ld, %%rcx\n", mask);
+        fprintf(c->out, "  lea (%%rax,%%rcx), %%rax\n");
+        fprintf(c->out, "  sar $%d, %%rax\n", ins->aux);
+    }
+    emit_pow2_store(c, ins);
+}
+
 static void emit_binop_into(EmitCtx *c, Instr *ins, int dst_phys, LirWidth w,
                             int off_a, int off_b, const char *op)
 {
@@ -781,6 +859,19 @@ static void emit_instr(EmitCtx *c, Instr *ins)
         store_vreg_slot(c, ins->dst, "%rax");
         return;
     }
+
+    case LIR_SDIV_POW2:
+        emit_sdiv_pow2(c, ins);
+        return;
+    case LIR_SMOD_POW2:
+        emit_smod_pow2(c, ins);
+        return;
+    case LIR_UDIV_POW2:
+        emit_udiv_pow2(c, ins);
+        return;
+    case LIR_UMOD_POW2:
+        emit_umod_pow2(c, ins);
+        return;
 
     case LIR_DIV:
     case LIR_MOD: {

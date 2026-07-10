@@ -17,6 +17,10 @@ typedef enum {
     LIR_MUL,
     LIR_DIV,
     LIR_MOD,
+    LIR_SDIV_POW2, /* signed trunc-toward-zero / 2^aux */
+    LIR_SMOD_POW2, /* signed trunc-toward-zero % 2^aux */
+    LIR_UDIV_POW2, /* unsigned / 2^aux */
+    LIR_UMOD_POW2, /* unsigned % 2^aux */
     LIR_AND,
     LIR_OR,
     LIR_SHL,
@@ -101,7 +105,7 @@ struct Instr {
     char *sym_name;
     int nargs;
     Operand *call_args;
-    int aux; /* LOAD/STORE: in-memory byte width (1, 2, 4, 8) */
+    int aux; /* LOAD/STORE: byte width; POW2 ops: log2(divisor) */
 };
 
 typedef struct {
