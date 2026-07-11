@@ -5,6 +5,7 @@
 #include <string.h>
 
 #define MAX_TYPEDEFS 1024
+#define MAX_TYPEDEF_SCOPES 256
 
 typedef struct {
     char *name;
@@ -14,6 +15,7 @@ typedef struct {
 } TypedefEntry;
 
 static TypedefEntry entries[MAX_TYPEDEFS];
+static int scope_starts[MAX_TYPEDEF_SCOPES];
 static int nentries;
 static int cur_depth;
 
@@ -25,13 +27,20 @@ void typedef_reset(void)
 
 void typedef_enter_scope(void)
 {
+    if (cur_depth >= MAX_TYPEDEF_SCOPES) {
+        diag_error("too many nested typedef scopes");
+        return;
+    }
+    scope_starts[cur_depth] = nentries;
     cur_depth++;
 }
 
 void typedef_leave_scope(void)
 {
-    if (cur_depth > 0)
-        cur_depth--;
+    if (cur_depth <= 0)
+        return;
+    cur_depth--;
+    nentries = scope_starts[cur_depth];
 }
 
 int typedef_declared_here(const char *name)
@@ -91,6 +100,22 @@ void typedef_bind(char *name, Type *ty, SourceLoc loc)
 
     entries[nentries].name = name;
     entries[nentries].ty = ty;
+    entries[nentries].loc = loc;
+    entries[nentries].depth = cur_depth;
+    nentries++;
+}
+
+void typedef_hide_name(char *name, SourceLoc loc)
+{
+    if (!name)
+        return;
+    if (nentries >= MAX_TYPEDEFS) {
+        diag_error_at(loc, "too many ordinary identifiers in typedef scopes");
+        return;
+    }
+
+    entries[nentries].name = name;
+    entries[nentries].ty = NULL;
     entries[nentries].loc = loc;
     entries[nentries].depth = cur_depth;
     nentries++;

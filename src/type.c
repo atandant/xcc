@@ -375,7 +375,7 @@ int type_same(Type *a, Type *b)
     case TY_PTR:
         return type_same(a->base, b->base);
     case TY_ARRAY:
-        return a->count == b->count &&
+        return (a->count == b->count || a->count == 0 || b->count == 0) &&
                type_same(a->base, b->base);
     case TY_FUNC:
         if (!type_same(a->ret, b->ret))
@@ -386,6 +386,20 @@ int type_same(Type *a, Type *b)
             for (int i = 0; i < a->nparams; i++)
                 if (!type_same(a->params[i], b->params[i]))
                     return 0;
+        } else if (a->prototyped || b->prototyped) {
+            Type *proto = a->prototyped ? a : b;
+
+            /* A prototype is compatible with an old-style `()` declaration
+             * only when every parameter is unchanged by the default argument
+             * promotions (C89 3.5.4.3). */
+            for (int i = 0; i < proto->nparams; i++) {
+                /* xcc's enum representation and promotion type are int. */
+                if (type_is_enum(proto->params[i]))
+                    continue;
+                if (!type_same(proto->params[i],
+                               type_int_promote(proto->params[i])))
+                    return 0;
+            }
         }
         return 1;
     case TY_TYPEDEF_REF:
@@ -394,7 +408,9 @@ int type_same(Type *a, Type *b)
     case TY_STRUCT:
     case TY_UNION:
     case TY_ENUM:
-        return a->tag && b->tag && strcmp(a->tag, b->tag) == 0;
+        /* Tagged and anonymous aggregate types have identity, not structural
+         * or name-based equivalence. Canonical declarations share Type *. */
+        return 0;
     }
     return 0;
 }

@@ -103,11 +103,12 @@ typedef_toplevel:
   ;
 
 toplevel:
-    type IDENT '(' param_clause ')' '{' { typedef_enter_scope(); } stmt_list '}'
-        { typedef_leave_scope();
-          $$ = func_new($2, $4, $1, 1, stmt_list_head($8), LOC(@2)); }
-  | type IDENT '(' param_clause ')' ';'
-        { $$ = func_new($2, $4, $1, 0, NULL, LOC(@2)); }
+    type IDENT '(' param_scope_start param_clause ')' '{' stmt_list '}'
+        { typedef_leave_scope(); struct_tag_leave_scope();
+          $$ = func_new($2, $5, $1, 1, stmt_list_head($8), LOC(@2)); }
+  | type IDENT '(' param_scope_start param_clause ')' ';'
+        { typedef_leave_scope(); struct_tag_leave_scope();
+          $$ = func_new($2, $5, $1, 0, NULL, LOC(@2)); }
   ;
 
 /* Integer / void specifiers (never a bare identifier). */
@@ -257,8 +258,9 @@ struct_member_decl:
         { $$ = declarator_add_dim($1, $3, declarator_was_paren($1)); }
   | struct_member_decl '[' ']'
         { $$ = declarator_add_dim($1, NULL, declarator_was_paren($1)); }
-  | struct_member_decl '(' param_clause ')'
-        { $$ = declarator_func($1, $3); }
+  | struct_member_decl '(' param_scope_start param_clause ')'
+        { typedef_leave_scope(); struct_tag_leave_scope();
+          $$ = declarator_func($1, $4); }
   ;
 
 specifier:
@@ -296,8 +298,9 @@ direct_declarator:
         { $$ = declarator_add_dim($1, $3, declarator_was_paren($1)); }
   | direct_declarator '[' ']'
         { $$ = declarator_add_dim($1, NULL, declarator_was_paren($1)); }
-  | direct_declarator '(' param_clause ')'
-        { $$ = declarator_func($1, $3); }
+  | direct_declarator '(' param_scope_start param_clause ')'
+        { typedef_leave_scope(); struct_tag_leave_scope();
+          $$ = declarator_func($1, $4); }
   ;
 
 abstract_declarator_opt:
@@ -321,8 +324,13 @@ direct_abstract_declarator:
         { $$ = declarator_add_dim($1, $3, declarator_was_paren($1)); }
   | direct_abstract_declarator '[' ']'
         { $$ = declarator_add_dim($1, NULL, declarator_was_paren($1)); }
-  | direct_abstract_declarator '(' param_clause ')'
-        { $$ = declarator_func($1, $3); }
+  | direct_abstract_declarator '(' param_scope_start param_clause ')'
+        { typedef_leave_scope(); struct_tag_leave_scope();
+          $$ = declarator_func($1, $4); }
+  ;
+
+param_scope_start:
+    /* empty */              { typedef_enter_scope(); struct_tag_enter_scope(); }
   ;
 
 param_clause:
@@ -353,7 +361,10 @@ param:
     decl_specifier declarator
         {
             $$ = param_append_decl(NULL, $1, $2, declarator_name($2));
+            typedef_hide_name($$->name, LOC(@2));
         }
+  | decl_specifier abstract_declarator
+        { $$ = param_append_decl(NULL, $1, $2, NULL); }
   | decl_specifier
         { $$ = param_append(NULL, $1, NULL); }
   ;
@@ -372,9 +383,11 @@ stmt:
             typedef_declare($2, $3, LOC(@1));
             $$ = node_typedef($2, $3, LOC(@1));
         }
-  | decl_specifier declarator initializer_opt ';'
+  | decl_specifier declarator
+        { typedef_hide_name(declarator_name($2), LOC(@2)); }
+    initializer_opt ';'
         {
-            $$ = node_decl(declarator_name($2), $1, $2, $3, LOC(@1));
+            $$ = node_decl(declarator_name($2), $1, $2, $4, LOC(@1));
         }
   | IF '(' expr ')' stmt %prec IFX
                               { $$ = node_if($3, $5, NULL, LOC(@1)); }
@@ -383,8 +396,8 @@ stmt:
   | WHILE '(' expr ')' stmt   { $$ = node_while($3, $5, LOC(@1)); }
   | FOR '(' expr_opt ';' expr_opt ';' expr_opt ')' stmt
                               { $$ = node_for($3, $5, $7, $9, LOC(@1)); }
-  | '{' { typedef_enter_scope(); } stmt_list '}'
-        { typedef_leave_scope();
+  | '{' { typedef_enter_scope(); struct_tag_enter_scope(); } stmt_list '}'
+        { typedef_leave_scope(); struct_tag_leave_scope();
           $$ = node_block(stmt_list_head($3), LOC(@1)); }
   ;
 

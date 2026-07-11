@@ -17,7 +17,7 @@ int yycolumn = 1;
 
 static SourceLoc scan_loc(void)
 {
-    return (SourceLoc){ yylineno, yycolumn };
+    return (SourceLoc){ yylloc.first_line, yylloc.first_column };
 }
 
 /* Decode a decimal integer constant, flagging C89 3.1.5 range overflow.

@@ -1,4 +1,6 @@
 /* SPDX-License-Identifier: MIT */
+#include <limits.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -52,27 +54,69 @@ static void unknown_warn_flag(const char *arg)
     fputc('\n', stderr);
 }
 
+static void append_source_line(char ***lines, int *n, int *cap,
+                               const char *line)
+{
+    if (*n >= *cap) {
+        if (*cap > (INT_MAX / 2))
+            diag_fatal("too many source lines");
+        int new_cap = *cap ? *cap * 2 : 64;
+        char **new_lines = realloc(*lines, (size_t)new_cap * sizeof(**lines));
+
+        if (!new_lines)
+            diag_fatal("out of memory reading source");
+        *lines = new_lines;
+        *cap = new_cap;
+    }
+    (*lines)[(*n)++] = arena_strdup(line);
+}
+
 static char **load_source_lines(FILE *f, int *out_nlines)
 {
     char **lines = NULL;
+    char *line = NULL;
+    size_t len = 0;
+    size_t line_cap = 0;
     int n = 0;
     int cap = 0;
-    char buf[4096];
+    int ch;
 
     rewind(f);
-    while (fgets(buf, sizeof buf, f)) {
-        size_t len = strlen(buf);
-
-        if (n >= cap) {
-            cap = cap ? cap * 2 : 64;
-            lines = realloc(lines, (size_t)cap * sizeof(*lines));
-            if (!lines)
-                diag_fatal("out of memory reading source");
+    while ((ch = fgetc(f)) != EOF) {
+        if (ch == '\n') {
+            if (!line) {
+                line = malloc(1);
+                if (!line)
+                    diag_fatal("out of memory reading source");
+            }
+            line[len] = '\0';
+            append_source_line(&lines, &n, &cap, line);
+            len = 0;
+            continue;
         }
-        if (len > 0 && buf[len - 1] == '\n')
-            buf[len - 1] = '\0';
-        lines[n++] = arena_strdup(buf);
+
+        if (len == SIZE_MAX || len + 1 >= line_cap) {
+            size_t new_cap;
+
+            if (line_cap > SIZE_MAX / 2)
+                diag_fatal("source line too long");
+            new_cap = line_cap ? line_cap * 2 : 256;
+            char *new_line = realloc(line, new_cap);
+
+            if (!new_line)
+                diag_fatal("out of memory reading source");
+            line = new_line;
+            line_cap = new_cap;
+        }
+        line[len++] = (char)ch;
     }
+    if (ferror(f))
+        diag_fatal("error reading source");
+    if (len > 0) {
+        line[len] = '\0';
+        append_source_line(&lines, &n, &cap, line);
+    }
+    free(line);
     *out_nlines = n;
     return lines;
 }

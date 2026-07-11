@@ -733,6 +733,8 @@ static void sema_finish_function_types(Function *fn)
                       type_name(fn->ret_ty));
 
     for (Param *p = fn->params; p; p = p->next) {
+        Type *declared_ty;
+
         if (p->decl) {
             if (p->decl_spec)
                 p->decl_spec = typedef_resolve_spec(p->decl_spec, fn->loc);
@@ -743,10 +745,29 @@ static void sema_finish_function_types(Function *fn)
         } else if (p->ty) {
             p->ty = typedef_resolve_type(p->ty, fn->loc);
         }
-        if (type_is_record(p->ty) && !type_struct_is_complete(p->ty))
+        declared_ty = p->ty;
+        if (type_is_void(declared_ty)) {
+            diag_error_at(fn->loc,
+                          "parameter must not have void type");
+        } else if (type_is_array(declared_ty) &&
+                   !type_is_complete(type_array_elem(declared_ty))) {
+            diag_error_at(fn->loc,
+                          "array parameter has incomplete element type '%s'",
+                          type_name(type_array_elem(declared_ty)));
+        } else if (type_is_record(declared_ty) &&
+                   !type_struct_is_complete(declared_ty)) {
             diag_error_at(fn->loc,
                           "parameter type '%s' is incomplete",
-                          type_name(p->ty));
+                          type_name(declared_ty));
+        }
+
+        for (Param *prev = fn->params; prev != p; prev = prev->next) {
+            if (p->name && prev->name && strcmp(p->name, prev->name) == 0) {
+                diag_error_at(fn->loc, "redefinition of parameter '%s'",
+                              p->name);
+                break;
+            }
+        }
     }
     func_rebuild_type(fn);
 }
@@ -1225,6 +1246,10 @@ static void resolve_stmt(Node *s)
             s->decl = NULL;
             s->decl_spec = NULL;
         }
+        if (typedef_declared_here(s->name))
+            diag_error_at(s->loc, "redeclared '%s' as different kind of symbol",
+                          s->name);
+        typedef_hide_name(s->name, s->loc);
         if (type_is_record(s->ty) && !type_struct_is_complete(s->ty))
             diag_error_at(s->loc,
                           "variable '%s' has incomplete type '%s'",
@@ -1540,10 +1565,7 @@ static void sema_function(Function *fn)
         }
 
         if (p->name) {
-            if (scope_declared_here(p->name))
-                diag_error_at(fn->loc, "redefinition of parameter '%s'",
-                              p->name);
-            else
+            if (!scope_declared_here(p->name))
                 scope_bind(p->name, pty, p->offset, fn->loc);
         }
     }

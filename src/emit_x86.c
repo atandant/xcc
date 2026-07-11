@@ -845,13 +845,22 @@ static void emit_instr(EmitCtx *c, Instr *ins)
         }
 
         load_operand(c, ins->a, reg64_name(s0), w);
-        load_operand(c, ins->b, reg64_name(s1), w);
-        if (w == LIR_W4)
-            fprintf(c->out, "  %s %s, %s\n",
-                    op, reg32_name(s1), reg32_name(s0));
-        else
-            fprintf(c->out, "  %s %s, %s\n",
-                    op, reg64_name(s1), reg64_name(s0));
+        if (ins->b.kind == OPND_IMM) {
+            if (w == LIR_W4)
+                fprintf(c->out, "  %s $%ld, %s\n",
+                        op, ins->b.u.imm, reg32_name(s0));
+            else
+                fprintf(c->out, "  %s $%ld, %s\n",
+                        op, ins->b.u.imm, reg64_name(s0));
+        } else {
+            load_operand(c, ins->b, reg64_name(s1), w);
+            if (w == LIR_W4)
+                fprintf(c->out, "  %s %s, %s\n",
+                        op, reg32_name(s1), reg32_name(s0));
+            else
+                fprintf(c->out, "  %s %s, %s\n",
+                        op, reg64_name(s1), reg64_name(s0));
+        }
         if (w == LIR_W4)
             fprintf(c->out, "  movslq %s, %%rax\n", reg32_name(s0));
         else

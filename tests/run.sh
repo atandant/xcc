@@ -9,7 +9,7 @@ DIR="tests/cases"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
-MANIFEST="$DIR/manifest.txt"
+MANIFEST="$TMP/manifest.txt"
 ./tests/gen-manifest.sh "$DIR" > "$MANIFEST" || exit 1
 
 pass=0
@@ -103,6 +103,21 @@ if ! $XCC -Wnot-a-real-warning "$DIR/warn_implicit_function_decl.c" -o "$TMP/out
     fi
 else
     echo "FAIL cli-unknown-wflag: expected failure"
+    fail=$((fail + 1))
+fi
+
+# Diagnostics must retain a physical source line longer than the old 4096-byte
+# read buffer, without splitting it or reading past the captured text.
+awk 'BEGIN { for (i = 0; i < 5000; i++) printf " "; print "@" }' > "$TMP/long-line.c"
+if $XCC "$TMP/long-line.c" -o "$TMP/out.s" 2> "$TMP/err"; then
+    echo "FAIL cli-long-diagnostic-line: expected failure"
+    fail=$((fail + 1))
+elif grep -q ':1:5001: error: ' "$TMP/err"; then
+    echo "ok   cli-long-diagnostic-line"
+    pass=$((pass + 1))
+else
+    echo "FAIL cli-long-diagnostic-line: expected diagnostic at line 1, column 5001"
+    sed 's/^/      /' "$TMP/err"
     fail=$((fail + 1))
 fi
 

@@ -7,6 +7,8 @@
 /* C89 struct tag namespace (3.5.2.1). One canonical Type * per tag name. */
 
 void struct_tag_reset(void);
+void struct_tag_enter_scope(void);
+void struct_tag_leave_scope(void);
 
 /* `struct Tag;` / `union Tag;` — forward declaration (incomplete). */
 Type *struct_tag_forward(char *tag, SourceLoc loc);

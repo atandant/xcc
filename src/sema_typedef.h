@@ -15,6 +15,9 @@ void typedef_leave_scope(void);
 /* Bind `name` as synonym for `ty` in the current scope. Errors on redefinition. */
 void typedef_bind(char *name, Type *ty, SourceLoc loc);
 
+/* Record an ordinary identifier that hides an outer typedef name. */
+void typedef_hide_name(char *name, SourceLoc loc);
+
 /* Resolve a typedef name to its Type *, or NULL if not a typedef. */
 Type *typedef_lookup(const char *name);
 

@@ -96,16 +96,18 @@ void diag_set_source(char **lines, int nlines)
 static void diag_emit_caret(SourceLoc loc)
 {
     const char *line;
+    size_t line_len;
 
     if (!diag_lines || loc.line < 1 || loc.line > diag_nlines)
         return;
 
     line = diag_lines[loc.line - 1];
+    line_len = strlen(line);
     fputs(line, stderr);
     fputc('\n', stderr);
 
     for (int i = 1; i < loc.col; i++) {
-        char c = line[i - 1];
+        char c = (size_t)(i - 1) < line_len ? line[i - 1] : ' ';
         fputc(c == '\t' ? '\t' : ' ', stderr);
     }
     fputc('^', stderr);

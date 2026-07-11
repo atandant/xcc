@@ -8,6 +8,7 @@
 #include <string.h>
 
 #define MAX_STRUCT_TAGS 256
+#define MAX_STRUCT_SCOPES 256
 #define MAX_STRUCT_MEMBERS 127
 #define MAX_STRUCT_NESTING 6
 
@@ -19,16 +20,35 @@ typedef struct {
 } StructTagEntry;
 
 static StructTagEntry tags[MAX_STRUCT_TAGS];
+static int scope_starts[MAX_STRUCT_SCOPES];
 static int ntags;
+static int nscopes;
 
 void struct_tag_reset(void)
 {
     ntags = 0;
+    nscopes = 0;
+}
+
+void struct_tag_enter_scope(void)
+{
+    if (nscopes >= MAX_STRUCT_SCOPES) {
+        diag_error("too many nested struct tag scopes");
+        return;
+    }
+    scope_starts[nscopes++] = ntags;
+}
+
+void struct_tag_leave_scope(void)
+{
+    if (nscopes <= 0)
+        return;
+    ntags = scope_starts[--nscopes];
 }
 
 Type *struct_tag_lookup(const char *tag)
 {
-    for (int i = 0; i < ntags; i++) {
+    for (int i = ntags - 1; i >= 0; i--) {
         if (strcmp(tags[i].tag, tag) == 0)
             return tags[i].ty;
     }
@@ -62,11 +82,15 @@ static void struct_tag_register(char *tag, Type *ty, int is_union, SourceLoc loc
 /* Return the existing entry for `tag`, or NULL. Reports a kind mismatch
  * (`struct S` vs `union S`) since both share the tag namespace. */
 static StructTagEntry *struct_tag_entry(const char *tag, int is_union,
-                                        SourceLoc loc, int *mismatch)
+                                        SourceLoc loc, int current_scope_only,
+                                        int *mismatch)
 {
+    int first = current_scope_only && nscopes > 0
+              ? scope_starts[nscopes - 1] : 0;
+
     if (mismatch)
         *mismatch = 0;
-    for (int i = 0; i < ntags; i++) {
+    for (int i = ntags - 1; i >= first; i--) {
         if (strcmp(tags[i].tag, tag) != 0)
             continue;
         if (tags[i].is_union != is_union) {
@@ -280,7 +304,7 @@ static int members_compatible(Member *a, int na, Member *b, int nb)
 
 static Type *record_tag_forward(char *tag, int is_union, SourceLoc loc)
 {
-    StructTagEntry *e = struct_tag_entry(tag, is_union, loc, NULL);
+    StructTagEntry *e = struct_tag_entry(tag, is_union, loc, 0, NULL);
     Type *ty;
 
     if (e)
@@ -295,7 +319,7 @@ static Type *record_tag_define(char *tag, StructField *fields, int is_union,
                                SourceLoc loc)
 {
     int mismatch = 0;
-    StructTagEntry *e = struct_tag_entry(tag, is_union, loc, &mismatch);
+    StructTagEntry *e = struct_tag_entry(tag, is_union, loc, 1, &mismatch);
     Type *ty = (e && !mismatch) ? e->ty : NULL;
     const char *kw = is_union ? "union" : "struct";
     Member *members;

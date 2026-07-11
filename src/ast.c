@@ -615,7 +615,11 @@ static Type *make_array_dim(Type *ty, Node *dim, SourceLoc loc,
     if (!eval_decl_dim(dim, &bound, loc, eval, ctx))
         return ty;
     if (bound == 0) {
-        /* `[]` on a parameter decays to a pointer before allocation. */
+        if (dim) {
+            diag_error_at(loc, "array size is zero");
+            return ty;
+        }
+        /* An unsized `[]` parameter decays to a pointer before allocation. */
         return type_array(ty, 0);
     }
     if (bound < 0) {
@@ -633,15 +637,6 @@ static Type *make_array_dim(Type *ty, Node *dim, SourceLoc loc,
         return ty;
     }
     return type_array(ty, count);
-}
-
-static int declarator_has_suffix_arrays(const Declarator *d)
-{
-    if (!d)
-        return 0;
-    if (d->ndims_suffix > 0)
-        return 1;
-    return declarator_has_suffix_arrays(d->inner);
 }
 
 static Type *type_func_from_params(Type *ret, ParamClause *pc, SourceLoc loc)
@@ -664,6 +659,23 @@ static Type *type_func_from_params(Type *ret, ParamClause *pc, SourceLoc loc)
                     pty = p->decl_spec;
                 else
                     pty = p->ty;
+
+                if (type_is_void(pty)) {
+                    diag_error_at(loc, "parameter must not have void type");
+                } else if (type_is_array(pty) &&
+                           !type_is_complete(type_array_elem(pty))) {
+                    diag_error_at(loc,
+                                  "array parameter has incomplete element type '%s'",
+                                  type_name(type_array_elem(pty)));
+                }
+                for (Param *prev = pc->head; prev != p; prev = prev->next) {
+                    if (p->name && prev->name &&
+                        strcmp(p->name, prev->name) == 0) {
+                        diag_error_at(loc, "redefinition of parameter '%s'",
+                                      p->name);
+                        break;
+                    }
+                }
                 ptypes[i] = type_decay(pty);
             }
         }
@@ -704,11 +716,6 @@ Type *type_apply_declarator_cb(Type *base, Declarator *d, SourceLoc loc,
 
     if (!d)
         return base;
-
-    if (type_is_pointer(base) && declarator_has_suffix_arrays(d)) {
-        diag_error_at(loc, "array declarator not allowed on pointer type");
-        return base;
-    }
 
     if (d->inner && d->ndims_paren_outer > 0) {
         /* `int (*p)[3]`: outer `[]` binds to the base before the inner `*`. */
