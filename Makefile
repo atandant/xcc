@@ -32,8 +32,9 @@ $(BIN): $(OBJS) $(GEN_OBJS)
 $(BUILD):
 	mkdir -p $(BUILD)
 
-# bison generates parser.c and parser.h together
-$(BUILD)/parser.c $(BUILD)/parser.h: src/parser.y | $(BUILD)
+# bison generates parser.c and parser.h together; grouped targets prevent
+# parallel make from running the same recipe once for each output.
+$(BUILD)/parser.c $(BUILD)/parser.h &: src/parser.y | $(BUILD)
 	$(BISON) -d -o $(BUILD)/parser.c src/parser.y
 
 # flex needs the bison-generated token header

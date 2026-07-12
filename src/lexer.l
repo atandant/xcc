@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: MIT */
-%option noyywrap yylineno
+%option noyywrap
+
+%x COMMENT
 
 %{
 #include <stdlib.h>
@@ -14,10 +16,33 @@
 #include "sema_typedef.h"
 
 int yycolumn = 1;
+static int yyline = 1;
+static SourceLoc comment_loc;
 
 static SourceLoc scan_loc(void)
 {
     return (SourceLoc){ yylloc.first_line, yylloc.first_column };
+}
+
+static void scan_advance_location(const char *text, int len)
+{
+    int i;
+
+    yylloc.first_line = yyline;
+    yylloc.first_column = yycolumn;
+    yylloc.last_line = yyline;
+    yylloc.last_column = yycolumn;
+
+    for (i = 0; i < len; i++) {
+        yylloc.last_line = yyline;
+        yylloc.last_column = yycolumn;
+        if (text[i] == '\n') {
+            yyline++;
+            yycolumn = 1;
+        } else {
+            yycolumn++;
+        }
+    }
 }
 
 /* Decode a decimal integer constant, flagging C89 3.1.5 range overflow.
@@ -72,21 +97,25 @@ static int has_long_suffix(const char *text)
     return text[n - 1] == 'L' || text[n - 1] == 'l';
 }
 
-/* Maintain yylloc (column tracking) for every token; bison's %locations
- * gives us yylineno-based line tracking automatically. */
-#define YY_USER_ACTION                                  \
-    yylloc.first_line = yylloc.last_line = yylineno;    \
-    yylloc.first_column = yycolumn;                      \
-    yylloc.last_column = yycolumn + yyleng - 1;          \
-    yycolumn += yyleng;
+/* Track every matched byte so multiline comments and future multiline tokens
+ * leave the next token with an exact line and column. */
+#define YY_USER_ACTION scan_advance_location(yytext, yyleng);
 %}
 
 %%
 
 [ \t\r]+            { /* whitespace */ }
-\n                  { yycolumn = 1; }
+\n                  { /* location advanced by YY_USER_ACTION */ }
 "//".*              { /* comment */ }
-"/*"([^*]|\*+[^*/])*\*+"/" { /* comment */ }
+"/*"                { comment_loc = scan_loc(); BEGIN(COMMENT); }
+<COMMENT>[^*\n]+     { /* comment body */ }
+<COMMENT>\n          { /* comment body */ }
+<COMMENT>"*"+"/"   { BEGIN(INITIAL); }
+<COMMENT>"*"+       { /* comment body */ }
+<COMMENT><<EOF>>    {
+                          diag_error_at(comment_loc, "unterminated comment");
+                          yyterminate();
+                      }
 
 "int"               { return INT; }
 "char"              { return CHAR; }

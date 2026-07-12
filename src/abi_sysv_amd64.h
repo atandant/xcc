@@ -33,5 +33,6 @@ int abi_type_is_record_pass(Type *ty);
 void abi_arg_plan(Type *ty, AbiArgPlan *out);
 void abi_ret_plan(Type *ty, AbiRetPlan *out);
 int abi_stack_arg_bytes(int size);
+int abi_arg_fits_gprs(const AbiArgPlan *plan, int used, int available);
 
 #endif /* XCC_ABI_SYSV_AMD64_H */

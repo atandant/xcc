@@ -1369,8 +1369,14 @@ static void sema_scan_call_member_scratch(Node *n, int *maxsz)
         sema_scan_call_member_scratch(n->lhs, maxsz);
         return;
     case ND_CALL:
-        for (Node *a = n->args; a; a = a->next)
+        for (Node *a = n->args; a; a = a->next) {
+            if (a->kind == ND_CALL && abi_type_is_record_pass(a->ty)) {
+                int sz = type_size(a->ty);
+                if (sz > *maxsz)
+                    *maxsz = sz;
+            }
             sema_scan_call_member_scratch(a, maxsz);
+        }
         return;
     case ND_ASSIGN:
         sema_scan_call_member_scratch(n->lhs, maxsz);
@@ -1539,7 +1545,7 @@ static void sema_function(Function *fn)
             AbiArgPlan ap;
 
             abi_arg_plan(pty, &ap);
-            if (ap.kind == ABI_ARG_STACK) {
+            if (!abi_arg_fits_gprs(&ap, gpr_slot, 6)) {
                 p->offset = 16 + stack_off;
                 p->abi_gpr_start = -1;
                 p->abi_ngpr = 0;
@@ -1570,16 +1576,16 @@ static void sema_function(Function *fn)
         }
     }
 
-    if (gpr_slot > 6)
-        diag_error_at(fn->loc, "too many register arguments for '%s'",
-                      fn->name);
-
     resolve_stmt_list(fn->body);
 
     {
         int max_scratch = 0;
-        sema_scan_sret_call_scratch(fn->body, &max_scratch);
-        sema_scan_call_member_scratch(fn->body, &max_scratch);
+        Node *s;
+
+        for (s = fn->body; s; s = s->next) {
+            sema_scan_sret_call_scratch(s, &max_scratch);
+            sema_scan_call_member_scratch(s, &max_scratch);
+        }
         if (max_scratch > 0)
             fn->abi_call_scratch = scope_alloc_local(
                 type_array(type_char(), max_scratch));

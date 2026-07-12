@@ -108,9 +108,9 @@ int lir_max_outgoing(const LirFn *lf)
 
         if (ins->op != LIR_CALL)
             continue;
-        if (ins->nargs <= 6)
+        if (ins->nargs <= ins->call_nreg)
             continue;
-        int out = 8 * (ins->nargs - 6);
+        int out = 8 * (ins->nargs - ins->call_nreg);
         if (out > max_out)
             max_out = out;
     }

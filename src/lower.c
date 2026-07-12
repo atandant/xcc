@@ -410,6 +410,21 @@ static int lower_object_addr(LowerCtx *c, Node *n)
         return lower_expr(c, n->operand);
     case ND_MEMBER:
         return lower_member_addr(c, n);
+    case ND_CALL: {
+        int tmp = c->fn->abi_call_scratch;
+        int dst;
+
+        if (!tmp)
+            diag_fatal("internal error: record call result needs scratch slot");
+        (void)lower_call_ex(c, n, tmp);
+        dst = fresh(c);
+        emit(c, (Instr){
+            .op = LIR_LEA,
+            .dst = dst,
+            .a = lir_mem(LIR_FP, tmp),
+        });
+        return dst;
+    }
     default:
         assert(0 && "invalid object address");
         return fresh(c);
@@ -1065,7 +1080,7 @@ static int lower_marshal_record_arg(LowerCtx *c, Node *arg, Operand *reg_slots,
     int addr = lower_object_addr(c, arg);
 
     abi_arg_plan(ty, &ap);
-    if (ap.kind == ABI_ARG_STACK) {
+    if (!abi_arg_fits_gprs(&ap, *nreg, 6)) {
         int nslots = abi_stack_arg_bytes(ap.size) / 8;
         int i;
 
@@ -1191,6 +1206,7 @@ static int lower_call_ex(LowerCtx *c, Node *n, int result_off)
             .call_indirect = n->call_direct ? 0 : 1,
             .call_reg = call_reg,
             .nargs = total,
+            .call_nreg = nreg,
             .call_args = args,
         });
     }
@@ -1253,6 +1269,12 @@ static void lower_return_record(LowerCtx *c, Node *n, Type *ret_ty)
             .a = lir_vreg(dst),
             .b = lir_vreg(src),
             .aux = rp.size,
+        });
+        emit(c, (Instr){
+            .op = LIR_MOV,
+            .dst = LIR_NO_VREG,
+            .a = lir_vreg(dst),
+            .b = lir_phys(PHYS_RAX),
         });
         emit(c, (Instr){ .op = LIR_JMP, .label = c->ret_label });
         return;

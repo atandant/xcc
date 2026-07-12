@@ -73,9 +73,10 @@ brace initializers for fnptrs; nested declarators such as
 `int (*(*x)(int))(char)` (use typedefs); file-scope definitions whose return
 type is a function pointer without a typedef (e.g. `int (*f(void))(int) { … }`).
 
-**Struct/union ABI:** passing or returning a struct or union by value is fully
-supported (following SysV AMD64 classification: <= 16 bytes in GPRs, > 16 bytes
-via sret/stack).
+**Struct/union ABI:** passing and returning the compiler's naturally aligned,
+integer/pointer-only records follows the SysV AMD64 INTEGER/MEMORY subset:
+records up to 16 bytes use GPRs when the complete argument fits, while larger
+records use sret/stack memory.
 
 > Locals use type-aware stack layout (`char` 1 byte, `int` 4 bytes, `long` and
 > pointers 8 bytes). On x86-64 Linux (SysV LP64), `long` is 64 bits — the same

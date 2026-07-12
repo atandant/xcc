@@ -414,6 +414,54 @@ static void emit_cmp(EmitCtx *c, Operand a, Operand b, LirWidth w)
     fprintf(c->out, "  cmp %s, %s\n", x86_reg_name_lir(s1, w), ar);
 }
 
+static void emit_store_rax_partial(EmitCtx *c, const char *base, long off,
+                                   int bytes)
+{
+    if (bytes >= 4) {
+        fprintf(c->out, "  mov %%eax, %ld(%s)\n", off, base);
+        fprintf(c->out, "  shr $32, %%rax\n");
+        off += 4;
+        bytes -= 4;
+    }
+    if (bytes >= 2) {
+        fprintf(c->out, "  mov %%ax, %ld(%s)\n", off, base);
+        fprintf(c->out, "  shr $16, %%rax\n");
+        off += 2;
+        bytes -= 2;
+    }
+    if (bytes == 1)
+        fprintf(c->out, "  mov %%al, %ld(%s)\n", off, base);
+}
+
+static void emit_load_rax_partial(EmitCtx *c, const char *base, long off,
+                                  int bytes)
+{
+    int done = 0;
+
+    fprintf(c->out, "  xor %%eax, %%eax\n");
+    if (bytes >= 4) {
+        fprintf(c->out, "  mov %ld(%s), %%eax\n", off, base);
+        done = 4;
+    } else if (bytes >= 2) {
+        fprintf(c->out, "  movzwl %ld(%s), %%eax\n", off, base);
+        done = 2;
+    } else if (bytes == 1) {
+        fprintf(c->out, "  movzbl %ld(%s), %%eax\n", off, base);
+        return;
+    }
+    if (bytes - done >= 2) {
+        fprintf(c->out, "  movzwl %ld(%s), %%r11d\n", off + done, base);
+        fprintf(c->out, "  shl $%d, %%r11\n", done * 8);
+        fprintf(c->out, "  or %%r11, %%rax\n");
+        done += 2;
+    }
+    if (bytes - done == 1) {
+        fprintf(c->out, "  movzbl %ld(%s), %%r11d\n", off + done, base);
+        fprintf(c->out, "  shl $%d, %%r11\n", done * 8);
+        fprintf(c->out, "  or %%r11, %%rax\n");
+    }
+}
+
 static void emit_store_mem(EmitCtx *c, Operand mem, LirWidth w, int bytes)
 {
     load_mem_addr(c, mem, "%r10");
@@ -427,9 +475,12 @@ static void emit_store_mem(EmitCtx *c, Operand mem, LirWidth w, int bytes)
     case 4:
         fprintf(c->out, "  mov %%eax, (%%r10)\n");
         return;
-    default:
+    case 8:
         fprintf(c->out, "  mov %%rax, (%%r10)\n");
         (void)w;
+        return;
+    default:
+        emit_store_rax_partial(c, "%r10", 0, bytes);
         return;
     }
 }
@@ -453,8 +504,11 @@ static void emit_load_fp_slot(EmitCtx *c, Operand mem, int bytes, LirSign sgn)
     case 4:
         fprintf(c->out, "  movslq %ld(%%rbp), %%rax\n", off);
         return;
-    default:
+    case 8:
         fprintf(c->out, "  mov %ld(%%rbp), %%rax\n", off);
+        return;
+    default:
+        emit_load_rax_partial(c, "%rbp", off, bytes);
         return;
     }
 }
@@ -472,8 +526,11 @@ static void emit_store_fp_slot(EmitCtx *c, Operand mem, int bytes)
     case 4:
         fprintf(c->out, "  mov %%eax, %ld(%%rbp)\n", off);
         return;
-    default:
+    case 8:
         fprintf(c->out, "  mov %%rax, %ld(%%rbp)\n", off);
+        return;
+    default:
+        emit_store_rax_partial(c, "%rbp", off, bytes);
         return;
     }
 }
@@ -635,10 +692,17 @@ static void emit_reg_to_stack(EmitCtx *c, int phys, int offset, int bytes)
     case 4:
         fprintf(c->out, "  mov %s, %d(%%rbp)\n", reg32_name(phys), offset);
         return;
-    default:
+    case 8:
         fprintf(c->out, "  mov %s, %d(%%rbp)\n", reg64_name(phys), offset);
         return;
+    default:
+        break;
     }
+
+    /* Record tails can have any width from 1 through 7.  Store them in
+     * exact-width chunks rather than overwriting adjacent frame slots. */
+    fprintf(c->out, "  mov %s, %%rax\n", reg64_name(phys));
+    emit_store_rax_partial(c, "%rbp", offset, bytes);
 }
 
 static void emit_record_param_spill(EmitCtx *c, const TargetDesc *td, Param *p)
@@ -751,8 +815,11 @@ static void emit_instr(EmitCtx *c, Instr *ins)
             case 4:
                 fprintf(c->out, "  movslq (%%r10), %%rax\n");
                 break;
-            default:
+            case 8:
                 fprintf(c->out, "  mov (%%r10), %%rax\n");
+                break;
+            default:
+                emit_load_rax_partial(c, "%r10", 0, ins->aux);
                 break;
             }
         }
@@ -1001,12 +1068,12 @@ static void emit_instr(EmitCtx *c, Instr *ins)
 
     case LIR_CALL: {
         invalidate_rax(c);
-        for (int i = 6; i < ins->nargs; i++) {
+        for (int i = ins->call_nreg; i < ins->nargs; i++) {
             load_operand(c, ins->call_args[i], "%rax", LIR_W8);
-            fprintf(c->out, "  mov %%rax, %d(%%rsp)\n", 8 * (i - 6));
+            fprintf(c->out, "  mov %%rax, %d(%%rsp)\n",
+                    8 * (i - ins->call_nreg));
         }
-        int nreg = ins->nargs < 6 ? ins->nargs : 6;
-        for (int i = 0; i < nreg; i++) {
+        for (int i = 0; i < ins->call_nreg; i++) {
             int preg = td->arg_regs[i];
             load_operand(c, ins->call_args[i], reg64_name(preg), LIR_W8);
         }

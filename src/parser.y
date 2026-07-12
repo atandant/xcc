@@ -41,6 +41,7 @@ Function *g_program = NULL;
     TypedefDecl *tdecl;
     StructField *fields;
     Enumerator *enumr;
+    int scope;
 }
 
 %token <num> NUM
@@ -48,7 +49,9 @@ Function *g_program = NULL;
 %token INT CHAR SHORT LONG VOID UNSIGNED SIGNED RETURN IF ELSE WHILE FOR SIZEOF TYPEDEF STRUCT UNION ENUM
 %token EQ NE LE GE ARROW
 
-%type <node> expr expr_opt arg_expr stmt initializer init_list initializer_opt
+%type <node> expr expr_opt arg_expr equality_expr relational_expr additive_expr
+             multiplicative_expr cast_expr unary_expr postfix_expr primary_expr
+             stmt initializer init_list initializer_opt
 %type <list> stmt_list arg_clause arg_list
 %type <param> param_list param
 %type <pclause> param_clause
@@ -60,26 +63,20 @@ Function *g_program = NULL;
                struct_decl_item
 %type <enumr> enumerator_list enumerator
 %type <str> struct_tag enum_tag member_name
-%type <decl> declarator direct_declarator abstract_declarator struct_member_decl
-                                  abstract_declarator_opt direct_abstract_declarator
+%type <decl> declarator direct_declarator abstract_declarator
+             abstract_declarator_opt direct_abstract_declarator
+%type <scope> param_scope_start block_scope_start
 
-%right '='
-%left ','
-%left EQ NE
-%left '<' '>' LE GE
-%left '+' '-'
-%left '*' '/' '%'
-%precedence UMINUS
-%precedence SIZEOF
-%nonassoc IFX
-%nonassoc ELSE
-%precedence PREC_STRUCT_MEMBER_END
-%right ':'
+%precedence IFX
+%precedence ELSE
+
+%destructor { if ($$) { typedef_leave_scope(); struct_tag_leave_scope(); } }
+            param_scope_start block_scope_start
 
 %%
 
 program:
-    /* empty */              { }
+    %empty                   { }
   | program toplevel         { if ($2) g_program = func_append(g_program, $2); }
   | program typedef_toplevel { g_typedef_decls = typedef_decl_append(g_typedef_decls,
                                                                      $2->spec,
@@ -104,10 +101,10 @@ typedef_toplevel:
 
 toplevel:
     type IDENT '(' param_scope_start param_clause ')' '{' stmt_list '}'
-        { typedef_leave_scope(); struct_tag_leave_scope();
+        { (void)$4; typedef_leave_scope(); struct_tag_leave_scope();
           $$ = func_new($2, $5, $1, 1, stmt_list_head($8), LOC(@2)); }
   | type IDENT '(' param_scope_start param_clause ')' ';'
-        { typedef_leave_scope(); struct_tag_leave_scope();
+        { (void)$4; typedef_leave_scope(); struct_tag_leave_scope();
           $$ = func_new($2, $5, $1, 0, NULL, LOC(@2)); }
   ;
 
@@ -239,28 +236,12 @@ struct_declarator_list:
   ;
 
 struct_decl_item:
-    struct_member_decl
+    declarator
         { $$ = struct_field_append(NULL, NULL, $1, LOC(@1)); }
-  | ':' expr
+  | declarator ':' arg_expr
+        { $$ = struct_field_append_bit(NULL, NULL, $1, $3, LOC(@1)); }
+  | ':' arg_expr
         { $$ = struct_field_append_bit(NULL, NULL, NULL, $2, LOC(@1)); }
-  ;
-
-struct_member_decl:
-    IDENT ':' expr
-        { $$ = declarator_bitfield(declarator_ident($1), $3); }
-  | IDENT %prec PREC_STRUCT_MEMBER_END
-        { $$ = declarator_ident($1); }
-  | '*' struct_member_decl
-        { $$ = declarator_ptr($2); }
-  | '(' struct_member_decl ')'
-        { $$ = declarator_paren_group($2); }
-  | struct_member_decl '[' expr ']'
-        { $$ = declarator_add_dim($1, $3, declarator_was_paren($1)); }
-  | struct_member_decl '[' ']'
-        { $$ = declarator_add_dim($1, NULL, declarator_was_paren($1)); }
-  | struct_member_decl '(' param_scope_start param_clause ')'
-        { typedef_leave_scope(); struct_tag_leave_scope();
-          $$ = declarator_func($1, $4); }
   ;
 
 specifier:
@@ -288,7 +269,7 @@ declarator:
  * (legal C89, parser/declarator builder not yet). Use typedefs meanwhile. */
 
 direct_declarator:
-    IDENT %prec PREC_STRUCT_MEMBER_END
+    IDENT
         { $$ = declarator_ident($1); }
   | TYPEDEF_NAME
         { $$ = declarator_ident($1); }
@@ -299,12 +280,12 @@ direct_declarator:
   | direct_declarator '[' ']'
         { $$ = declarator_add_dim($1, NULL, declarator_was_paren($1)); }
   | direct_declarator '(' param_scope_start param_clause ')'
-        { typedef_leave_scope(); struct_tag_leave_scope();
+        { (void)$3; typedef_leave_scope(); struct_tag_leave_scope();
           $$ = declarator_func($1, $4); }
   ;
 
 abstract_declarator_opt:
-    /* empty */              { $$ = declarator_empty(); }
+    %empty                   { $$ = declarator_empty(); }
   | abstract_declarator
   ;
 
@@ -325,16 +306,22 @@ direct_abstract_declarator:
   | direct_abstract_declarator '[' ']'
         { $$ = declarator_add_dim($1, NULL, declarator_was_paren($1)); }
   | direct_abstract_declarator '(' param_scope_start param_clause ')'
-        { typedef_leave_scope(); struct_tag_leave_scope();
+        { (void)$3; typedef_leave_scope(); struct_tag_leave_scope();
           $$ = declarator_func($1, $4); }
   ;
 
 param_scope_start:
-    /* empty */              { typedef_enter_scope(); struct_tag_enter_scope(); }
+    %empty                   { typedef_enter_scope(); struct_tag_enter_scope();
+                               $$ = 1; }
+  ;
+
+block_scope_start:
+    %empty                   { typedef_enter_scope(); struct_tag_enter_scope();
+                               $$ = 1; }
   ;
 
 param_clause:
-    /* empty */              { $$ = param_clause(NULL, 0); }
+    %empty                   { $$ = param_clause(NULL, 0); }
   | param_list
         {
             Param *h = $1;
@@ -370,7 +357,7 @@ param:
   ;
 
 stmt_list:
-    /* empty */              { $$ = stmt_list_new(); }
+    %empty                   { $$ = stmt_list_new(); }
   | stmt_list stmt           { $$ = stmt_list_append($1, $2); }
   ;
 
@@ -396,13 +383,13 @@ stmt:
   | WHILE '(' expr ')' stmt   { $$ = node_while($3, $5, LOC(@1)); }
   | FOR '(' expr_opt ';' expr_opt ';' expr_opt ')' stmt
                               { $$ = node_for($3, $5, $7, $9, LOC(@1)); }
-  | '{' { typedef_enter_scope(); struct_tag_enter_scope(); } stmt_list '}'
-        { typedef_leave_scope(); struct_tag_leave_scope();
+  | '{' block_scope_start stmt_list '}'
+        { (void)$2; typedef_leave_scope(); struct_tag_leave_scope();
           $$ = node_block(stmt_list_head($3), LOC(@1)); }
   ;
 
 initializer_opt:
-    /* empty */              { $$ = NULL; }
+    %empty                   { $$ = NULL; }
   | '=' initializer          { $$ = $2; }
   ;
 
@@ -413,13 +400,13 @@ initializer:
   ;
 
 init_list:
-    /* empty */                { $$ = NULL; }
+    %empty                     { $$ = NULL; }
   | initializer                { $$ = $1; }
   | init_list ',' initializer  { $$ = init_list_append($1, $3); }
   ;
 
 expr_opt:
-    /* empty */              { $$ = NULL; }
+    %empty                   { $$ = NULL; }
   | expr                     { $$ = $1; }
   ;
 
@@ -429,37 +416,81 @@ expr:
   ;
 
 arg_expr:
+    equality_expr            { $$ = $1; }
+  | equality_expr '=' arg_expr
+                             { $$ = node_assign($1, $3, LOC(@2)); }
+  ;
+
+equality_expr:
+    relational_expr         { $$ = $1; }
+  | equality_expr EQ relational_expr
+                             { $$ = node_binop(OP_EQ, $1, $3, LOC(@2)); }
+  | equality_expr NE relational_expr
+                             { $$ = node_binop(OP_NE, $1, $3, LOC(@2)); }
+  ;
+
+relational_expr:
+    additive_expr           { $$ = $1; }
+  | relational_expr '<' additive_expr
+                             { $$ = node_binop(OP_LT, $1, $3, LOC(@2)); }
+  | relational_expr LE additive_expr
+                             { $$ = node_binop(OP_LE, $1, $3, LOC(@2)); }
+  | relational_expr '>' additive_expr
+                             { $$ = node_binop(OP_GT, $1, $3, LOC(@2)); }
+  | relational_expr GE additive_expr
+                             { $$ = node_binop(OP_GE, $1, $3, LOC(@2)); }
+  ;
+
+additive_expr:
+    multiplicative_expr     { $$ = $1; }
+  | additive_expr '+' multiplicative_expr
+                             { $$ = node_binop(OP_ADD, $1, $3, LOC(@2)); }
+  | additive_expr '-' multiplicative_expr
+                             { $$ = node_binop(OP_SUB, $1, $3, LOC(@2)); }
+  ;
+
+multiplicative_expr:
+    cast_expr               { $$ = $1; }
+  | multiplicative_expr '*' cast_expr
+                             { $$ = node_binop(OP_MUL, $1, $3, LOC(@2)); }
+  | multiplicative_expr '/' cast_expr
+                             { $$ = node_binop(OP_DIV, $1, $3, LOC(@2)); }
+  | multiplicative_expr '%' cast_expr
+                             { $$ = node_binop(OP_MOD, $1, $3, LOC(@2)); }
+  ;
+
+cast_expr:
+    unary_expr              { $$ = $1; }
+  | '(' cast_type ')' cast_expr
+                             { $$ = node_cast($2, $4, LOC(@1)); }
+  ;
+
+unary_expr:
+    postfix_expr            { $$ = $1; }
+  | '-' cast_expr           { $$ = node_neg($2, LOC(@1)); }
+  | '&' cast_expr           { $$ = node_addr($2, LOC(@1)); }
+  | '*' cast_expr           { $$ = node_deref($2, LOC(@1)); }
+  | SIZEOF unary_expr       { $$ = node_sizeof_expr($2, LOC(@1)); }
+  | SIZEOF '(' cast_type ')' { $$ = node_sizeof_type($3, LOC(@1)); }
+  ;
+
+postfix_expr:
+    primary_expr            { $$ = $1; }
+  | postfix_expr '(' arg_clause ')' { $$ = node_call($1, $3, LOC(@2)); }
+  | postfix_expr '[' expr ']'
+        { $$ = node_deref(node_binop(OP_ADD, $1, $3, LOC(@2)), LOC(@2)); }
+  | postfix_expr '.' member_name
+        { $$ = node_member($1, $3, LOC(@2)); }
+  | postfix_expr ARROW member_name
+        { $$ = node_member(node_deref($1, LOC(@2)), $3, LOC(@2)); }
+  ;
+
+primary_expr:
     NUM                      { $$ = node_num($1.val, LOC(@1));
                                $$->has_long_suffix = $1.is_long;
                                $$->is_hex_literal = $1.is_hex;
                                $$->is_octal_literal = $1.is_octal; }
   | IDENT                    { $$ = node_var($1, LOC(@1)); }
-  | arg_expr '(' arg_clause ')' { $$ = node_call($1, $3, LOC(@2)); }
-  | arg_expr '=' arg_expr    { $$ = node_assign($1, $3, LOC(@2)); }
-  | arg_expr '+' arg_expr    { $$ = node_binop(OP_ADD, $1, $3, LOC(@2)); }
-  | arg_expr '-' arg_expr    { $$ = node_binop(OP_SUB, $1, $3, LOC(@2)); }
-  | arg_expr '*' arg_expr    { $$ = node_binop(OP_MUL, $1, $3, LOC(@2)); }
-  | arg_expr '/' arg_expr    { $$ = node_binop(OP_DIV, $1, $3, LOC(@2)); }
-  | arg_expr '%' arg_expr    { $$ = node_binop(OP_MOD, $1, $3, LOC(@2)); }
-  | arg_expr EQ arg_expr     { $$ = node_binop(OP_EQ, $1, $3, LOC(@2)); }
-  | arg_expr NE arg_expr     { $$ = node_binop(OP_NE, $1, $3, LOC(@2)); }
-  | arg_expr '<' arg_expr    { $$ = node_binop(OP_LT, $1, $3, LOC(@2)); }
-  | arg_expr LE arg_expr     { $$ = node_binop(OP_LE, $1, $3, LOC(@2)); }
-  | arg_expr '>' arg_expr    { $$ = node_binop(OP_GT, $1, $3, LOC(@2)); }
-  | arg_expr GE arg_expr     { $$ = node_binop(OP_GE, $1, $3, LOC(@2)); }
-  | '-' arg_expr %prec UMINUS { $$ = node_neg($2, LOC(@1)); }
-  | '&' arg_expr %prec UMINUS { $$ = node_addr($2, LOC(@1)); }
-  | '*' arg_expr %prec UMINUS { $$ = node_deref($2, LOC(@1)); }
-  | SIZEOF arg_expr %prec SIZEOF { $$ = node_sizeof_expr($2, LOC(@1)); }
-  | SIZEOF '(' cast_type ')' %prec SIZEOF { $$ = node_sizeof_type($3, LOC(@1)); }
-  | '(' cast_type ')' arg_expr %prec UMINUS
-                             { $$ = node_cast($2, $4, LOC(@1)); }
-  | arg_expr '[' arg_expr ']'
-        { $$ = node_deref(node_binop(OP_ADD, $1, $3, LOC(@2)), LOC(@2)); }
-  | arg_expr '.' member_name
-        { $$ = node_member($1, $3, LOC(@2)); }
-  | arg_expr ARROW member_name
-        { $$ = node_member(node_deref($1, LOC(@2)), $3, LOC(@2)); }
   | '(' expr ')'             { $$ = $2; }
   ;
 
@@ -471,7 +502,7 @@ member_name:
   ;
 
 arg_clause:
-    /* empty */              { $$ = NULL; }
+    %empty                   { $$ = NULL; }
   | arg_list                 { $$ = $1; }
   ;
 

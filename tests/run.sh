@@ -6,11 +6,12 @@ set -u
 
 XCC=./xcc
 DIR="tests/cases"
+ABI_DIR="tests/abi"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
 MANIFEST="$TMP/manifest.txt"
-./tests/gen-manifest.sh "$DIR" > "$MANIFEST" || exit 1
+./tests/gen-manifest.sh "$DIR" "$ABI_DIR" > "$MANIFEST" || exit 1
 
 pass=0
 fail=0
@@ -20,7 +21,10 @@ while IFS='|' read -r kind file expected expected_err xcc_args; do
         ''|\#*) continue ;;
     esac
 
-    src="$DIR/$file"
+    case "$kind" in
+        abi-*) src="$ABI_DIR/$file" ;;
+        *)     src="$DIR/$file" ;;
+    esac
     case "$kind" in
         run)
             # shellcheck disable=SC2086
@@ -81,6 +85,45 @@ while IFS='|' read -r kind file expected expected_err xcc_args; do
             else
                 echo "FAIL $file: expected primary warning message '$expected_err'"
                 sed 's/^/      /' "$TMP/err"
+                fail=$((fail + 1))
+            fi
+            ;;
+        abi-caller|abi-callee)
+            peer="$ABI_DIR/$expected_err"
+            if ! $XCC "$src" -o "$TMP/abi-xcc.s" 2> "$TMP/err"; then
+                echo "FAIL $file (xcc ABI compile error)"
+                sed 's/^/      /' "$TMP/err"
+                fail=$((fail + 1))
+                continue
+            fi
+            if ! gcc -c "$TMP/abi-xcc.s" -o "$TMP/abi-xcc.o" 2> "$TMP/gccerr"; then
+                echo "FAIL $file (assemble error)"
+                sed 's/^/      /' "$TMP/gccerr"
+                fail=$((fail + 1))
+                continue
+            fi
+            if ! gcc -std=c89 -pedantic-errors -c "$peer" -o "$TMP/abi-gcc.o" \
+                    2> "$TMP/gccerr"; then
+                echo "FAIL $file (gcc ABI peer compile error)"
+                sed 's/^/      /' "$TMP/gccerr"
+                fail=$((fail + 1))
+                continue
+            fi
+            if ! gcc "$TMP/abi-xcc.o" "$TMP/abi-gcc.o" -o "$TMP/abi-out" \
+                    2> "$TMP/gccerr"; then
+                echo "FAIL $file (ABI link error)"
+                sed 's/^/      /' "$TMP/gccerr"
+                fail=$((fail + 1))
+                continue
+            fi
+
+            "$TMP/abi-out"
+            got=$?
+            if [ "$got" = "$expected" ]; then
+                echo "ok   $file + $expected_err -> $got"
+                pass=$((pass + 1))
+            else
+                echo "FAIL $file + $expected_err: expected $expected, got $got"
                 fail=$((fail + 1))
             fi
             ;;

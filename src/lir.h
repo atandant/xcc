@@ -104,6 +104,7 @@ struct Instr {
     int call_reg;
     char *sym_name;
     int nargs;
+    int call_nreg;
     Operand *call_args;
     int aux; /* LOAD/STORE: byte width; POW2 ops: log2(divisor) */
 };

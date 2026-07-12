@@ -48,3 +48,10 @@ int abi_stack_arg_bytes(int size)
 {
     return align_up(size, 8);
 }
+
+int abi_arg_fits_gprs(const AbiArgPlan *plan, int used, int available)
+{
+    if (!plan || plan->kind == ABI_ARG_STACK || used < 0 || available < 0)
+        return 0;
+    return plan->ngpr <= available - used;
+}
