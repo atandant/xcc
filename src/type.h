@@ -143,8 +143,11 @@ int type_scalar_info(Type *ty, TypeScalarInfo *out);
 /* Applies a C89 integer conversion of value `v` to integer type `ty`
    (truncate mod 2^width, reinterpret with ty's signedness). */
 long type_convert_const(long v, Type *ty);
+long type_convert_const_from(long v, Type *src, Type *dst);
 Type *type_int_promote(Type *ty);
 Type *type_arith_convert(Type *a, Type *b);
+Type *type_classify_integer_constant(long v, int has_long_suffix,
+                                     int is_nondecimal);
 Type *type_classify_hex_constant(unsigned long v);
 Type *type_classify_octal_constant(unsigned long v);
 Type *type_decay(Type *ty);

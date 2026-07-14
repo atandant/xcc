@@ -30,6 +30,30 @@ typedef enum {
 static void resolve_expr_ctx(Node *n, ExprCtx ctx);
 static long sizeof_value(Type *ty, SourceLoc loc);
 
+/* Make an implicit integer conversion explicit in the typed AST.  Keeping the
+ * conversion in the tree gives constant folding and runtime lowering the same
+ * input, rather than relying on each consumer to reconstruct C's conversion
+ * rules independently. */
+static void convert_integer_expr(Node **np, Type *dst)
+{
+    Node *old;
+    Node *cast;
+
+    if (!np || !*np || !dst)
+        return;
+    old = *np;
+    if (!type_is_integer(old->ty) || !type_is_integer(dst) ||
+        type_same(old->ty, dst))
+        return;
+
+    cast = node_cast(dst, old, old->loc);
+    cast->ty = dst;
+    cast->is_lvalue = 0;
+    cast->next = old->next;
+    old->next = NULL;
+    *np = cast;
+}
+
 static int is_arith_op(BinOp op)
 {
     return op == OP_ADD || op == OP_SUB || op == OP_MUL ||
@@ -46,63 +70,37 @@ static int is_void_ptr_type(Type *ty)
     return type_is_pointer(ty) && type_is_void(ty->base);
 }
 
+static int sema_ice_lookup(const char *name, long *out, Type **out_ty,
+                           void *ctx)
+{
+    (void)ctx;
+    if (!enum_const_lookup(name, out))
+        return 0;
+    if (out_ty)
+        *out_ty = type_int();
+    return 1;
+}
+
+static int sema_ice_sizeof(Node *n, long *out, void *ctx)
+{
+    Type *ty = n->cast_ty;
+
+    (void)ctx;
+    if (n->operand) {
+        resolve_expr_ctx(n->operand, CTX_SIZEOF_OPERAND);
+        ty = n->operand->ty;
+    }
+    if (!ty)
+        return 0;
+    *out = sizeof_value(ty, n->loc);
+    return 1;
+}
+
 /* C89 3.4 / 3.2.2.3: evaluate an integral constant expression (ICE). */
 static int ice_eval(Node *n, long *out)
 {
-    long l, r;
-
-    if (!n || !out)
-        return 0;
-
-    switch (n->kind) {
-    case ND_NUM:
-        if (n->ty && !type_is_integer(n->ty))
-            return 0;
-        *out = n->val;
-        return 1;
-    case ND_VAR:
-        return enum_const_lookup(n->name, out);
-    case ND_SIZEOF: {
-        Type *ty = n->cast_ty;
-
-        if (n->operand) {
-            resolve_expr_ctx(n->operand, CTX_SIZEOF_OPERAND);
-            ty = n->operand->ty;
-        }
-        if (!ty)
-            return 0;
-        *out = sizeof_value(ty, n->loc);
-        return 1;
-    }
-    case ND_NEG:
-        if (!ice_eval(n->operand, out))
-            return 0;
-        return int_const_neg_ty(*out, n->ty ? n->ty : type_long(), out);
-    case ND_BINOP:
-        if (n->ty && !type_is_integer(n->ty))
-            return 0;
-        if (!n->ty && !is_arith_op(n->op))
-            return 0;
-        if (!ice_eval(n->lhs, &l) || !ice_eval(n->rhs, &r))
-            return 0;
-        {
-            Type *bty = n->ty ? n->ty : type_long();
-            if (is_eq_op(n->op) ||
-                n->op == OP_LT || n->op == OP_LE ||
-                n->op == OP_GT || n->op == OP_GE)
-                bty = type_arith_convert(n->lhs->ty, n->rhs->ty);
-            return int_const_binop_ty(n->op, l, r, bty, out);
-        }
-    case ND_CAST:
-        if (!n->cast_ty || !type_is_integer(n->cast_ty))
-            return 0;
-        if (!ice_eval(n->operand, out))
-            return 0;
-        *out = type_convert_const(*out, n->cast_ty);
-        return 1;
-    default:
-        return 0;
-    }
+    return int_const_eval(n, sema_ice_lookup, sema_ice_sizeof, NULL,
+                          out, NULL);
 }
 
 /* C89 3.2.2.3: ICE with value 0, or such an expression cast to void *. */
@@ -692,8 +690,10 @@ static void sema_scalar_brace_init(Node *decl)
     check_init_from_self(val, decl);
     if (!expr_assignable_to(decl->ty, val))
         diag_incompatible_init(val->loc, decl->ty, val);
-    else
+    else {
         warn_value_conversion(val->loc, decl->ty, val);
+        convert_integer_expr(&decl->init, decl->ty);
+    }
 }
 
 static void sema_brace_init(Node *decl)
@@ -786,6 +786,8 @@ static int check_arith_binop(Node *n)
 
     if (type_is_integer(l) && type_is_integer(r)) {
         n->ty = type_arith_convert(l, r);
+        convert_integer_expr(&n->lhs, n->ty);
+        convert_integer_expr(&n->rhs, n->ty);
         return 1;
     }
 
@@ -795,10 +797,12 @@ static int check_arith_binop(Node *n)
         /* C89 3.3.6: integer operand may be char, int, or long (after
          * integral promotion for narrower types). */
         if (type_is_pointer(l) && type_is_integer(r)) {
+            convert_integer_expr(&n->rhs, type_int_promote(r));
             n->ty = l;
             return 1;
         }
         if (type_is_integer(l) && type_is_pointer(r)) {
+            convert_integer_expr(&n->lhs, type_int_promote(l));
             n->ty = r;
             return 1;
         }
@@ -808,6 +812,7 @@ static int check_arith_binop(Node *n)
         if (type_is_function_pointer(l) || type_is_function_pointer(r))
             return 0;
         if (type_is_pointer(l) && type_is_integer(r)) {
+            convert_integer_expr(&n->rhs, type_int_promote(r));
             n->ty = l;
             return 1;
         }
@@ -877,18 +882,9 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
 
     switch (n->kind) {
     case ND_NUM:
-        /* C89 3.1.5: an L/l suffix forces long; hex/octal use unsigned typing;
-         * unsuffixed decimal is int if it fits, otherwise long. */
-        if (n->has_long_suffix)
-            n->ty = type_long();
-        else if (n->is_hex_literal)
-            n->ty = type_classify_hex_constant((unsigned long)n->val);
-        else if (n->is_octal_literal)
-            n->ty = type_classify_octal_constant((unsigned long)n->val);
-        else if (n->val >= -2147483647L - 1L && n->val <= 2147483647L)
-            n->ty = type_int();
-        else
-            n->ty = type_long();
+        n->ty = type_classify_integer_constant(
+            n->val, n->has_long_suffix,
+            n->is_hex_literal || n->is_octal_literal);
         n->is_lvalue = 0;
         n->var_decay = 0;
         return;
@@ -1011,16 +1007,26 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
                 int i = 0;
                 const char *callee_name = n->name ? n->name : "function pointer";
 
-                for (Node *a = n->args; a; a = a->next, i++) {
+                for (Node **ap = &n->args; *ap; ap = &(*ap)->next, i++) {
+                    Node *a = *ap;
+
                     if (!expr_assignable_to(fty->params[i], a))
                         diag_error_at(a->loc,
                                       "passing '%s' to parameter of type '%s' in call to '%s'",
                                       type_name(a->ty),
                                       type_name(fty->params[i]),
                                       callee_name);
-                    else
+                    else {
                         warn_value_conversion(a->loc, fty->params[i], a);
+                        convert_integer_expr(ap, fty->params[i]);
+                    }
                 }
+            } else {
+                /* C89 3.3.2.2: calls without a prototype apply the default
+                 * argument promotions.  XCC has no floating types yet, so the
+                 * integral promotions are the complete supported subset. */
+                for (Node **ap = &n->args; *ap; ap = &(*ap)->next)
+                    convert_integer_expr(ap, type_int_promote((*ap)->ty));
             }
             n->func_ty = fty;
             n->ty = fty->ret;
@@ -1035,8 +1041,10 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
             diag_error_at(n->loc, "assignment to non-lvalue");
         else if (!expr_assignable_to(n->lhs->ty, n->rhs))
             diag_incompatible_assign(n->loc, n->lhs->ty, n->rhs);
-        else
+        else {
             warn_value_conversion(n->loc, n->lhs->ty, n->rhs);
+            convert_integer_expr(&n->rhs, n->lhs->ty);
+        }
         n->ty = n->lhs->ty;
         n->is_lvalue = 0;
         return;
@@ -1072,6 +1080,11 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
                                   type_name(n->rhs->ty));
                 else
                     diag_error_at(n->loc, "invalid operands to comparison");
+            } else if (type_is_integer(n->lhs->ty) &&
+                       type_is_integer(n->rhs->ty)) {
+                Type *common = type_arith_convert(n->lhs->ty, n->rhs->ty);
+                convert_integer_expr(&n->lhs, common);
+                convert_integer_expr(&n->rhs, common);
             }
             n->ty = type_int();
         } else if (is_rel_op(n->op)) {
@@ -1081,6 +1094,12 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
             else if (!rel_operands_compatible(n->lhs, n->rhs))
                 diag_error_at(n->loc,
                               "invalid operands to relational operator");
+            else if (type_is_integer(n->lhs->ty) &&
+                     type_is_integer(n->rhs->ty)) {
+                Type *common = type_arith_convert(n->lhs->ty, n->rhs->ty);
+                convert_integer_expr(&n->lhs, common);
+                convert_integer_expr(&n->rhs, common);
+            }
             n->ty = type_int();
         } else if (n->op == OP_COMMA) {
             n->ty = n->rhs->ty;
@@ -1093,6 +1112,7 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
         if (!type_is_integer(n->operand->ty))
             diag_error_at(n->loc, "invalid operand to unary minus");
         n->ty = type_int_promote(n->operand->ty);
+        convert_integer_expr(&n->operand, n->ty);
         n->is_lvalue = 0;
         return;
     case ND_ADDR:
@@ -1285,8 +1305,10 @@ static void resolve_stmt(Node *s)
                 check_init_from_self(s->init, s);
             if (s->init && !expr_assignable_to(s->ty, s->init))
                 diag_incompatible_init(s->loc, s->ty, s->init);
-            else if (s->init)
+            else if (s->init) {
                 warn_value_conversion(s->loc, s->ty, s->init);
+                convert_integer_expr(&s->init, s->ty);
+            }
         }
         return;
     case ND_RETURN:
@@ -1304,8 +1326,10 @@ static void resolve_stmt(Node *s)
                 if (type_is_pointer(cur_ret_ty) && type_is_integer(s->operand->ty) &&
                     !is_null_ptr_constant(s->operand))
                     note_non_null_int_to_pointer(s->loc);
-            } else if (!type_is_void(cur_ret_ty))
+            } else if (!type_is_void(cur_ret_ty)) {
                 warn_value_conversion(s->loc, cur_ret_ty, s->operand);
+                convert_integer_expr(&s->operand, cur_ret_ty);
+            }
         } else if (!type_is_void(cur_ret_ty)) {
             diag_warn(W_RETURN_TYPE, s->loc,
                       "non-void function '%s' should return a value",

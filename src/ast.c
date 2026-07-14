@@ -541,51 +541,24 @@ static long ast_sizeof_type(Type *ty, SourceLoc loc)
     return type_size(ty);
 }
 
+static int parse_abstract_sizeof(Node *expr, long *out, void *ctx)
+{
+    SourceLoc *loc = ctx;
+
+    if (!expr || expr->operand || !loc)
+        return 0;
+    *out = ast_sizeof_type(expr->cast_ty, *loc);
+    return 1;
+}
+
 static int parse_abstract_dim_eval(Node *expr, long *out, SourceLoc loc, void *ctx)
 {
-    long l, r;
-
     (void)ctx;
-
     if (!expr) {
         *out = 0;
         return 1;
     }
-
-    switch (expr->kind) {
-    case ND_NUM:
-        *out = expr->val;
-        return 1;
-    case ND_SIZEOF: {
-        Type *ty = expr->cast_ty;
-
-        if (expr->operand)
-            return 0;
-        *out = ast_sizeof_type(ty, loc);
-        return 1;
-    }
-    case ND_NEG:
-        if (!parse_abstract_dim_eval(expr->operand, out, loc, ctx))
-            return 0;
-        return int_const_neg_ty(*out, type_long(), out);
-    case ND_BINOP:
-        if (expr->op != OP_ADD && expr->op != OP_SUB && expr->op != OP_MUL &&
-            expr->op != OP_DIV && expr->op != OP_MOD)
-            return 0;
-        if (!parse_abstract_dim_eval(expr->lhs, &l, loc, ctx) ||
-            !parse_abstract_dim_eval(expr->rhs, &r, loc, ctx))
-            return 0;
-        return int_const_binop_ty(expr->op, l, r, type_long(), out);
-    case ND_CAST:
-        if (!expr->cast_ty || !type_is_integer(expr->cast_ty))
-            return 0;
-        if (!parse_abstract_dim_eval(expr->operand, out, loc, ctx))
-            return 0;
-        *out = type_convert_const(*out, expr->cast_ty);
-        return 1;
-    default:
-        return 0;
-    }
+    return int_const_eval(expr, NULL, parse_abstract_sizeof, &loc, out, NULL);
 }
 
 static int eval_decl_dim(Node *expr, long *out, SourceLoc loc, DeclDimEvalFn eval,

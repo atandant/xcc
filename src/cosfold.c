@@ -58,7 +58,7 @@ static int fold_literal_operand(Node *n, long *out, Type **out_ty)
     }
     if (n->kind == ND_CAST && n->operand && n->operand->kind == ND_NUM &&
         type_is_integer(n->ty)) {
-        *out = type_convert_const(n->operand->val, n->ty);
+        *out = type_convert_const_from(n->operand->val, n->operand->ty, n->ty);
         *out_ty = n->ty;
         return 1;
     }
@@ -148,7 +148,8 @@ int cosfold_expr(Node **np)
          * no value, so it is left for codegen to discard. */
         if (n->operand && n->operand->kind == ND_NUM &&
             !type_is_void(n->ty) && type_is_scalar(n->ty)) {
-            long v = type_convert_const(n->operand->val, n->ty);
+            long v = type_convert_const_from(n->operand->val,
+                                             n->operand->ty, n->ty);
             replace_expr_preserve_next(np, n, fold_to_num(v, n->ty, n->loc));
             return 1;
         }

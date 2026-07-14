@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include "sema_struct.h"
+#include "sema_enum.h"
 #include "diag.h"
 #include "arena.h"
 #include "intconst.h"
@@ -107,31 +108,21 @@ static StructTagEntry *struct_tag_entry(const char *tag, int is_union,
     return NULL;
 }
 
+static int struct_ice_lookup(const char *name, long *out, Type **out_ty,
+                             void *ctx)
+{
+    (void)ctx;
+    if (!enum_const_lookup(name, out))
+        return 0;
+    if (out_ty)
+        *out_ty = type_int();
+    return 1;
+}
+
 static int ice_eval(Node *n, long *out)
 {
-    if (!n)
-        return 0;
-
-    switch (n->kind) {
-    case ND_NUM:
-        *out = n->val;
-        return 1;
-    case ND_NEG:
-        if (!ice_eval(n->operand, out))
-            return 0;
-        return int_const_neg(*out, out);
-    case ND_BINOP:
-        if (n->op == OP_COMMA)
-            return ice_eval(n->rhs, out);
-        {
-            long l, r;
-            if (!ice_eval(n->lhs, &l) || !ice_eval(n->rhs, &r))
-                return 0;
-            return int_const_binop(n->op, l, r, out);
-        }
-    default:
-        return 0;
-    }
+    return int_const_eval(n, struct_ice_lookup, int_const_sizeof_type, NULL,
+                          out, NULL);
 }
 
 static int is_bitfield_spec(Type *ty)

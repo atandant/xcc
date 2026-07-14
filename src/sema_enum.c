@@ -54,35 +54,23 @@ int enum_const_lookup(const char *name, long *out_value)
     return 0;
 }
 
-/* Constant folding for enumerator values. Unlike the struct bit-field ICE
- * evaluator, this must also resolve references to earlier enumerators. */
+static int enum_ice_lookup(const char *name, long *out, Type **out_ty,
+                           void *ctx)
+{
+    (void)ctx;
+    if (!enum_const_lookup(name, out))
+        return 0;
+    if (out_ty)
+        *out_ty = type_int();
+    return 1;
+}
+
+/* Enumerator values are parsed before full sema, but arithmetic still uses
+ * the same typed ICE engine as array bounds and optimizer folding. */
 static int enum_ice_eval(Node *n, long *out)
 {
-    if (!n)
-        return 0;
-
-    switch (n->kind) {
-    case ND_NUM:
-        *out = n->val;
-        return 1;
-    case ND_VAR:
-        return enum_const_lookup(n->name, out);
-    case ND_NEG:
-        if (!enum_ice_eval(n->operand, out))
-            return 0;
-        return int_const_neg(*out, out);
-    case ND_BINOP:
-        if (n->op == OP_COMMA)
-            return enum_ice_eval(n->rhs, out);
-        {
-            long l, r;
-            if (!enum_ice_eval(n->lhs, &l) || !enum_ice_eval(n->rhs, &r))
-                return 0;
-            return int_const_binop(n->op, l, r, out);
-        }
-    default:
-        return 0;
-    }
+    return int_const_eval(n, enum_ice_lookup, int_const_sizeof_type, NULL,
+                          out, NULL);
 }
 
 static void enum_const_register(char *name, long value, SourceLoc loc)

@@ -505,6 +505,11 @@ long type_convert_const(long v, Type *ty)
     return sign_extend_masked(uv, bits);
 }
 
+long type_convert_const_from(long v, Type *src, Type *dst)
+{
+    return type_convert_const(type_convert_const(v, src), dst);
+}
+
 int type_int_rank(Type *ty)
 {
     TypeIntInfo info;
@@ -662,6 +667,24 @@ Type *type_classify_hex_constant(unsigned long v)
 Type *type_classify_octal_constant(unsigned long v)
 {
     return type_classify_hex_constant(v);
+}
+
+Type *type_classify_integer_constant(long v, int has_long_suffix,
+                                     int is_nondecimal)
+{
+    if (has_long_suffix) {
+        /* The candidate types for an L-suffixed hexadecimal or octal
+         * constant are long, unsigned long.  Decimal L has only long in
+         * XCC's supported C89 integer set. */
+        if (is_nondecimal && (unsigned long)v > (unsigned long)LONG_MAX)
+            return type_unsigned_long();
+        return type_long();
+    }
+    if (is_nondecimal)
+        return type_classify_hex_constant((unsigned long)v);
+    if (v >= -2147483647L - 1L && v <= 2147483647L)
+        return type_int();
+    return type_long();
 }
 
 int type_size(Type *ty)

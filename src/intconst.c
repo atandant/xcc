@@ -173,4 +173,109 @@ int int_const_binop_ty(BinOp op, long a, long b, Type *ty, long *out)
     return 1;
 }
 
+static int is_comparison(BinOp op)
+{
+    return op == OP_EQ || op == OP_NE || op == OP_LT || op == OP_LE ||
+           op == OP_GT || op == OP_GE;
+}
+
+int int_const_sizeof_type(Node *expr, long *out_value, void *ctx)
+{
+    Type *ty;
+
+    (void)ctx;
+    if (!expr || expr->kind != ND_SIZEOF || expr->operand || !out_value)
+        return 0;
+    ty = expr->cast_ty;
+    if (!ty || type_is_void(ty) || ty->kind == TY_FUNC ||
+        !type_is_complete(ty))
+        return 0;
+    *out_value = type_size(ty);
+    return 1;
+}
+
+int int_const_eval(Node *expr, IntConstLookupFn lookup,
+                   IntConstSizeofFn eval_sizeof, void *ctx,
+                   long *out_value, Type **out_ty)
+{
+    long l;
+    long r;
+    Type *lty;
+    Type *rty;
+    Type *ty;
+
+    if (!expr || !out_value)
+        return 0;
+
+    switch (expr->kind) {
+    case ND_NUM:
+        ty = expr->ty;
+        if (!ty)
+            ty = type_classify_integer_constant(
+                expr->val, expr->has_long_suffix,
+                expr->is_hex_literal || expr->is_octal_literal);
+        if (!type_is_integer(ty))
+            return 0;
+        *out_value = type_convert_const(expr->val, ty);
+        if (out_ty)
+            *out_ty = ty;
+        return 1;
+    case ND_VAR:
+        if (!lookup || !lookup(expr->name, out_value, &ty, ctx))
+            return 0;
+        if (!ty)
+            ty = type_int();
+        if (!type_is_integer(ty))
+            return 0;
+        *out_value = type_convert_const(*out_value, ty);
+        if (out_ty)
+            *out_ty = ty;
+        return 1;
+    case ND_SIZEOF:
+        if (!eval_sizeof || !eval_sizeof(expr, out_value, ctx))
+            return 0;
+        if (out_ty)
+            *out_ty = type_unsigned_long();
+        return 1;
+    case ND_NEG:
+        if (!int_const_eval(expr->operand, lookup, eval_sizeof, ctx,
+                            &l, &lty))
+            return 0;
+        ty = type_int_promote(lty);
+        l = type_convert_const(l, ty);
+        if (!int_const_neg_ty(l, ty, out_value))
+            return 0;
+        if (out_ty)
+            *out_ty = ty;
+        return 1;
+    case ND_BINOP:
+        if (expr->op == OP_COMMA)
+            return 0;
+        if (!int_const_eval(expr->lhs, lookup, eval_sizeof, ctx, &l, &lty) ||
+            !int_const_eval(expr->rhs, lookup, eval_sizeof, ctx, &r, &rty))
+            return 0;
+        ty = type_arith_convert(lty, rty);
+        l = type_convert_const(l, ty);
+        r = type_convert_const(r, ty);
+        if (!int_const_binop_ty(expr->op, l, r, ty, out_value))
+            return 0;
+        if (out_ty)
+            *out_ty = is_comparison(expr->op) ? type_int() : ty;
+        return 1;
+    case ND_CAST:
+        ty = expr->ty ? expr->ty : expr->cast_ty;
+        if (!type_is_integer(ty) ||
+            !int_const_eval(expr->operand, lookup, eval_sizeof, ctx,
+                            &l, &lty))
+            return 0;
+        (void)lty;
+        *out_value = type_convert_const(l, ty);
+        if (out_ty)
+            *out_ty = ty;
+        return 1;
+    default:
+        return 0;
+    }
+}
+
 /* UNDEFER: reject unsigned constant overflow past unsigned long range. */

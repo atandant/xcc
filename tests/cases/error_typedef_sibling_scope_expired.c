@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: MIT */
-/* expect-error: syntax error, unexpected IDENT, expecting ',' or ';' */
+/* expect-error: syntax error, unexpected IDENT, expecting ';' or ',' */
 int main(void)
 {
     {
