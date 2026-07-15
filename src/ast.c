@@ -3,6 +3,7 @@
 #include "arena.h"
 #include "diag.h"
 #include "intconst.h"
+#include "sema_enum.h"
 
 #include <limits.h>
 #include <string.h>
@@ -211,6 +212,16 @@ Node *node_for(Node *init, Node *cond, Node *step, Node *body, SourceLoc loc)
     n->step = step;
     n->then_body = body;
     return n;
+}
+
+Node *node_break(SourceLoc loc)
+{
+    return new_node(ND_BREAK, loc);
+}
+
+Node *node_continue(SourceLoc loc)
+{
+    return new_node(ND_CONTINUE, loc);
 }
 
 Node *node_block(Node *body, SourceLoc loc)
@@ -583,6 +594,17 @@ static int parse_abstract_sizeof(Node *expr, long *out, void *ctx)
     return 1;
 }
 
+static int parse_abstract_ice_lookup(const char *name, long *out, Type **out_ty,
+                                     void *ctx)
+{
+    (void)ctx;
+    if (!enum_const_lookup(name, out))
+        return 0;
+    if (out_ty)
+        *out_ty = type_int();
+    return 1;
+}
+
 static int parse_abstract_dim_eval(Node *expr, long *out, SourceLoc loc, void *ctx)
 {
     (void)ctx;
@@ -590,7 +612,12 @@ static int parse_abstract_dim_eval(Node *expr, long *out, SourceLoc loc, void *c
         *out = 0;
         return 1;
     }
-    return int_const_eval(expr, NULL, parse_abstract_sizeof, &loc, out, NULL);
+    if (!int_const_eval(expr, parse_abstract_ice_lookup, parse_abstract_sizeof,
+                      &loc, out, NULL)) {
+        diag_error_at(loc, "array size is not an integer constant expression");
+        return 0;
+    }
+    return 1;
 }
 
 static int eval_decl_dim(Node *expr, long *out, SourceLoc loc, DeclDimEvalFn eval,

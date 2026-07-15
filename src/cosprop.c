@@ -249,9 +249,14 @@ static int prop_stmt_loop(Node *s)
         return changed;
     case ND_WHILE:
     case ND_FOR:
+        changed |= prop_expr(&s->init, 1, 0);
         changed |= prop_expr(&s->cond, 1, 0);
+        changed |= prop_expr(&s->step, 1, 0);
         changed |= prop_stmt_loop(s->then_body);
         return changed;
+    case ND_BREAK:
+    case ND_CONTINUE:
+        return 0;
     default:
         return 0;
     }

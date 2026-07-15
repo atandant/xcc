@@ -47,6 +47,8 @@ typedef enum {
     ND_IF,         /* if (cond) then [else else]   */
     ND_WHILE,      /* while (cond) body            */
     ND_FOR,        /* for (init; cond; step) body  */
+    ND_BREAK,      /* break innermost loop           */
+    ND_CONTINUE,   /* continue innermost loop        */
     ND_BLOCK,      /* { body }                     */
     ND_TYPEDEF,    /* typedef specifier declarator; */
     ND_MEMBER      /* lhs.name  (`->` desugars to (*p).name) */
@@ -204,6 +206,8 @@ Node *node_call(Node *callee, NodeList *args, SourceLoc loc);
 Node *node_if(Node *cond, Node *then_body, Node *else_body, SourceLoc loc);
 Node *node_while(Node *cond, Node *body, SourceLoc loc);
 Node *node_for(Node *init, Node *cond, Node *step, Node *body, SourceLoc loc);
+Node *node_break(SourceLoc loc);
+Node *node_continue(SourceLoc loc);
 Node *node_block(Node *body, SourceLoc loc);
 Node *node_typedef(Type *spec, Declarator *decl, SourceLoc loc);
 TypedefDecl *typedef_decl_new(Type *spec, Declarator *decl, SourceLoc loc);

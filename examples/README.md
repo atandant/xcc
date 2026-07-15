@@ -16,7 +16,12 @@ binary.
 | `bsort.c`        | Bubble sort `int[5]`, return `a[0]`  | 3         |
 | `star_bfs.c`     | BFS best path, decimal-coded nodes   | 15        |
 | `matmul.c`       | 3x3 matrix multiply + weighted trace | 38        |
+| `critter.c`      | Multi-species 8x8 world simulation   | 20        |
 | `warnex.c`       | Warning demo (compiles; see stderr)  | 42        |
+
+`critter.c` is a multi-species Cornell-style simulation on an 8x8 grid: three
+critters (herbivore, carnivore, scavenger) with function-pointer brains, BFS
+scent, collisions, struct-by-value snapshots, and a long checksum exit code.
 
 `matmul.c` is a brace-initializer showcase: unsized multidimensional arrays with
 both flat and nested initializers (`int A[][3]`, `int B[][3]`), a 1-D unsized

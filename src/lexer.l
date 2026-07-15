@@ -129,6 +129,8 @@ static int has_long_suffix(const char *text)
 "else"              { return ELSE; }
 "while"             { return WHILE; }
 "for"               { return FOR; }
+"break"             { return BREAK; }
+"continue"          { return CONTINUE; }
 "typedef"           { return TYPEDEF; }
 "struct"            { return STRUCT; }
 "union"             { return UNION; }

@@ -1296,6 +1296,8 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
 
 static void resolve_stmt(Node *s);
 
+static int loop_depth;
+
 /* A controlling expression (if/while/for condition) must be scalar: an
  * integer or a pointer. A NULL `for` condition is an infinite loop. */
 static void require_scalar_cond(Node *cond)
@@ -1403,17 +1405,29 @@ static void resolve_stmt(Node *s)
         if (s->else_body)
             resolve_stmt(s->else_body);
         return;
+    case ND_BREAK:
+        if (loop_depth == 0)
+            diag_error_at(s->loc, "break statement not within loop");
+        return;
+    case ND_CONTINUE:
+        if (loop_depth == 0)
+            diag_error_at(s->loc, "continue statement not within loop");
+        return;
     case ND_WHILE:
         resolve_expr_ctx(s->cond, CTX_RVALUE);
         require_scalar_cond(s->cond);
+        loop_depth++;
         resolve_stmt(s->then_body);
+        loop_depth--;
         return;
     case ND_FOR:
         resolve_expr_ctx(s->init, CTX_RVALUE);
         resolve_expr_ctx(s->cond, CTX_RVALUE);
         require_scalar_cond(s->cond);
         resolve_expr_ctx(s->step, CTX_RVALUE);
+        loop_depth++;
         resolve_stmt(s->then_body);
+        loop_depth--;
         return;
     case ND_BLOCK:
         enter_scope();

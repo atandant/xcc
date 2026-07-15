@@ -46,7 +46,7 @@ Function *g_program = NULL;
 
 %token <num> NUM
 %token <str> IDENT TYPEDEF_NAME
-%token INT CHAR SHORT LONG VOID UNSIGNED SIGNED RETURN IF ELSE WHILE FOR SIZEOF TYPEDEF STRUCT UNION ENUM
+%token INT CHAR SHORT LONG VOID UNSIGNED SIGNED RETURN IF ELSE WHILE FOR BREAK CONTINUE SIZEOF TYPEDEF STRUCT UNION ENUM
 %token EQ NE LE GE ARROW LAND LOR
 
 %type <node> expr expr_opt arg_expr conditional_expr logical_or_expr
@@ -384,6 +384,8 @@ stmt:
   | WHILE '(' expr ')' stmt   { $$ = node_while($3, $5, LOC(@1)); }
   | FOR '(' expr_opt ';' expr_opt ';' expr_opt ')' stmt
                               { $$ = node_for($3, $5, $7, $9, LOC(@1)); }
+  | BREAK ';'                { $$ = node_break(LOC(@1)); }
+  | CONTINUE ';'             { $$ = node_continue(LOC(@1)); }
   | '{' block_scope_start stmt_list '}'
         { (void)$2; typedef_leave_scope(); struct_tag_leave_scope();
           $$ = node_block(stmt_list_head($3), LOC(@1)); }

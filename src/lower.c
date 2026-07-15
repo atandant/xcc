@@ -17,6 +17,9 @@ typedef struct {
     Function *fn;
     int ret_label;
     LirBlockId current;
+    int loop_continue[64];
+    int loop_break[64];
+    int loop_depth;
 } LowerCtx;
 
 static LirBlock *current_block(LowerCtx *c)
@@ -364,6 +367,21 @@ static int lower_object_addr(LowerCtx *c, Node *n)
         assert(0 && "invalid object address");
         return fresh(c);
     }
+}
+
+static void loop_push(LowerCtx *c, int continue_label, int break_label)
+{
+    if (c->loop_depth >= 64)
+        return;
+    c->loop_continue[c->loop_depth] = continue_label;
+    c->loop_break[c->loop_depth] = break_label;
+    c->loop_depth++;
+}
+
+static void loop_pop(LowerCtx *c)
+{
+    if (c->loop_depth > 0)
+        c->loop_depth--;
 }
 
 static void lower_stmt(LowerCtx *c, Node *n);
@@ -1624,20 +1642,24 @@ static void lower_stmt(LowerCtx *c, Node *n)
         int begin_id = lir_new_label(c->lf);
         int body_id = lir_new_label(c->lf);
         int end_id = lir_new_label(c->lf);
+        loop_push(c, begin_id, end_id);
         emit(c, (Instr){ .op = LIR_LABEL, .label = begin_id });
         lower_branch(c, n->cond, body_id, end_id);
         emit(c, (Instr){ .op = LIR_LABEL, .label = body_id });
         lower_stmt(c, n->then_body);
         emit(c, (Instr){ .op = LIR_JMP, .label = begin_id });
         emit(c, (Instr){ .op = LIR_LABEL, .label = end_id });
+        loop_pop(c);
         return;
     }
     case ND_FOR: {
-        if (n->init)
-            lower_expr(c, n->init);
         int begin_id = lir_new_label(c->lf);
         int body_id = lir_new_label(c->lf);
+        int step_id = lir_new_label(c->lf);
         int end_id = lir_new_label(c->lf);
+        if (n->init)
+            lower_expr(c, n->init);
+        loop_push(c, step_id, end_id);
         emit(c, (Instr){ .op = LIR_LABEL, .label = begin_id });
         if (n->cond)
             lower_branch(c, n->cond, body_id, end_id);
@@ -1645,12 +1667,24 @@ static void lower_stmt(LowerCtx *c, Node *n)
             emit(c, (Instr){ .op = LIR_JMP, .label = body_id });
         emit(c, (Instr){ .op = LIR_LABEL, .label = body_id });
         lower_stmt(c, n->then_body);
+        emit(c, (Instr){ .op = LIR_LABEL, .label = step_id });
         if (n->step)
             lower_expr(c, n->step);
         emit(c, (Instr){ .op = LIR_JMP, .label = begin_id });
         emit(c, (Instr){ .op = LIR_LABEL, .label = end_id });
+        loop_pop(c);
         return;
     }
+    case ND_BREAK:
+        if (c->loop_depth > 0)
+            emit(c, (Instr){ .op = LIR_JMP,
+                              .label = c->loop_break[c->loop_depth - 1] });
+        return;
+    case ND_CONTINUE:
+        if (c->loop_depth > 0)
+            emit(c, (Instr){ .op = LIR_JMP,
+                              .label = c->loop_continue[c->loop_depth - 1] });
+        return;
     case ND_BLOCK:
         for (Node *s = n->body; s; s = s->next)
             lower_stmt(c, s);
