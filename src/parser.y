@@ -47,9 +47,10 @@ Function *g_program = NULL;
 %token <num> NUM
 %token <str> IDENT TYPEDEF_NAME
 %token INT CHAR SHORT LONG VOID UNSIGNED SIGNED RETURN IF ELSE WHILE FOR SIZEOF TYPEDEF STRUCT UNION ENUM
-%token EQ NE LE GE ARROW
+%token EQ NE LE GE ARROW LAND LOR
 
-%type <node> expr expr_opt arg_expr equality_expr relational_expr additive_expr
+%type <node> expr expr_opt arg_expr conditional_expr logical_or_expr
+             logical_and_expr equality_expr relational_expr additive_expr
              multiplicative_expr cast_expr unary_expr postfix_expr primary_expr
              stmt initializer init_list initializer_opt
 %type <list> stmt_list arg_clause arg_list
@@ -416,9 +417,27 @@ expr:
   ;
 
 arg_expr:
-    equality_expr            { $$ = $1; }
-  | equality_expr '=' arg_expr
+    conditional_expr         { $$ = $1; }
+  | unary_expr '=' arg_expr
                              { $$ = node_assign($1, $3, LOC(@2)); }
+  ;
+
+conditional_expr:
+    logical_or_expr          { $$ = $1; }
+  | logical_or_expr '?' expr ':' conditional_expr
+                             { $$ = node_cond($1, $3, $5, LOC(@2)); }
+  ;
+
+logical_or_expr:
+    logical_and_expr         { $$ = $1; }
+  | logical_or_expr LOR logical_and_expr
+                             { $$ = node_logor($1, $3, LOC(@2)); }
+  ;
+
+logical_and_expr:
+    equality_expr            { $$ = $1; }
+  | logical_and_expr LAND equality_expr
+                             { $$ = node_logand($1, $3, LOC(@2)); }
   ;
 
 equality_expr:
@@ -468,6 +487,7 @@ cast_expr:
 unary_expr:
     postfix_expr            { $$ = $1; }
   | '-' cast_expr           { $$ = node_neg($2, LOC(@1)); }
+  | '!' cast_expr           { $$ = node_not($2, LOC(@1)); }
   | '&' cast_expr           { $$ = node_addr($2, LOC(@1)); }
   | '*' cast_expr           { $$ = node_deref($2, LOC(@1)); }
   | SIZEOF unary_expr       { $$ = node_sizeof_expr($2, LOC(@1)); }

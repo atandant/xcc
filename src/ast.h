@@ -30,6 +30,10 @@ typedef enum {
     ND_VAR,        /* reference to a local         */
     ND_BINOP,      /* lhs <op> rhs                 */
     ND_NEG,        /* unary minus on operand       */
+    ND_NOT,        /* logical !operand             */
+    ND_LOGAND,     /* lhs && rhs (short-circuit)   */
+    ND_LOGOR,      /* lhs || rhs (short-circuit)   */
+    ND_COND,       /* cond ? then_expr : else_expr */
     ND_ADDR,       /* unary & (address-of operand) */
     ND_DEREF,      /* unary * (dereference operand)*/
     ND_CAST,       /* (type)operand                */
@@ -84,6 +88,8 @@ struct Node {
     Declarator *decl;  /* ND_DECL: parsed declarator (sema → ty)    */
     Node *init;        /* ND_DECL initializer, ND_FOR init (NULL ok)*/
     Node *cond;        /* ND_IF, ND_WHILE, ND_FOR (FOR cond NULL ok)*/
+    Node *then_expr;   /* ND_COND selected when cond is nonzero      */
+    Node *else_expr;   /* ND_COND selected when cond is zero         */
     Node *step;        /* ND_FOR step (may be NULL)                 */
     Node *then_body;   /* ND_IF, ND_WHILE, ND_FOR loop body         */
     Node *else_body;   /* ND_IF (may be NULL)                       */
@@ -177,6 +183,10 @@ Node *node_num(long v, SourceLoc loc);
 Node *node_var(char *name, SourceLoc loc);
 Node *node_binop(BinOp op, Node *l, Node *r, SourceLoc loc);
 Node *node_neg(Node *o, SourceLoc loc);
+Node *node_not(Node *o, SourceLoc loc);
+Node *node_logand(Node *l, Node *r, SourceLoc loc);
+Node *node_logor(Node *l, Node *r, SourceLoc loc);
+Node *node_cond(Node *cond, Node *then_expr, Node *else_expr, SourceLoc loc);
 Node *node_addr(Node *o, SourceLoc loc);
 Node *node_deref(Node *o, SourceLoc loc);
 Node *node_member(Node *base, char *name, SourceLoc loc);

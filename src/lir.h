@@ -109,10 +109,54 @@ struct Instr {
     int aux; /* LOAD/STORE: byte width; POW2 ops: log2(divisor) */
 };
 
+typedef int LirBlockId;
+
+#define LIR_NO_BLOCK (-1)
+
 typedef struct {
-    int begin;
-    int end;
-} LoopRange;
+    LirBlockId pred;
+    int value;
+} PhiInput;
+
+typedef struct {
+    int dst;
+    PhiInput *inputs;
+    int ninputs;
+    int cap;
+} LirPhi;
+
+typedef enum {
+    LIR_TERM_NONE,
+    LIR_TERM_JMP,
+    LIR_TERM_BR,
+    LIR_TERM_RET,
+} LirTermKind;
+
+typedef struct {
+    LirTermKind kind;
+    LirBlockId target;
+    LirBlockId true_target;
+    LirBlockId false_target;
+    Operand a;
+    Operand b;
+    LirWidth w;
+    LirSign sgn;
+    LirCond cc;
+} LirTerminator;
+
+typedef struct {
+    LirBlockId id;
+    Instr *instrs;
+    int ninstr;
+    int cap;
+    LirPhi *phis;
+    int nphis;
+    int phis_cap;
+    LirTerminator term;
+    LirBlockId *preds;
+    int npreds;
+    int preds_cap;
+} LirBlock;
 
 typedef struct {
     int offset;
@@ -122,13 +166,18 @@ typedef struct {
 typedef struct LirFn LirFn;
 struct LirFn {
     char *name;
+    LirBlock *blocks;
+    int nblocks;
+    int blocks_cap;
+    LirBlockId entry_block;
+    LirBlockId *label_blocks;
+    int label_blocks_cap;
+
+    /* Linear backend form, populated by lir_cfg_lower(). */
     Instr *instrs;
     int ninstr;
     int cap;
     int nvreg;
-    LoopRange *loops;
-    int nloops;
-    int loops_cap;
     int label_count;
     int epilogue_label;
     LocalHome *homes;
@@ -146,7 +195,12 @@ Operand lir_none(void);
 LirFn *lir_fn_new(const char *name);
 int lir_new_vreg(LirFn *fn);
 int lir_new_label(LirFn *fn);
-void lir_add_loop(LirFn *fn, int begin, int end);
+LirBlockId lir_new_block(LirFn *fn);
+LirBlockId lir_label_block(LirFn *fn, int label);
+LirBlock *lir_get_block(LirFn *fn, LirBlockId id);
+int lir_block_emit(LirBlock *block, Instr ins);
+LirPhi *lir_block_add_phi(LirBlock *block, int dst);
+void lir_phi_add_input(LirPhi *phi, LirBlockId pred, int value);
 int lir_emit(LirFn *fn, Instr ins);
 void lir_dump_fn(LirFn *fn, FILE *out);
 int lir_home_vreg(LirFn *lf, int offset);

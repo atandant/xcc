@@ -99,6 +99,8 @@ const TargetDesc X86_SYSV = {
     .ret_reg = PHYS_RAX,
     .div_num_reg = PHYS_RAX,
     .div_rem_reg = PHYS_RDX,
+    .memcpy_clobber_mask = (1u << PHYS_RAX) | (1u << PHYS_RCX) |
+                           (1u << PHYS_RSI) | (1u << PHYS_RDI),
     .scratch0 = PHYS_R10,
     .scratch1 = PHYS_R11,
     .imm_bits = 32,
@@ -578,23 +580,25 @@ static void emit_udiv_pow2(EmitCtx *c, Instr *ins)
 static void emit_smod_pow2(EmitCtx *c, Instr *ins)
 {
     long mask = (1L << ins->aux) - 1L;
+    const char *tmp = reg64_name(c->td->scratch0);
+    const char *tmp32 = reg32_name(c->td->scratch0);
 
     load_operand(c, ins->a, "%rax", ins->w);
     if (ins->w == LIR_W4) {
-        fprintf(c->out, "  mov %%eax, %%ecx\n");
-        fprintf(c->out, "  sar $31, %%ecx\n");
-        fprintf(c->out, "  and $%ld, %%ecx\n", mask);
-        fprintf(c->out, "  lea (%%rax,%%rcx), %%eax\n");
+        fprintf(c->out, "  mov %%eax, %s\n", tmp32);
+        fprintf(c->out, "  sar $31, %s\n", tmp32);
+        fprintf(c->out, "  and $%ld, %s\n", mask, tmp32);
+        fprintf(c->out, "  lea (%%rax,%s), %%eax\n", tmp);
         fprintf(c->out, "  and $%ld, %%eax\n", mask);
-        fprintf(c->out, "  sub %%ecx, %%eax\n");
+        fprintf(c->out, "  sub %s, %%eax\n", tmp32);
         fprintf(c->out, "  cltq\n");
     } else {
-        fprintf(c->out, "  mov %%rax, %%rcx\n");
-        fprintf(c->out, "  sar $63, %%rcx\n");
-        fprintf(c->out, "  and $%ld, %%rcx\n", mask);
-        fprintf(c->out, "  lea (%%rax,%%rcx), %%rax\n");
+        fprintf(c->out, "  mov %%rax, %s\n", tmp);
+        fprintf(c->out, "  sar $63, %s\n", tmp);
+        fprintf(c->out, "  and $%ld, %s\n", mask, tmp);
+        fprintf(c->out, "  lea (%%rax,%s), %%rax\n", tmp);
         fprintf(c->out, "  and $%ld, %%rax\n", mask);
-        fprintf(c->out, "  sub %%rcx, %%rax\n");
+        fprintf(c->out, "  sub %s, %%rax\n", tmp);
     }
     emit_pow2_store(c, ins);
 }
@@ -602,20 +606,22 @@ static void emit_smod_pow2(EmitCtx *c, Instr *ins)
 static void emit_sdiv_pow2(EmitCtx *c, Instr *ins)
 {
     long mask = (1L << ins->aux) - 1L;
+    const char *tmp = reg64_name(c->td->scratch0);
+    const char *tmp32 = reg32_name(c->td->scratch0);
 
     load_operand(c, ins->a, "%rax", ins->w);
     if (ins->w == LIR_W4) {
-        fprintf(c->out, "  mov %%eax, %%ecx\n");
-        fprintf(c->out, "  sar $31, %%ecx\n");
-        fprintf(c->out, "  and $%ld, %%ecx\n", mask);
-        fprintf(c->out, "  lea (%%rax,%%rcx), %%eax\n");
+        fprintf(c->out, "  mov %%eax, %s\n", tmp32);
+        fprintf(c->out, "  sar $31, %s\n", tmp32);
+        fprintf(c->out, "  and $%ld, %s\n", mask, tmp32);
+        fprintf(c->out, "  lea (%%rax,%s), %%eax\n", tmp);
         fprintf(c->out, "  sar $%d, %%eax\n", ins->aux);
         fprintf(c->out, "  cltq\n");
     } else {
-        fprintf(c->out, "  mov %%rax, %%rcx\n");
-        fprintf(c->out, "  sar $63, %%rcx\n");
-        fprintf(c->out, "  and $%ld, %%rcx\n", mask);
-        fprintf(c->out, "  lea (%%rax,%%rcx), %%rax\n");
+        fprintf(c->out, "  mov %%rax, %s\n", tmp);
+        fprintf(c->out, "  sar $63, %s\n", tmp);
+        fprintf(c->out, "  and $%ld, %s\n", mask, tmp);
+        fprintf(c->out, "  lea (%%rax,%s), %%rax\n", tmp);
         fprintf(c->out, "  sar $%d, %%rax\n", ins->aux);
     }
     emit_pow2_store(c, ins);

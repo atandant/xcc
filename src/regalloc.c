@@ -2,6 +2,7 @@
 #include "regalloc.h"
 #include "lir.h"
 #include "arena.h"
+#include "diag.h"
 
 #include <limits.h>
 
@@ -15,6 +16,15 @@ typedef struct {
     int last_end;
 } SpillSlot;
 
+static int spill_offset(const Function *fn, int slot)
+{
+    long bytes = (long)fn->locals_size + 8L * slot;
+
+    if (slot <= 0 || bytes > INT_MAX)
+        diag_fatal("stack frame is too large");
+    return -(int)bytes;
+}
+
 static int assign_spill_slot(SpillSlot **slots, int *nslots, int *nspill,
                              Function *fn, int start, int end)
 {
@@ -26,7 +36,7 @@ static int assign_spill_slot(SpillSlot **slots, int *nslots, int *nspill,
     }
 
     (*nspill)++;
-    int off = -(fn->locals_size + 8 * (*nspill));
+    int off = spill_offset(fn, *nspill);
 
     SpillSlot *n = arena_alloc((size_t)(*nslots + 1) * sizeof(*n));
     for (int i = 0; i < *nslots; i++)
@@ -161,8 +171,8 @@ static int pick_spill_victim(const Active *active, int nactive, const LirFn *lf,
 
 static int align_frame_size(long raw)
 {
-    if (raw > INT_MAX - 15)
-        return 0;
+    if (raw < 0 || raw > INT_MAX - 15)
+        diag_fatal("stack frame is too large");
     return (int)((raw + 15) & ~15);
 }
 
@@ -174,7 +184,7 @@ void regalloc_trivial(LirFn *lf, Function *fn, AllocResult *out)
     out->vreg_off = arena_alloc((size_t)lf->nvreg * sizeof(*out->vreg_off));
     for (int i = 0; i < lf->nvreg; i++) {
         out->vreg_reg[i] = REG_NONE;
-        out->vreg_off[i] = -(fn->locals_size + 8 * (i + 1));
+        out->vreg_off[i] = spill_offset(fn, i + 1);
     }
 
     out->used_callee_saved = 0;
@@ -233,7 +243,9 @@ void regalloc_linear(LirFn *lf, Function *fn, const Liveness *lv,
             if (steal) {
                 reg[v] = reg[spill_v];
                 stackloc[spill_v] = assign_spill_slot(
-                    &slots, &nslots, &nspill, fn, start, end);
+                    &slots, &nslots, &nspill, fn,
+                    lv->by_vreg[spill_v].start,
+                    lv->by_vreg[spill_v].end);
                 reg[spill_v] = REG_NONE;
                 {
                     int idx = active_index(active, nactive, spill_v);

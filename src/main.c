@@ -17,6 +17,7 @@
 #include "arena.h"
 #include "lower.h"
 #include "lir.h"
+#include "lir_cfg.h"
 #include "liveness.h"
 #include "target.h"
 
@@ -38,6 +39,8 @@ static void usage(FILE *f)
         "  --version   show version\n"
         "  --xcc-dump-lir  dump lowered LIR to stdout (debug)\n"
         "  --xcc-dump-lir-alloc  dump LIR live intervals (debug)\n"
+        "  --xcc-verify-lir  verify internal LIR (default)\n"
+        "  --xcc-no-verify-lir  disable internal LIR verification\n"
         "  -W<name>    enable warning (see --help-warnings)\n"
         "  -Wno-<name> disable warning\n"
         "  -Wall       enable warnings that default to off\n"
@@ -127,6 +130,7 @@ int main(int argc, char **argv)
     const char *outpath = NULL;
     int emit_lir = 0;
     int emit_lir_alloc = 0;
+    int verify_lir = 1;
     char **source_lines = NULL;
     int nsource_lines = 0;
     int from_file = 0;
@@ -145,6 +149,10 @@ int main(int argc, char **argv)
             emit_lir = 1;
         } else if (strcmp(argv[i], "--xcc-dump-lir-alloc") == 0) {
             emit_lir_alloc = 1;
+        } else if (strcmp(argv[i], "--xcc-verify-lir") == 0) {
+            verify_lir = 1;
+        } else if (strcmp(argv[i], "--xcc-no-verify-lir") == 0) {
+            verify_lir = 0;
         } else if (strcmp(argv[i], "-w") == 0) {
             diag_disable_all_warnings();
         } else if (strncmp(argv[i], "-W", 2) == 0) {
@@ -214,8 +222,12 @@ int main(int argc, char **argv)
             if (!fn->is_definition)
                 continue;
             LirFn *lf = lower_function(fn);
+            lir_cfg_rebuild_preds(lf);
+            if (verify_lir)
+                lir_cfg_verify(lf);
             if (emit_lir_alloc) {
                 Liveness lv;
+                lir_cfg_lower(lf);
                 liveness_compute(lf, &X86_SYSV, &lv);
                 liveness_dump(lf, &lv, &X86_SYSV, stdout);
             } else {
@@ -240,7 +252,7 @@ int main(int argc, char **argv)
         }
     }
 
-    codegen(g_program, out);
+    codegen(g_program, out, verify_lir);
 
     if (out != stdout)
         fclose(out);

@@ -1,8 +1,11 @@
 /* SPDX-License-Identifier: MIT */
 #include "liveness.h"
 #include "arena.h"
+#include "diag.h"
 
+#include <assert.h>
 #include <limits.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -15,8 +18,7 @@ static void add_use(int *uses, int *nu, int v)
     for (int i = 0; i < *nu; i++)
         if (uses[i] == v)
             return;
-    if (*nu >= MAX_REG_OPS)
-        return;
+    assert(*nu < MAX_REG_OPS);
     uses[(*nu)++] = v;
 }
 
@@ -27,8 +29,7 @@ static void add_def(int *defs, int *nd, int v)
     for (int i = 0; i < *nd; i++)
         if (defs[i] == v)
             return;
-    if (*nd >= MAX_REG_OPS)
-        return;
+    assert(*nd < MAX_REG_OPS);
     defs[(*nd)++] = v;
 }
 
@@ -40,23 +41,6 @@ static void touch_vreg_use(Liveness *lv, int v, int idx)
         lv->by_vreg[v].end = idx;
     if (lv->by_vreg[v].start > idx)
         lv->by_vreg[v].start = idx;
-}
-
-static void touch_operand_use(Liveness *lv, Operand o, int idx)
-{
-    switch (o.kind) {
-    case OPND_VREG:
-        touch_vreg_use(lv, o.u.vreg, idx);
-        return;
-    case OPND_MEM:
-        if (o.u.mem.base >= 0)
-            touch_vreg_use(lv, o.u.mem.base, idx);
-        if (o.u.mem.index >= 0 && o.u.mem.index != LIR_NO_IDX)
-            touch_vreg_use(lv, o.u.mem.index, idx);
-        return;
-    default:
-        return;
-    }
 }
 
 static void touch_vreg_def(Liveness *lv, int v, int idx)
@@ -199,8 +183,6 @@ static void instr_use_def(LirFn *lf, int i, const TargetDesc *td, Liveness *lv,
     case LIR_CALL:
         if (ins->call_indirect)
             add_use(uses, nu, ins->call_reg);
-        for (int a = 0; a < ins->nargs; a++)
-            operand_vreg_uses(ins->call_args[a], uses, nu);
         block_caller_saved(lv, td, i);
         return;
 
@@ -213,47 +195,41 @@ static void instr_use_def(LirFn *lf, int i, const TargetDesc *td, Liveness *lv,
     case LIR_MEMCPY:
         operand_vreg_uses(ins->a, uses, nu);
         operand_vreg_uses(ins->b, uses, nu);
+        for (int r = 0; r < PHYS_COUNT; r++) {
+            if (td->memcpy_clobber_mask & (1u << r))
+                block_phys(lv, r, i);
+        }
         return;
     }
 }
 
-static int vreg_used_in_range(LirFn *lf, const TargetDesc *td, Liveness *lv,
-                              int v, int b, int e)
+static void bit_set(unsigned long *bits, int v)
 {
-    if (b < 0)
-        b = 0;
-    if (e >= lf->ninstr)
-        e = lf->ninstr - 1;
+    const int word_bits = (int)(sizeof(unsigned long) * CHAR_BIT);
+    bits[v / word_bits] |= 1UL << (v % word_bits);
+}
 
-    for (int i = b; i <= e; i++) {
-        Instr *ins = &lf->instrs[i];
+static int bit_test(const unsigned long *bits, int v)
+{
+    const int word_bits = (int)(sizeof(unsigned long) * CHAR_BIT);
+    return (bits[v / word_bits] >> (v % word_bits)) & 1UL;
+}
 
-        if (ins->op == LIR_CALL) {
-            for (int a = 0; a < ins->nargs; a++) {
-                Operand o = ins->call_args[a];
-                if (o.kind == OPND_VREG && o.u.vreg == v)
-                    return 1;
-                if (o.kind == OPND_MEM) {
-                    if (o.u.mem.base == v)
-                        return 1;
-                    if (o.u.mem.index == v)
-                        return 1;
-                }
-            }
-            continue;
-        }
-
-        int uses[MAX_REG_OPS];
-        int defs[MAX_REG_OPS];
-        int nu, nd;
-
-        instr_use_def(lf, i, td, lv, uses, &nu, defs, &nd);
-        for (int j = 0; j < nu; j++) {
-            if (uses[j] == v)
-                return 1;
-        }
+static void operand_bit_uses(unsigned long *bits, Operand o)
+{
+    switch (o.kind) {
+    case OPND_VREG:
+        bit_set(bits, o.u.vreg);
+        return;
+    case OPND_MEM:
+        if (o.u.mem.base >= 0)
+            bit_set(bits, o.u.mem.base);
+        if (o.u.mem.index >= 0 && o.u.mem.index != LIR_NO_IDX)
+            bit_set(bits, o.u.mem.index);
+        return;
+    default:
+        return;
     }
-    return 0;
 }
 
 static int interval_cmp(const void *a, const void *b)
@@ -267,10 +243,102 @@ static int interval_cmp(const void *a, const void *b)
 
 void liveness_compute(LirFn *lf, const TargetDesc *td, Liveness *out)
 {
+    const int word_bits = (int)(sizeof(unsigned long) * CHAR_BIT);
+    int nwords;
+    size_t matrix_words;
+    unsigned long *use_bits;
+    unsigned long *def_bits;
+    unsigned long *live_in;
+    unsigned long *live_out;
+    int *label_instr;
+
     memset(out, 0, sizeof(*out));
 
     if (lf->nvreg == 0)
         return;
+
+    nwords = (int)(((size_t)lf->nvreg + (size_t)word_bits - 1) /
+                   (size_t)word_bits);
+    assert(nwords > 0);
+    if ((size_t)lf->ninstr > SIZE_MAX / (size_t)nwords)
+        diag_fatal("liveness data is too large");
+    matrix_words = (size_t)lf->ninstr * (size_t)nwords;
+    if (matrix_words > SIZE_MAX / sizeof(*use_bits))
+        diag_fatal("liveness data is too large");
+    use_bits = arena_alloc_zeroed(matrix_words * sizeof(*use_bits));
+    def_bits = arena_alloc_zeroed(matrix_words * sizeof(*def_bits));
+    live_in = arena_alloc_zeroed(matrix_words * sizeof(*live_in));
+    live_out = arena_alloc_zeroed(matrix_words * sizeof(*live_out));
+
+    label_instr = arena_alloc((size_t)lf->label_count * sizeof(*label_instr));
+    for (int label = 0; label < lf->label_count; label++)
+        label_instr[label] = -1;
+    for (int i = 0; i < lf->ninstr; i++) {
+        Instr *ins = &lf->instrs[i];
+        if (ins->op == LIR_LABEL) {
+            assert(ins->label >= 0 && ins->label < lf->label_count);
+            label_instr[ins->label] = i;
+        }
+    }
+
+    for (int i = 0; i < lf->ninstr; i++) {
+        int uses[MAX_REG_OPS];
+        int defs[MAX_REG_OPS];
+        int nu, nd;
+        unsigned long *ub = use_bits + (size_t)i * (size_t)nwords;
+        unsigned long *db = def_bits + (size_t)i * (size_t)nwords;
+
+        instr_use_def(lf, i, td, out, uses, &nu, defs, &nd);
+        for (int u = 0; u < nu; u++)
+            bit_set(ub, uses[u]);
+        if (lf->instrs[i].op == LIR_CALL) {
+            for (int a = 0; a < lf->instrs[i].nargs; a++)
+                operand_bit_uses(ub, lf->instrs[i].call_args[a]);
+        }
+        for (int d = 0; d < nd; d++)
+            bit_set(db, defs[d]);
+    }
+
+    for (;;) {
+        int changed = 0;
+
+        for (int i = lf->ninstr - 1; i >= 0; i--) {
+            Instr *ins = &lf->instrs[i];
+            unsigned long *in = live_in + (size_t)i * (size_t)nwords;
+            unsigned long *out_bits = live_out + (size_t)i * (size_t)nwords;
+            unsigned long *ub = use_bits + (size_t)i * (size_t)nwords;
+            unsigned long *db = def_bits + (size_t)i * (size_t)nwords;
+            int target = -1;
+
+            if (ins->op == LIR_JMP || ins->op == LIR_BR) {
+                assert(ins->label >= 0 && ins->label < lf->label_count);
+                target = label_instr[ins->label];
+                assert(target >= 0);
+            }
+
+            for (int w = 0; w < nwords; w++) {
+                unsigned long new_out = 0;
+                unsigned long new_in;
+
+                if (ins->op == LIR_JMP) {
+                    new_out = live_in[(size_t)target * (size_t)nwords + (size_t)w];
+                } else if (ins->op != LIR_RET) {
+                    if (i + 1 < lf->ninstr)
+                        new_out = live_in[(size_t)(i + 1) * (size_t)nwords + (size_t)w];
+                    if (ins->op == LIR_BR)
+                        new_out |= live_in[(size_t)target * (size_t)nwords + (size_t)w];
+                }
+                new_in = ub[w] | (new_out & ~db[w]);
+                if (out_bits[w] != new_out || in[w] != new_in) {
+                    out_bits[w] = new_out;
+                    in[w] = new_in;
+                    changed = 1;
+                }
+            }
+        }
+        if (!changed)
+            break;
+    }
 
     out->by_vreg = arena_alloc_zeroed((size_t)lf->nvreg * sizeof(*out->by_vreg));
     for (int v = 0; v < lf->nvreg; v++) {
@@ -279,27 +347,19 @@ void liveness_compute(LirFn *lf, const TargetDesc *td, Liveness *out)
         out->by_vreg[v].end = -1;
     }
 
-    for (int i = lf->ninstr - 1; i >= 0; i--) {
-        Instr *ins = &lf->instrs[i];
+    for (int i = 0; i < lf->ninstr; i++) {
+        unsigned long *ub = use_bits + (size_t)i * (size_t)nwords;
+        unsigned long *db = def_bits + (size_t)i * (size_t)nwords;
+        unsigned long *in = live_in + (size_t)i * (size_t)nwords;
+        unsigned long *out_bits = live_out + (size_t)i * (size_t)nwords;
 
-        if (ins->op == LIR_CALL) {
-            for (int a = 0; a < ins->nargs; a++)
-                touch_operand_use(out, ins->call_args[a], i);
-            block_caller_saved(out, td, i);
-            continue;
+        for (int v = 0; v < lf->nvreg; v++) {
+            if (!bit_test(ub, v) && !bit_test(db, v) &&
+                !bit_test(in, v) && !bit_test(out_bits, v))
+                continue;
+            touch_vreg_def(out, v, i);
+            touch_vreg_use(out, v, i);
         }
-
-        int uses[MAX_REG_OPS];
-        int defs[MAX_REG_OPS];
-        int nu, nd;
-
-        instr_use_def(lf, i, td, out, uses, &nu, defs, &nd);
-
-        for (int d = 0; d < nd; d++)
-            touch_vreg_def(out, defs[d], i);
-
-        for (int u = 0; u < nu; u++)
-            touch_vreg_use(out, uses[u], i);
     }
 
     for (int v = 0; v < lf->nvreg; v++) {
@@ -309,24 +369,6 @@ void liveness_compute(LirFn *lf, const TargetDesc *td, Liveness *out)
         if (iv->start == INT_MAX) {
             iv->start = 0;
             iv->end = -1;
-        }
-    }
-
-    for (int l = 0; l < lf->nloops; l++) {
-        int b = lf->loops[l].begin;
-        int e = lf->loops[l].end;
-
-        for (int v = 0; v < lf->nvreg; v++) {
-            LiveInterval *iv = &out->by_vreg[v];
-
-            if (iv->end < 0)
-                continue;
-            if (iv->start > e || iv->end < b)
-                continue;
-            if (!vreg_used_in_range(lf, td, out, v, b, e))
-                continue;
-            if (iv->end >= b && iv->end <= e)
-                iv->end = e;
         }
     }
 
@@ -365,9 +407,6 @@ void liveness_dump(LirFn *lf, const Liveness *lv, const TargetDesc *td, FILE *ou
             fprintf(out, " %d", pb->pts[i]);
         fputc('\n', out);
     }
-
-    for (int i = 0; i < lf->nloops; i++)
-        fprintf(out, "  loop [%d, %d]\n", lf->loops[i].begin, lf->loops[i].end);
 
     (void)td;
 }

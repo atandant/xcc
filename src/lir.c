@@ -53,13 +53,81 @@ LirFn *lir_fn_new(const char *name)
 {
     LirFn *fn = arena_alloc_zeroed(sizeof(*fn));
     fn->name = arena_strdup(name);
+    fn->blocks_cap = 16;
+    fn->blocks = arena_alloc_zeroed((size_t)fn->blocks_cap * sizeof(*fn->blocks));
     fn->cap = 64;
     fn->instrs = arena_alloc((size_t)fn->cap * sizeof(*fn->instrs));
-    fn->loops_cap = 8;
-    fn->loops = arena_alloc((size_t)fn->loops_cap * sizeof(*fn->loops));
     fn->homes_cap = 32;
     fn->homes = arena_alloc((size_t)fn->homes_cap * sizeof(*fn->homes));
+    fn->entry_block = lir_new_block(fn);
     return fn;
+}
+
+LirBlockId lir_new_block(LirFn *fn)
+{
+    if (fn->nblocks >= fn->blocks_cap) {
+        int old_cap = fn->blocks_cap;
+        fn->blocks_cap *= 2;
+        LirBlock *n = arena_alloc_zeroed((size_t)fn->blocks_cap * sizeof(*n));
+        memcpy(n, fn->blocks, (size_t)fn->nblocks * sizeof(*n));
+        fn->blocks = n;
+        (void)old_cap;
+    }
+    LirBlockId id = fn->nblocks++;
+    LirBlock *block = &fn->blocks[id];
+    block->id = id;
+    block->cap = 16;
+    block->instrs = arena_alloc((size_t)block->cap * sizeof(*block->instrs));
+    block->phis_cap = 2;
+    block->phis = arena_alloc_zeroed((size_t)block->phis_cap * sizeof(*block->phis));
+    block->term.kind = LIR_TERM_NONE;
+    return id;
+}
+
+LirBlock *lir_get_block(LirFn *fn, LirBlockId id)
+{
+    assert(id >= 0 && id < fn->nblocks);
+    return &fn->blocks[id];
+}
+
+int lir_block_emit(LirBlock *block, Instr ins)
+{
+    if (block->ninstr >= block->cap) {
+        block->cap *= 2;
+        Instr *n = arena_alloc((size_t)block->cap * sizeof(*n));
+        memcpy(n, block->instrs, (size_t)block->ninstr * sizeof(*n));
+        block->instrs = n;
+    }
+    int idx = block->ninstr++;
+    block->instrs[idx] = ins;
+    return idx;
+}
+
+LirPhi *lir_block_add_phi(LirBlock *block, int dst)
+{
+    if (block->nphis >= block->phis_cap) {
+        block->phis_cap *= 2;
+        LirPhi *n = arena_alloc_zeroed((size_t)block->phis_cap * sizeof(*n));
+        memcpy(n, block->phis, (size_t)block->nphis * sizeof(*n));
+        block->phis = n;
+    }
+    LirPhi *phi = &block->phis[block->nphis++];
+    memset(phi, 0, sizeof(*phi));
+    phi->dst = dst;
+    phi->cap = 2;
+    phi->inputs = arena_alloc((size_t)phi->cap * sizeof(*phi->inputs));
+    return phi;
+}
+
+void lir_phi_add_input(LirPhi *phi, LirBlockId pred, int value)
+{
+    if (phi->ninputs >= phi->cap) {
+        phi->cap *= 2;
+        PhiInput *n = arena_alloc((size_t)phi->cap * sizeof(*n));
+        memcpy(n, phi->inputs, (size_t)phi->ninputs * sizeof(*n));
+        phi->inputs = n;
+    }
+    phi->inputs[phi->ninputs++] = (PhiInput){ .pred = pred, .value = value };
 }
 
 int lir_home_vreg(LirFn *lf, int offset)
@@ -124,20 +192,29 @@ int lir_new_vreg(LirFn *fn)
 
 int lir_new_label(LirFn *fn)
 {
-    return fn->label_count++;
+    int label = fn->label_count++;
+    if (fn->label_count > fn->label_blocks_cap) {
+        int old_cap = fn->label_blocks_cap;
+        int new_cap = old_cap ? old_cap * 2 : 16;
+        while (new_cap < fn->label_count)
+            new_cap *= 2;
+        LirBlockId *n = arena_alloc((size_t)new_cap * sizeof(*n));
+        for (int i = 0; i < new_cap; i++)
+            n[i] = LIR_NO_BLOCK;
+        if (fn->label_blocks)
+            memcpy(n, fn->label_blocks, (size_t)old_cap * sizeof(*n));
+        fn->label_blocks = n;
+        fn->label_blocks_cap = new_cap;
+    }
+    fn->label_blocks[label] = lir_new_block(fn);
+    return label;
 }
 
-void lir_add_loop(LirFn *fn, int begin, int end)
+LirBlockId lir_label_block(LirFn *fn, int label)
 {
-    if (fn->nloops >= fn->loops_cap) {
-        fn->loops_cap *= 2;
-        LoopRange *n = arena_alloc((size_t)fn->loops_cap * sizeof(*n));
-        memcpy(n, fn->loops, (size_t)fn->nloops * sizeof(*n));
-        fn->loops = n;
-    }
-    fn->loops[fn->nloops].begin = begin;
-    fn->loops[fn->nloops].end = end;
-    fn->nloops++;
+    assert(label >= 0 && label < fn->label_count);
+    assert(fn->label_blocks[label] != LIR_NO_BLOCK);
+    return fn->label_blocks[label];
 }
 
 int lir_emit(LirFn *fn, Instr ins)
@@ -246,14 +323,11 @@ static void dump_operand(FILE *out, Operand o)
     }
 }
 
-void lir_dump_fn(LirFn *fn, FILE *out)
+static void dump_instr(FILE *out, Instr *ins, int index)
 {
-    fprintf(out, "function %s (nvreg=%d)\n", fn->name, fn->nvreg);
-    for (int i = 0; i < fn->ninstr; i++) {
-        Instr *ins = &fn->instrs[i];
-        fprintf(out, "  %4d  %-6s", i, op_name(ins->op));
+        fprintf(out, "    %3d  %-10s", index, op_name(ins->op));
         if (ins->dst != LIR_NO_VREG)
-            fprintf(out, " v%d,", ins->dst);
+            fprintf(out, "v%d = ", ins->dst);
         switch (ins->op) {
         case LIR_MOVI:
             dump_operand(out, ins->a);
@@ -341,7 +415,65 @@ void lir_dump_fn(LirFn *fn, FILE *out)
             break;
         }
         fprintf(out, "\n");
+}
+
+static void dump_block_term(FILE *out, const LirTerminator *term)
+{
+    switch (term->kind) {
+    case LIR_TERM_NONE:
+        fprintf(out, "    <unterminated>\n");
+        return;
+    case LIR_TERM_JMP:
+        fprintf(out, "    jump       bb%d\n", term->target);
+        return;
+    case LIR_TERM_BR:
+        fprintf(out, "    branch.%s.%c ", cc_name(term->cc),
+                term->w == LIR_W4 ? 'i' : 'l');
+        dump_operand(out, term->a);
+        fprintf(out, ", ");
+        dump_operand(out, term->b);
+        fprintf(out, " ? bb%d : bb%d\n",
+                term->true_target, term->false_target);
+        return;
+    case LIR_TERM_RET:
+        fprintf(out, "    return      ");
+        dump_operand(out, term->a);
+        fprintf(out, "\n");
+        return;
     }
-    for (int i = 0; i < fn->nloops; i++)
-        fprintf(out, "  loop [%d, %d]\n", fn->loops[i].begin, fn->loops[i].end);
+}
+
+void lir_dump_fn(LirFn *fn, FILE *out)
+{
+    fprintf(out, "function %s {  // %d blocks, %d vregs\n",
+            fn->name, fn->nblocks, fn->nvreg);
+    for (int b = 0; b < fn->nblocks; b++) {
+        LirBlock *block = &fn->blocks[b];
+
+        fprintf(out, "\n  bb%d", b);
+        if (b == fn->entry_block)
+            fprintf(out, " [entry]");
+        fprintf(out, "  // preds:");
+        if (block->npreds == 0)
+            fprintf(out, " none");
+        for (int p = 0; p < block->npreds; p++)
+            fprintf(out, " bb%d", block->preds[p]);
+        fprintf(out, "\n");
+
+        for (int p = 0; p < block->nphis; p++) {
+            LirPhi *phi = &block->phis[p];
+            fprintf(out, "         v%d = phi ", phi->dst);
+            for (int a = 0; a < phi->ninputs; a++) {
+                if (a)
+                    fprintf(out, ", ");
+                fprintf(out, "[bb%d: v%d]",
+                        phi->inputs[a].pred, phi->inputs[a].value);
+            }
+            fprintf(out, "\n");
+        }
+        for (int i = 0; i < block->ninstr; i++)
+            dump_instr(out, &block->instrs[i], i);
+        dump_block_term(out, &block->term);
+    }
+    fprintf(out, "}\n");
 }

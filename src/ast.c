@@ -45,6 +45,38 @@ Node *node_neg(Node *o, SourceLoc loc)
     return n;
 }
 
+Node *node_not(Node *o, SourceLoc loc)
+{
+    Node *n = new_node(ND_NOT, loc);
+    n->operand = o;
+    return n;
+}
+
+Node *node_logand(Node *l, Node *r, SourceLoc loc)
+{
+    Node *n = new_node(ND_LOGAND, loc);
+    n->lhs = l;
+    n->rhs = r;
+    return n;
+}
+
+Node *node_logor(Node *l, Node *r, SourceLoc loc)
+{
+    Node *n = new_node(ND_LOGOR, loc);
+    n->lhs = l;
+    n->rhs = r;
+    return n;
+}
+
+Node *node_cond(Node *cond, Node *then_expr, Node *else_expr, SourceLoc loc)
+{
+    Node *n = new_node(ND_COND, loc);
+    n->cond = cond;
+    n->then_expr = then_expr;
+    n->else_expr = else_expr;
+    return n;
+}
+
 Node *node_addr(Node *o, SourceLoc loc)
 {
     Node *n = new_node(ND_ADDR, loc);

@@ -136,6 +136,8 @@ static int has_long_suffix(const char *text)
 "sizeof"            { return SIZEOF; }
 
 "->"                { return ARROW; }
+"&&"                { return LAND; }
+"||"                { return LOR; }
 "=="                { return EQ; }
 "!="                { return NE; }
 "<="                { return LE; }
@@ -175,7 +177,7 @@ static int has_long_suffix(const char *text)
                           yylval.num.is_hex = 0;
                           yylval.num.is_octal = 0; return NUM; }
 
-[-+*/%=<>(){};,&.:\[\]]  { return yytext[0]; }
+[-+*/%=<>(){};,&.:?!\[\]]  { return yytext[0]; }
 
 .                   { diag_error_at(scan_loc(),
                                     "stray '%c' in program", yytext[0]); }

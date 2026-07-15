@@ -114,6 +114,53 @@ static void invalidate_all_binds(void)
     nbinds = 0;
 }
 
+static void invalidate_assigned_in_expr(Node *n)
+{
+    if (!n)
+        return;
+
+    switch (n->kind) {
+    case ND_ASSIGN:
+        if (n->lhs && n->lhs->kind == ND_VAR &&
+            type_is_integer(n->lhs->ty))
+            bind_clear_offset(n->lhs->offset);
+        else if (n->lhs && n->lhs->kind == ND_DEREF)
+            invalidate_all_binds();
+        invalidate_assigned_in_expr(n->lhs);
+        invalidate_assigned_in_expr(n->rhs);
+        return;
+    case ND_BINOP:
+    case ND_LOGAND:
+    case ND_LOGOR:
+        invalidate_assigned_in_expr(n->lhs);
+        invalidate_assigned_in_expr(n->rhs);
+        return;
+    case ND_COND:
+        invalidate_assigned_in_expr(n->cond);
+        invalidate_assigned_in_expr(n->then_expr);
+        invalidate_assigned_in_expr(n->else_expr);
+        return;
+    case ND_INIT_LIST:
+        for (Node *e = n->body; e; e = e->next)
+            invalidate_assigned_in_expr(e);
+        return;
+    case ND_CALL:
+        invalidate_assigned_in_expr(n->callee);
+        for (Node *a = n->args; a; a = a->next)
+            invalidate_assigned_in_expr(a);
+        return;
+    case ND_NEG:
+    case ND_NOT:
+    case ND_DEREF:
+    case ND_CAST:
+    case ND_ADDR:
+        invalidate_assigned_in_expr(n->operand);
+        return;
+    default:
+        return;
+    }
+}
+
 static void invalidate_assigned_in_stmt(Node *s);
 
 static void invalidate_assigned_in_list(Node *body)
@@ -131,22 +178,28 @@ static void invalidate_assigned_in_stmt(Node *s)
     case ND_DECL:
         if (type_is_integer(s->ty))
             bind_clear_offset(s->offset);
+        invalidate_assigned_in_expr(s->init);
         return;
     case ND_EXPR_STMT:
-        if (s->operand && s->operand->kind == ND_ASSIGN &&
-            s->operand->lhs && s->operand->lhs->kind == ND_VAR &&
-            type_is_integer(s->operand->lhs->ty))
-            bind_clear_offset(s->operand->lhs->offset);
+    case ND_RETURN:
+        invalidate_assigned_in_expr(s->operand);
         return;
     case ND_BLOCK:
         invalidate_assigned_in_list(s->body);
         return;
     case ND_IF:
+        invalidate_assigned_in_expr(s->cond);
         invalidate_assigned_in_stmt(s->then_body);
         invalidate_assigned_in_stmt(s->else_body);
         return;
     case ND_WHILE:
+        invalidate_assigned_in_expr(s->cond);
+        invalidate_assigned_in_stmt(s->then_body);
+        return;
     case ND_FOR:
+        invalidate_assigned_in_expr(s->init);
+        invalidate_assigned_in_expr(s->cond);
+        invalidate_assigned_in_expr(s->step);
         invalidate_assigned_in_stmt(s->then_body);
         return;
     default:
@@ -235,11 +288,22 @@ static int prop_expr(Node **np, int rvalue, int allow_subst)
         changed |= prop_expr(&n->lhs, 1, allow_subst);
         changed |= prop_expr(&n->rhs, 1, allow_subst);
         return changed;
+    case ND_LOGAND:
+    case ND_LOGOR:
+        changed |= prop_expr(&n->lhs, 1, allow_subst);
+        changed |= prop_expr(&n->rhs, 1, 0);
+        return changed;
+    case ND_COND:
+        changed |= prop_expr(&n->cond, 1, allow_subst);
+        changed |= prop_expr(&n->then_expr, 1, 0);
+        changed |= prop_expr(&n->else_expr, 1, 0);
+        return changed;
     case ND_INIT_LIST:
         for (Node **p = &n->body; *p; p = &(*p)->next)
             changed |= prop_expr(p, 1, allow_subst);
         return changed;
     case ND_NEG:
+    case ND_NOT:
     case ND_DEREF:
     case ND_CAST:
         changed |= prop_expr(&n->operand, 1, allow_subst);
@@ -333,7 +397,7 @@ static int prop_stmt(Node *s)
             bind_leave_scope();
             bind_restore(&snap);
         }
-        invalidate_assigned_in_stmt(s->then_body);
+        invalidate_assigned_in_stmt(s);
         return changed;
     case ND_FOR:
         changed |= prop_expr(&s->init, 1, 0);
@@ -348,11 +412,7 @@ static int prop_stmt(Node *s)
             bind_leave_scope();
             bind_restore(&snap);
         }
-        invalidate_assigned_in_stmt(s->then_body);
-        if (s->init && s->init->kind == ND_ASSIGN &&
-            s->init->lhs && s->init->lhs->kind == ND_VAR &&
-            type_is_integer(s->init->lhs->ty))
-            bind_clear_offset(s->init->lhs->offset);
+        invalidate_assigned_in_stmt(s);
         return changed;
     case ND_BLOCK:
         changed |= prop_stmt_list(s->body);

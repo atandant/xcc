@@ -6,8 +6,9 @@
 #include "emit_x86.h"
 #include "liveness.h"
 #include "target.h"
+#include "lir_cfg.h"
 
-void codegen(Function *prog, FILE *out)
+void codegen(Function *prog, FILE *out, int verify_lir)
 {
     fprintf(out, "  .text\n");
     for (Function *fn = prog; fn; fn = fn->next) {
@@ -15,6 +16,11 @@ void codegen(Function *prog, FILE *out)
             continue;
 
         LirFn *lf = lower_function(fn);
+
+        lir_cfg_rebuild_preds(lf);
+        if (verify_lir)
+            lir_cfg_verify(lf);
+        lir_cfg_lower(lf);
 
         lopt_function(lf, fn);
 

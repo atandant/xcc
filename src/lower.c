@@ -16,11 +16,62 @@ typedef struct {
     LirFn *lf;
     Function *fn;
     int ret_label;
+    LirBlockId current;
 } LowerCtx;
+
+static LirBlock *current_block(LowerCtx *c)
+{
+    return lir_get_block(c->lf, c->current);
+}
+
+static void start_unreachable_block(LowerCtx *c)
+{
+    if (current_block(c)->term.kind != LIR_TERM_NONE)
+        c->current = lir_new_block(c->lf);
+}
 
 static int emit(LowerCtx *c, Instr ins)
 {
-    return lir_emit(c->lf, ins);
+    LirBlock *block;
+
+    if (ins.op == LIR_LABEL) {
+        LirBlockId target = lir_label_block(c->lf, ins.label);
+        block = current_block(c);
+        if (block->term.kind == LIR_TERM_NONE && block->id != target) {
+            block->term.kind = LIR_TERM_JMP;
+            block->term.target = target;
+        }
+        c->current = target;
+        return 0;
+    }
+
+    start_unreachable_block(c);
+    block = current_block(c);
+    if (ins.op == LIR_JMP) {
+        block->term.kind = LIR_TERM_JMP;
+        block->term.target = lir_label_block(c->lf, ins.label);
+        return 0;
+    }
+    if (ins.op == LIR_BR) {
+        LirBlockId fallthrough = lir_new_block(c->lf);
+        block = current_block(c);
+        block->term.kind = LIR_TERM_BR;
+        block->term.true_target = lir_label_block(c->lf, ins.label);
+        block->term.false_target = fallthrough;
+        block->term.a = ins.a;
+        block->term.b = ins.b;
+        block->term.w = ins.w;
+        block->term.sgn = ins.sgn;
+        block->term.cc = ins.cc;
+        c->current = fallthrough;
+        return 0;
+    }
+    if (ins.op == LIR_RET) {
+        block->term.kind = LIR_TERM_RET;
+        block->term.a = ins.a;
+        return 0;
+    }
+    return lir_block_emit(block, ins);
 }
 
 static int fresh(LowerCtx *c)
@@ -28,83 +79,11 @@ static int fresh(LowerCtx *c)
     return lir_new_vreg(c->lf);
 }
 
-static int vreg_home_offset(const LirFn *lf, int vreg)
-{
-    for (int i = 0; i < lf->nhomes; i++) {
-        if (lf->homes[i].vreg == vreg)
-            return lf->homes[i].offset;
-    }
-    return INT_MIN;
-}
-
-static int assigns_to_offset(Node *n, int offset)
-{
-    if (!n)
-        return 0;
-
-    switch (n->kind) {
-    case ND_ASSIGN:
-        if (n->lhs->kind == ND_VAR && n->lhs->offset == offset)
-            return 1;
-        return assigns_to_offset(n->lhs, offset) ||
-               assigns_to_offset(n->rhs, offset);
-    case ND_BINOP:
-        return assigns_to_offset(n->lhs, offset) ||
-               assigns_to_offset(n->rhs, offset);
-    case ND_INIT_LIST:
-        for (Node *e = n->body; e; e = e->next) {
-            if (assigns_to_offset(e, offset))
-                return 1;
-        }
-        return 0;
-    case ND_CALL:
-        for (Node *a = n->args; a; a = a->next) {
-            if (assigns_to_offset(a, offset))
-                return 1;
-        }
-        return 0;
-    case ND_NEG:
-    case ND_CAST:
-    case ND_DEREF:
-        return assigns_to_offset(n->operand, offset);
-    case ND_EXPR_STMT:
-        return assigns_to_offset(n->operand, offset);
-    case ND_IF:
-        return assigns_to_offset(n->cond, offset) ||
-               assigns_to_offset(n->then_body, offset) ||
-               assigns_to_offset(n->else_body, offset);
-    case ND_WHILE:
-    case ND_FOR:
-        return assigns_to_offset(n->cond, offset) ||
-               assigns_to_offset(n->init, offset) ||
-               assigns_to_offset(n->step, offset) ||
-               assigns_to_offset(n->then_body, offset);
-    case ND_BLOCK:
-        for (Node *s = n->body; s; s = s->next) {
-            if (assigns_to_offset(s, offset))
-                return 1;
-        }
-        return 0;
-    default:
-        return 0;
-    }
-}
-
-static int snapshot_home(LowerCtx *c, int v)
-{
-    int copy = fresh(c);
-    emit(c, (Instr){ .op = LIR_MOV, .dst = copy, .a = lir_vreg(v) });
-    return copy;
-}
-
 static int protect_home_before(LowerCtx *c, int v, Node *later)
 {
-    if (!lir_is_home_vreg(c->lf, v))
-        return v;
-    int off = vreg_home_offset(c->lf, v);
-    if (off == INT_MIN || !assigns_to_offset(later, off))
-        return v;
-    return snapshot_home(c, v);
+    (void)c;
+    (void)later;
+    return v;
 }
 
 static void emit_load_slot(LowerCtx *c, int dst, Type *ty, int offset);
@@ -112,40 +91,9 @@ static void emit_store_slot(LowerCtx *c, int src, Type *ty, int offset);
 static void lower_bitfield_store_off(LowerCtx *c, int struct_off, Member *m, int val);
 static void lower_cast_into(LowerCtx *c, int dst, Node *n);
 
-static int offset_address_taken(Function *fn, int offset)
-{
-    for (int i = 0; i < fn->nframe_locals; i++) {
-        if (fn->frame_locals[i].offset == offset)
-            return fn->frame_locals[i].address_taken;
-    }
-    return 0;
-}
-
-static int can_promote(Function *fn, Type *ty, int offset)
-{
-    if (!type_is_scalar(ty) || type_is_array(ty))
-        return 0;
-    return !offset_address_taken(fn, offset);
-}
-
 static void lower_params(LowerCtx *c)
 {
-    for (Param *p = c->fn->params; p; p = p->next) {
-        Type *pty = type_decay(p->ty);
-
-        if (!can_promote(c->fn, pty, p->offset))
-            continue;
-        int v = fresh(c);
-        lir_bind_home(c->lf, p->offset, v);
-        if (p->abi_gpr_start >= 0)
-            emit(c, (Instr){
-                .op = LIR_MOV,
-                .dst = v,
-                .a = lir_phys(X86_SYSV.arg_regs[p->abi_gpr_start]),
-            });
-        else
-            emit_load_slot(c, v, pty, p->offset);
-    }
+    (void)c;
 }
 
 static int is_cmp(BinOp op)
@@ -164,21 +112,6 @@ static LirCond binop_cc(BinOp op)
     case OP_LE: return CC_LE;
     case OP_GT: return CC_GT;
     case OP_GE: return CC_GE;
-    default:
-        assert(0);
-        return CC_EQ;
-    }
-}
-
-static LirCond false_branch_cc(BinOp op)
-{
-    switch (op) {
-    case OP_LT: return CC_GE;
-    case OP_LE: return CC_GT;
-    case OP_GT: return CC_LE;
-    case OP_GE: return CC_LT;
-    case OP_EQ: return CC_NE;
-    case OP_NE: return CC_EQ;
     default:
         assert(0);
         return CC_EQ;
@@ -337,6 +270,8 @@ static int is_ptr_int_arith(BinOp op, Node *lhs, Node *rhs)
 
 static int lower_addr(LowerCtx *c, Node *n);
 static int lower_expr(LowerCtx *c, Node *n);
+static void lower_branch(LowerCtx *c, Node *n, int true_label,
+                         int false_label);
 static int lower_member_addr(LowerCtx *c, Node *n);
 static int lower_call_ex(LowerCtx *c, Node *n, int result_off);
 
@@ -899,6 +834,16 @@ static void lower_setcc(LowerCtx *c, int dst, BinOp op, int lhs, Operand rhs,
 static void lower_binop(LowerCtx *c, int dst, BinOp op, Node *lhs, Node *rhs,
                         Type *res_ty)
 {
+    if (op == OP_COMMA) {
+        int vr;
+
+        (void)lower_expr(c, lhs);
+        vr = lower_expr(c, rhs);
+        emit(c, (Instr){
+            .op = LIR_MOV, .dst = dst, .a = lir_vreg(vr) });
+        return;
+    }
+
     if (type_is_pointer(lhs->ty) && type_is_pointer(rhs->ty) && op == OP_SUB) {
         lower_ptr_diff(c, dst, lhs, rhs);
         return;
@@ -914,11 +859,8 @@ static void lower_binop(LowerCtx *c, int dst, BinOp op, Node *lhs, Node *rhs,
     vl = protect_home_before(c, vl, rhs);
     LirSign sgn = binop_sign(lhs, rhs, res_ty, op);
 
-    /* Fold a constant right operand into an immediate for add/sub/mul and the
-       comparisons; div/mod need the divisor in a register, so keep those in a
-       vreg. */
-    int imm_ok = rhs->kind == ND_NUM && fits_imm32(rhs->val) &&
-                 op != OP_DIV && op != OP_MOD;
+    /* x86 can materialize a constant divisor in the emitter when needed. */
+    int imm_ok = rhs->kind == ND_NUM && fits_imm32(rhs->val);
     Operand rb;
     if (imm_ok)
         rb = lir_imm(rhs->val);
@@ -971,10 +913,6 @@ static void lower_binop(LowerCtx *c, int dst, BinOp op, Node *lhs, Node *rhs,
                 return;
             }
         }
-        if (rhs->kind == ND_NUM && fits_imm32(rhs->val))
-            rb = lir_imm(rhs->val);
-        else
-            rb = lir_vreg(lower_expr(c, rhs));
         emit(c, (Instr){
             .op = (op == OP_DIV) ? LIR_DIV : LIR_MOD,
             .dst = dst,
@@ -993,15 +931,7 @@ static void lower_binop(LowerCtx *c, int dst, BinOp op, Node *lhs, Node *rhs,
         lower_setcc(c, dst, op, vl, rb, w, sgn);
         return;
     case OP_COMMA:
-        (void)lower_expr(c, lhs);
-        if (imm_ok)
-            emit(c, (Instr){
-                .op = LIR_MOVI, .dst = dst, .a = lir_imm(rhs->val) });
-        else {
-            int vr = lower_expr(c, rhs);
-            emit(c, (Instr){
-                .op = LIR_MOV, .dst = dst, .a = lir_vreg(vr) });
-        }
+        assert(0);
         return;
     }
 }
@@ -1071,9 +1001,27 @@ static void lower_store_call_result_to_off(LowerCtx *c, int off, const AbiRetPla
     }
 }
 
+static void append_operand(Operand **items, int *nitems, int *cap, Operand item)
+{
+    if (*nitems >= *cap) {
+        int new_cap;
+        Operand *new_items;
+
+        if (*cap > INT_MAX / 2)
+            diag_fatal("too many lowered call arguments");
+        new_cap = *cap ? *cap * 2 : 16;
+        new_items = arena_alloc((size_t)new_cap * sizeof(*new_items));
+        if (*items)
+            memcpy(new_items, *items, (size_t)*nitems * sizeof(*new_items));
+        *items = new_items;
+        *cap = new_cap;
+    }
+    (*items)[(*nitems)++] = item;
+}
+
 static int lower_marshal_record_arg(LowerCtx *c, Node *arg, Operand *reg_slots,
-                                    int *nreg, Operand *stack_slots,
-                                    int *nstack)
+                                    int *nreg, Operand **stack_slots,
+                                    int *nstack, int *stack_cap)
 {
     AbiArgPlan ap;
     Type *ty = arg->ty;
@@ -1090,7 +1038,7 @@ static int lower_marshal_record_arg(LowerCtx *c, Node *arg, Operand *reg_slots,
                         (ap.size - i * 8) : 8;
 
             lower_load_bytes_off(c, v, addr, i * 8, chunk < 8 ? chunk : 8);
-            stack_slots[(*nstack)++] = lir_vreg(v);
+            append_operand(stack_slots, nstack, stack_cap, lir_vreg(v));
         }
         return 0;
     }
@@ -1125,9 +1073,10 @@ static int lower_call_ex(LowerCtx *c, Node *n, int result_off)
     Type *ret_ty = n->func_ty ? n->func_ty->ret : type_int();
     AbiRetPlan ret_plan;
     Operand reg_slots[6];
-    Operand stack_slots[256];
+    Operand *stack_slots = NULL;
     int nreg = 0;
     int nstack = 0;
+    int stack_cap = 0;
     int total;
     Operand *args;
     int i;
@@ -1164,29 +1113,23 @@ static int lower_call_ex(LowerCtx *c, Node *n, int result_off)
 
     for (a = n->args; a; a = a->next) {
         if (abi_type_is_record_pass(a->ty)) {
-            lower_marshal_record_arg(c, a, reg_slots, &nreg, stack_slots, &nstack);
+            lower_marshal_record_arg(c, a, reg_slots, &nreg,
+                                     &stack_slots, &nstack, &stack_cap);
             continue;
         }
 
         int v = lower_expr(c, a);
-        if (lir_is_home_vreg(c->lf, v)) {
-            int off = vreg_home_offset(c->lf, v);
-            for (Node *b = a->next; b; b = b->next) {
-                if (assigns_to_offset(b, off)) {
-                    v = snapshot_home(c, v);
-                    break;
-                }
-            }
-        }
 
         if (nreg < 6)
             reg_slots[nreg++] = lir_vreg(v);
         else
-            stack_slots[nstack++] = lir_vreg(v);
+            append_operand(&stack_slots, &nstack, &stack_cap, lir_vreg(v));
     }
 
     if (nreg > 6)
         diag_fatal("internal error: too many register arguments at call");
+    if (nstack > INT_MAX / 8)
+        diag_fatal("call argument area is too large");
 
     total = nreg + nstack;
     args = arena_alloc((size_t)total * sizeof(*args));
@@ -1339,9 +1282,6 @@ static int lower_expr(LowerCtx *c, Node *n)
         return dst;
     }
     case ND_VAR: {
-        int home = lir_home_vreg(c->lf, n->offset);
-        if (home != LIR_NO_VREG)
-            return home;
         int dst = fresh(c);
         emit_load_slot(c, dst, n->ty, n->offset);
         return dst;
@@ -1355,6 +1295,74 @@ static int lower_expr(LowerCtx *c, Node *n)
         int dst = fresh(c);
         emit(c, (Instr){
             .op = LIR_NEG, .dst = dst, .a = lir_vreg(v), .w = expr_width(n->operand) });
+        return dst;
+    }
+    case ND_NOT: {
+        int v = lower_expr(c, n->operand);
+        int dst = fresh(c);
+        emit(c, (Instr){
+            .op = LIR_SETCC,
+            .dst = dst,
+            .a = lir_vreg(v),
+            .b = lir_imm(0),
+            .w = expr_width(n->operand),
+            .cc = CC_EQ,
+        });
+        return dst;
+    }
+    case ND_LOGAND:
+    case ND_LOGOR: {
+        int yes = lir_new_label(c->lf);
+        int no = lir_new_label(c->lf);
+        int merge = lir_new_label(c->lf);
+        int dst = fresh(c);
+        int one = fresh(c);
+        int zero = fresh(c);
+        LirBlockId yes_exit;
+        LirBlockId no_exit;
+
+        lower_branch(c, n, yes, no);
+        emit(c, (Instr){ .op = LIR_LABEL, .label = yes });
+        emit(c, (Instr){ .op = LIR_MOVI, .dst = one, .a = lir_imm(1) });
+        yes_exit = c->current;
+        emit(c, (Instr){ .op = LIR_JMP, .label = merge });
+
+        emit(c, (Instr){ .op = LIR_LABEL, .label = no });
+        emit(c, (Instr){ .op = LIR_MOVI, .dst = zero, .a = lir_imm(0) });
+        no_exit = c->current;
+        emit(c, (Instr){ .op = LIR_JMP, .label = merge });
+
+        emit(c, (Instr){ .op = LIR_LABEL, .label = merge });
+        LirPhi *phi = lir_block_add_phi(current_block(c), dst);
+        lir_phi_add_input(phi, yes_exit, one);
+        lir_phi_add_input(phi, no_exit, zero);
+        return dst;
+    }
+    case ND_COND: {
+        int yes = lir_new_label(c->lf);
+        int no = lir_new_label(c->lf);
+        int merge = lir_new_label(c->lf);
+        int dst = fresh(c);
+        int yes_value;
+        int no_value;
+        LirBlockId yes_exit;
+        LirBlockId no_exit;
+
+        lower_branch(c, n->cond, yes, no);
+        emit(c, (Instr){ .op = LIR_LABEL, .label = yes });
+        yes_value = lower_expr(c, n->then_expr);
+        yes_exit = c->current;
+        emit(c, (Instr){ .op = LIR_JMP, .label = merge });
+
+        emit(c, (Instr){ .op = LIR_LABEL, .label = no });
+        no_value = lower_expr(c, n->else_expr);
+        no_exit = c->current;
+        emit(c, (Instr){ .op = LIR_JMP, .label = merge });
+
+        emit(c, (Instr){ .op = LIR_LABEL, .label = merge });
+        LirPhi *phi = lir_block_add_phi(current_block(c), dst);
+        lir_phi_add_input(phi, yes_exit, yes_value);
+        lir_phi_add_input(phi, no_exit, no_value);
         return dst;
     }
     case ND_ADDR: {
@@ -1451,13 +1459,6 @@ static int lower_expr(LowerCtx *c, Node *n)
         }
         int val = lower_expr(c, n->rhs);
         if (n->lhs->kind == ND_VAR) {
-            int home = lir_home_vreg(c->lf, n->lhs->offset);
-            if (home != LIR_NO_VREG) {
-                if (val != home)
-                    emit(c, (Instr){
-                        .op = LIR_MOV, .dst = home, .a = lir_vreg(val) });
-                return val;
-            }
             emit_store_slot(c, val, n->lhs->ty, n->lhs->offset);
             return val;
         }
@@ -1498,8 +1499,27 @@ static int lower_expr(LowerCtx *c, Node *n)
     }
 }
 
-static void lower_cond_branch(LowerCtx *c, Node *cond, int false_label)
+static void lower_branch(LowerCtx *c, Node *cond, int true_label,
+                         int false_label)
 {
+    if (cond->kind == ND_NOT) {
+        lower_branch(c, cond->operand, false_label, true_label);
+        return;
+    }
+    if (cond->kind == ND_LOGAND) {
+        int rhs = lir_new_label(c->lf);
+        lower_branch(c, cond->lhs, rhs, false_label);
+        emit(c, (Instr){ .op = LIR_LABEL, .label = rhs });
+        lower_branch(c, cond->rhs, true_label, false_label);
+        return;
+    }
+    if (cond->kind == ND_LOGOR) {
+        int rhs = lir_new_label(c->lf);
+        lower_branch(c, cond->lhs, true_label, rhs);
+        emit(c, (Instr){ .op = LIR_LABEL, .label = rhs });
+        lower_branch(c, cond->rhs, true_label, false_label);
+        return;
+    }
     if (cond->kind == ND_BINOP && is_cmp(cond->op)) {
         int w = binop_width(cond->lhs, cond->rhs);
         int vl = lower_expr(c, cond->lhs);
@@ -1514,10 +1534,11 @@ static void lower_cond_branch(LowerCtx *c, Node *cond, int false_label)
             .a = lir_vreg(vl),
             .b = rb,
             .w = (LirWidth)w,
-            .cc = false_branch_cc(cond->op),
+            .cc = binop_cc(cond->op),
             .sgn = binop_sign(cond->lhs, cond->rhs, cond->ty, cond->op),
-            .label = false_label,
+            .label = true_label,
         });
+        emit(c, (Instr){ .op = LIR_JMP, .label = false_label });
         return;
     }
 
@@ -1527,9 +1548,10 @@ static void lower_cond_branch(LowerCtx *c, Node *cond, int false_label)
         .a = lir_vreg(v),
         .b = lir_imm(0),
         .w = expr_width(cond),
-        .cc = CC_EQ,
-        .label = false_label,
+        .cc = CC_NE,
+        .label = true_label,
     });
+    emit(c, (Instr){ .op = LIR_JMP, .label = false_label });
 }
 
 static void lower_stmt(LowerCtx *c, Node *n)
@@ -1556,17 +1578,6 @@ static void lower_stmt(LowerCtx *c, Node *n)
         (void)lower_expr(c, n->operand);
         return;
     case ND_DECL:
-        if (can_promote(c->fn, n->ty, n->offset)) {
-            int v = fresh(c);
-            lir_bind_home(c->lf, n->offset, v);
-            if (n->init) {
-                int val = lower_expr(c, n->init);
-                if (val != v)
-                    emit(c, (Instr){
-                        .op = LIR_MOV, .dst = v, .a = lir_vreg(val) });
-            }
-            return;
-        }
         if (n->init && n->init->kind == ND_CALL &&
             abi_type_is_record_pass(n->ty)) {
             (void)lower_call_ex(c, n->init, n->offset);
@@ -1592,13 +1603,16 @@ static void lower_stmt(LowerCtx *c, Node *n)
         }
         return;
     case ND_IF: {
-        int id = lir_new_label(c->lf);
+        int then_id = lir_new_label(c->lf);
+        int else_id = n->else_body ? lir_new_label(c->lf) : -1;
         int end_id = lir_new_label(c->lf);
-        lower_cond_branch(c, n->cond, n->else_body ? id : end_id);
+        lower_branch(c, n->cond, then_id,
+                     n->else_body ? else_id : end_id);
+        emit(c, (Instr){ .op = LIR_LABEL, .label = then_id });
         lower_stmt(c, n->then_body);
         if (n->else_body) {
             emit(c, (Instr){ .op = LIR_JMP, .label = end_id });
-            emit(c, (Instr){ .op = LIR_LABEL, .label = id });
+            emit(c, (Instr){ .op = LIR_LABEL, .label = else_id });
             lower_stmt(c, n->else_body);
             emit(c, (Instr){ .op = LIR_LABEL, .label = end_id });
         } else {
@@ -1607,28 +1621,34 @@ static void lower_stmt(LowerCtx *c, Node *n)
         return;
     }
     case ND_WHILE: {
-        int begin = emit(c, (Instr){ .op = LIR_LABEL, .label = lir_new_label(c->lf) });
+        int begin_id = lir_new_label(c->lf);
+        int body_id = lir_new_label(c->lf);
         int end_id = lir_new_label(c->lf);
-        lower_cond_branch(c, n->cond, end_id);
+        emit(c, (Instr){ .op = LIR_LABEL, .label = begin_id });
+        lower_branch(c, n->cond, body_id, end_id);
+        emit(c, (Instr){ .op = LIR_LABEL, .label = body_id });
         lower_stmt(c, n->then_body);
-        emit(c, (Instr){ .op = LIR_JMP, .label = c->lf->instrs[begin].label });
-        int end_idx = emit(c, (Instr){ .op = LIR_LABEL, .label = end_id });
-        lir_add_loop(c->lf, begin, end_idx);
+        emit(c, (Instr){ .op = LIR_JMP, .label = begin_id });
+        emit(c, (Instr){ .op = LIR_LABEL, .label = end_id });
         return;
     }
     case ND_FOR: {
         if (n->init)
             lower_expr(c, n->init);
-        int begin = emit(c, (Instr){ .op = LIR_LABEL, .label = lir_new_label(c->lf) });
+        int begin_id = lir_new_label(c->lf);
+        int body_id = lir_new_label(c->lf);
         int end_id = lir_new_label(c->lf);
+        emit(c, (Instr){ .op = LIR_LABEL, .label = begin_id });
         if (n->cond)
-            lower_cond_branch(c, n->cond, end_id);
+            lower_branch(c, n->cond, body_id, end_id);
+        else
+            emit(c, (Instr){ .op = LIR_JMP, .label = body_id });
+        emit(c, (Instr){ .op = LIR_LABEL, .label = body_id });
         lower_stmt(c, n->then_body);
         if (n->step)
             lower_expr(c, n->step);
-        emit(c, (Instr){ .op = LIR_JMP, .label = c->lf->instrs[begin].label });
-        int end_idx = emit(c, (Instr){ .op = LIR_LABEL, .label = end_id });
-        lir_add_loop(c->lf, begin, end_idx);
+        emit(c, (Instr){ .op = LIR_JMP, .label = begin_id });
+        emit(c, (Instr){ .op = LIR_LABEL, .label = end_id });
         return;
     }
     case ND_BLOCK:
@@ -1669,8 +1689,13 @@ static int stmt_returns(Node *n)
 LirFn *lower_function(Function *fn)
 {
     LirFn *lf = lir_fn_new(fn->name);
-    LowerCtx ctx = { .lf = lf, .fn = fn, .ret_label = lir_new_label(lf) };
-    lf->epilogue_label = ctx.ret_label;
+    LowerCtx ctx = {
+        .lf = lf,
+        .fn = fn,
+        .ret_label = lir_new_label(lf),
+        .current = lf->entry_block,
+    };
+    lf->epilogue_label = lir_label_block(lf, ctx.ret_label);
 
     lower_params(&ctx);
 
@@ -1688,6 +1713,13 @@ LirFn *lower_function(Function *fn)
 
     emit(&ctx, (Instr){ .op = LIR_LABEL, .label = ctx.ret_label });
     emit(&ctx, (Instr){ .op = LIR_RET, .a = lir_phys(PHYS_RAX) });
+
+    for (int i = 0; i < lf->nblocks; i++) {
+        if (lf->blocks[i].term.kind == LIR_TERM_NONE) {
+            lf->blocks[i].term.kind = LIR_TERM_JMP;
+            lf->blocks[i].term.target = lf->epilogue_label;
+        }
+    }
 
     return lf;
 }

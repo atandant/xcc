@@ -135,6 +135,38 @@ int cosfold_expr(Node **np)
             }
         }
         return changed;
+    case ND_NOT:
+        changed |= cosfold_expr(&n->operand);
+        if (n->operand && n->operand->kind == ND_NUM) {
+            replace_expr_preserve_next(np, n,
+                fold_to_num(!n->operand->val, type_int(), n->loc));
+            return 1;
+        }
+        return changed;
+    case ND_LOGAND:
+    case ND_LOGOR:
+        changed |= cosfold_expr(&n->lhs);
+        changed |= cosfold_expr(&n->rhs);
+        if (n->lhs && n->rhs && n->lhs->kind == ND_NUM &&
+            n->rhs->kind == ND_NUM) {
+            long value = n->kind == ND_LOGAND
+                ? (n->lhs->val != 0 && n->rhs->val != 0)
+                : (n->lhs->val != 0 || n->rhs->val != 0);
+            replace_expr_preserve_next(np, n,
+                fold_to_num(value, type_int(), n->loc));
+            return 1;
+        }
+        return changed;
+    case ND_COND:
+        changed |= cosfold_expr(&n->cond);
+        changed |= cosfold_expr(&n->then_expr);
+        changed |= cosfold_expr(&n->else_expr);
+        if (n->cond && n->cond->kind == ND_NUM) {
+            Node *selected = n->cond->val ? n->then_expr : n->else_expr;
+            replace_expr_preserve_next(np, n, selected);
+            return 1;
+        }
+        return changed;
     case ND_ADDR:
         changed |= cosfold_expr(&n->operand);
         return changed;

@@ -248,6 +248,34 @@ int int_const_eval(Node *expr, IntConstLookupFn lookup,
         if (out_ty)
             *out_ty = ty;
         return 1;
+    case ND_NOT:
+        if (!int_const_eval(expr->operand, lookup, eval_sizeof, ctx,
+                            &l, &lty))
+            return 0;
+        *out_value = !l;
+        if (out_ty)
+            *out_ty = type_int();
+        return 1;
+    case ND_LOGAND:
+    case ND_LOGOR:
+        if (!int_const_eval(expr->lhs, lookup, eval_sizeof, ctx, &l, &lty))
+            return 0;
+        if ((expr->kind == ND_LOGAND && !l) ||
+            (expr->kind == ND_LOGOR && l)) {
+            *out_value = expr->kind == ND_LOGOR;
+        } else {
+            if (!int_const_eval(expr->rhs, lookup, eval_sizeof, ctx, &r, &rty))
+                return 0;
+            *out_value = r != 0;
+        }
+        if (out_ty)
+            *out_ty = type_int();
+        return 1;
+    case ND_COND:
+        if (!int_const_eval(expr->cond, lookup, eval_sizeof, ctx, &l, &lty))
+            return 0;
+        return int_const_eval(l ? expr->then_expr : expr->else_expr,
+                              lookup, eval_sizeof, ctx, out_value, out_ty);
     case ND_BINOP:
         if (expr->op == OP_COMMA)
             return 0;

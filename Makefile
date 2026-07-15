@@ -14,7 +14,7 @@ SRCS = src/main.c src/arena.c src/ast.c src/type.c src/diag.c src/sema.c \
        src/sema_enum.c src/abi_sysv_amd64.c \
        src/intconst.c src/cosfold.c src/cosprop.c src/copts.c src/lopt.c \
        src/loptstr.c src/codegen.c \
-       src/lir.c src/lower.c src/liveness.c src/regalloc.c src/emit_x86.c
+       src/lir.c src/lir_cfg.c src/lower.c src/liveness.c src/regalloc.c src/emit_x86.c
 OBJS = $(patsubst src/%.c,$(BUILD)/%.o,$(SRCS))
 
 # Generated sources (bison/flex) - compiled with warnings off

@@ -28,6 +28,7 @@ typedef enum {
 } ExprCtx;
 
 static void resolve_expr_ctx(Node *n, ExprCtx ctx);
+static void require_scalar_cond(Node *cond);
 static long sizeof_value(Type *ty, SourceLoc loc);
 
 /* Make an implicit integer conversion explicit in the typed AST.  Keeping the
@@ -203,10 +204,18 @@ static void check_init_from_self(Node *n, Node *decl)
 
     switch (n->kind) {
     case ND_BINOP:
+    case ND_LOGAND:
+    case ND_LOGOR:
         check_init_from_self(n->lhs, decl);
         check_init_from_self(n->rhs, decl);
         return;
+    case ND_COND:
+        check_init_from_self(n->cond, decl);
+        check_init_from_self(n->then_expr, decl);
+        check_init_from_self(n->else_expr, decl);
+        return;
     case ND_NEG:
+    case ND_NOT:
     case ND_DEREF:
     case ND_CAST:
         check_init_from_self(n->operand, decl);
@@ -1106,6 +1115,54 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
         }
         n->is_lvalue = 0;
         return;
+    case ND_NOT:
+        resolve_expr_ctx(n->operand, CTX_RVALUE);
+        require_scalar_cond(n->operand);
+        n->ty = type_int();
+        n->is_lvalue = 0;
+        return;
+    case ND_LOGAND:
+    case ND_LOGOR:
+        resolve_expr_ctx(n->lhs, CTX_RVALUE);
+        resolve_expr_ctx(n->rhs, CTX_RVALUE);
+        require_scalar_cond(n->lhs);
+        require_scalar_cond(n->rhs);
+        n->ty = type_int();
+        n->is_lvalue = 0;
+        return;
+    case ND_COND:
+        resolve_expr_ctx(n->cond, CTX_RVALUE);
+        require_scalar_cond(n->cond);
+        resolve_expr_ctx(n->then_expr, CTX_RVALUE);
+        resolve_expr_ctx(n->else_expr, CTX_RVALUE);
+        if (type_is_integer(n->then_expr->ty) &&
+            type_is_integer(n->else_expr->ty)) {
+            Type *common = type_arith_convert(n->then_expr->ty,
+                                              n->else_expr->ty);
+            convert_integer_expr(&n->then_expr, common);
+            convert_integer_expr(&n->else_expr, common);
+            n->ty = common;
+        } else if (type_same(n->then_expr->ty, n->else_expr->ty)) {
+            n->ty = n->then_expr->ty;
+        } else if (type_is_pointer(n->then_expr->ty) &&
+                   is_null_ptr_constant(n->else_expr)) {
+            n->ty = n->then_expr->ty;
+        } else if (is_null_ptr_constant(n->then_expr) &&
+                   type_is_pointer(n->else_expr->ty)) {
+            n->ty = n->else_expr->ty;
+        } else if (type_is_pointer(n->then_expr->ty) &&
+                   type_is_pointer(n->else_expr->ty) &&
+                   (is_void_ptr_type(n->then_expr->ty) ||
+                    is_void_ptr_type(n->else_expr->ty))) {
+            n->ty = is_void_ptr_type(n->then_expr->ty)
+                ? n->then_expr->ty : n->else_expr->ty;
+        } else {
+            diag_error_at(n->loc,
+                          "incompatible operands to conditional operator");
+            n->ty = n->then_expr->ty;
+        }
+        n->is_lvalue = 0;
+        return;
     case ND_NEG:
         resolve_expr_ctx(n->operand, CTX_RVALUE);
         n->var_decay = 0;
@@ -1409,14 +1466,22 @@ static void sema_scan_call_member_scratch(Node *n, int *maxsz)
     case ND_RETURN:
     case ND_EXPR_STMT:
     case ND_NEG:
+    case ND_NOT:
     case ND_ADDR:
     case ND_DEREF:
     case ND_CAST:
         sema_scan_call_member_scratch(n->operand, maxsz);
         return;
     case ND_BINOP:
+    case ND_LOGAND:
+    case ND_LOGOR:
         sema_scan_call_member_scratch(n->lhs, maxsz);
         sema_scan_call_member_scratch(n->rhs, maxsz);
+        return;
+    case ND_COND:
+        sema_scan_call_member_scratch(n->cond, maxsz);
+        sema_scan_call_member_scratch(n->then_expr, maxsz);
+        sema_scan_call_member_scratch(n->else_expr, maxsz);
         return;
     case ND_DECL:
         sema_scan_call_member_scratch(n->init, maxsz);
@@ -1499,14 +1564,22 @@ static void sema_scan_sret_call_scratch(Node *n, int *maxsz)
         return;
     case ND_EXPR_STMT:
     case ND_NEG:
+    case ND_NOT:
     case ND_ADDR:
     case ND_DEREF:
     case ND_CAST:
         sema_scan_sret_call_scratch(n->operand, maxsz);
         return;
     case ND_BINOP:
+    case ND_LOGAND:
+    case ND_LOGOR:
         sema_scan_sret_call_scratch(n->lhs, maxsz);
         sema_scan_sret_call_scratch(n->rhs, maxsz);
+        return;
+    case ND_COND:
+        sema_scan_sret_call_scratch(n->cond, maxsz);
+        sema_scan_sret_call_scratch(n->then_expr, maxsz);
+        sema_scan_sret_call_scratch(n->else_expr, maxsz);
         return;
     case ND_DECL:
         if (n->init && n->init->kind == ND_CALL && sret_call_needs_scratch(n->init))
