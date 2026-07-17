@@ -20,8 +20,9 @@ int loptstr_function(LirFn *lf)
 {
     int changed = 0;
 
-    for (int i = 0; i < lf->ninstr; i++) {
-        Instr *ins = &lf->instrs[i];
+    for (int b = 0; b < lf->nblocks; b++) {
+      for (int i = 0; i < lf->blocks[b].ninstr; i++) {
+        Instr *ins = &lf->blocks[b].instrs[i];
         int k;
 
         if (ins->op == LIR_MUL && imm_pow2_log2_operand(ins->b, &k)) {
@@ -44,6 +45,7 @@ int loptstr_function(LirFn *lf)
             ins->b = lir_none();
             changed = 1;
         }
+      }
     }
     return changed;
 }

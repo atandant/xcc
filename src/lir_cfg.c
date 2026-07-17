@@ -66,12 +66,61 @@ static int has_pred(const LirBlock *block, LirBlockId pred)
     return 0;
 }
 
+static int op_defines_dst(const Instr *ins)
+{
+    switch (ins->op) {
+    case LIR_MOVI:
+    case LIR_MOV:
+    case LIR_LOAD:
+    case LIR_LEA:
+    case LIR_LEA_SYM:
+    case LIR_ADD:
+    case LIR_SUB:
+    case LIR_MUL:
+    case LIR_DIV:
+    case LIR_MOD:
+    case LIR_SDIV_POW2:
+    case LIR_SMOD_POW2:
+    case LIR_UDIV_POW2:
+    case LIR_UMOD_POW2:
+    case LIR_AND:
+    case LIR_OR:
+    case LIR_SHL:
+    case LIR_SHR:
+    case LIR_SAR:
+    case LIR_NEG:
+    case LIR_SETCC:
+    case LIR_CONV:
+        return ins->dst >= 0;
+    default:
+        return 0;
+    }
+}
+
+static void verify_operand(const LirFn *fn, int block, Operand operand)
+{
+    if (operand.kind == OPND_VREG &&
+        (operand.u.vreg < 0 || operand.u.vreg >= fn->nvreg))
+        malformed(fn, block, "instruction uses an invalid vreg");
+    if (operand.kind == OPND_MEM) {
+        if (operand.u.mem.base != LIR_FP &&
+            (operand.u.mem.base < 0 || operand.u.mem.base >= fn->nvreg))
+            malformed(fn, block, "memory operand has an invalid base vreg");
+        if (operand.u.mem.index != LIR_NO_IDX &&
+            (operand.u.mem.index < 0 || operand.u.mem.index >= fn->nvreg))
+            malformed(fn, block, "memory operand has an invalid index vreg");
+    }
+}
+
 void lir_cfg_verify(const LirFn *fn)
 {
+    unsigned char *defined;
+
     if (!fn)
         diag_fatal("malformed LIR: null function");
     if (!valid_block(fn, fn->entry_block))
         malformed(fn, -1, "invalid entry block");
+    defined = arena_alloc_zeroed((size_t)fn->nvreg);
 
     for (int i = 0; i < fn->nblocks; i++) {
         const LirBlock *block = &fn->blocks[i];
@@ -87,6 +136,38 @@ void lir_cfg_verify(const LirFn *fn)
             (!valid_block(fn, block->term.true_target) ||
              !valid_block(fn, block->term.false_target)))
             malformed(fn, i, "branch has an invalid target");
+        if (fn->stage == LIR_STAGE_LOWERED && block->nphis != 0)
+            malformed(fn, i, "lowered LIR still contains phi nodes");
+
+        for (int j = 0; j < block->ninstr; j++) {
+            const Instr *ins = &block->instrs[j];
+
+            if (ins->op == LIR_LABEL || ins->op == LIR_JMP ||
+                ins->op == LIR_BR || ins->op == LIR_RET)
+                malformed(fn, i, "control instruction appears in a block body");
+            verify_operand(fn, i, ins->a);
+            verify_operand(fn, i, ins->b);
+            if (ins->op == LIR_CALL) {
+                if (ins->call_indirect &&
+                    (ins->call_reg < 0 || ins->call_reg >= fn->nvreg))
+                    malformed(fn, i, "indirect call uses an invalid vreg");
+                for (int a = 0; a < ins->nargs; a++)
+                    verify_operand(fn, i, ins->call_args[a]);
+            }
+            if (op_defines_dst(ins)) {
+                if (ins->dst >= fn->nvreg)
+                    malformed(fn, i, "instruction defines an invalid vreg");
+                if (fn->stage == LIR_STAGE_SSA && defined[ins->dst])
+                    malformed(fn, i, "vreg has multiple SSA definitions");
+                defined[ins->dst] = 1;
+            }
+        }
+        if (block->term.kind == LIR_TERM_BR) {
+            verify_operand(fn, i, block->term.a);
+            verify_operand(fn, i, block->term.b);
+        } else if (block->term.kind == LIR_TERM_RET) {
+            verify_operand(fn, i, block->term.a);
+        }
 
         for (int p = 0; p < block->npreds; p++) {
             if (!valid_block(fn, block->preds[p]))
@@ -102,6 +183,9 @@ void lir_cfg_verify(const LirFn *fn)
 
             if (phi->dst < 0 || phi->dst >= fn->nvreg)
                 malformed(fn, i, "phi has an invalid destination");
+            if (fn->stage == LIR_STAGE_SSA && defined[phi->dst])
+                malformed(fn, i, "vreg has multiple SSA definitions");
+            defined[phi->dst] = 1;
             if (phi->ninputs != block->npreds)
                 malformed(fn, i, "phi input count does not match predecessors");
             for (int a = 0; a < phi->ninputs; a++) {
@@ -259,53 +343,36 @@ static void eliminate_phis(LirFn *fn)
     }
 }
 
-static void flatten_block(LirFn *fn, int b)
+void lir_cfg_number_instructions(LirFn *fn)
 {
-    LirBlock *block = &fn->blocks[b];
-    LirTerminator *term = &block->term;
-
-    lir_emit(fn, (Instr){ .op = LIR_LABEL, .label = b });
-    for (int i = 0; i < block->ninstr; i++)
-        lir_emit(fn, block->instrs[i]);
-
-    if (term->kind == LIR_TERM_JMP) {
-        lir_emit(fn, (Instr){ .op = LIR_JMP, .label = term->target });
-    } else if (term->kind == LIR_TERM_BR) {
-        lir_emit(fn, (Instr){
-            .op = LIR_BR,
-            .a = term->a,
-            .b = term->b,
-            .w = term->w,
-            .sgn = term->sgn,
-            .cc = term->cc,
-            .label = term->true_target,
-        });
-        lir_emit(fn, (Instr){
-            .op = LIR_JMP,
-            .label = term->false_target,
-        });
-    } else if (term->kind == LIR_TERM_RET) {
-        lir_emit(fn, (Instr){ .op = LIR_RET, .a = term->a });
-    }
-}
-
-static void flatten(LirFn *fn)
-{
-    fn->ninstr = 0;
-    fn->label_count = fn->nblocks;
-    if (fn->epilogue_label < 0)
-        fn->epilogue_label = fn->nblocks - 1;
+    int position = 0;
 
     for (int b = 0; b < fn->nblocks; b++) {
-        if (b != fn->epilogue_label)
-            flatten_block(fn, b);
+        LirBlock *block;
+        if (b == fn->epilogue_label)
+            continue;
+        block = &fn->blocks[b];
+        block->start_position = position;
+        for (int i = 0; i < block->ninstr; i++)
+            block->instrs[i].position = position++;
+        block->term.position = position++;
+        block->end_position = block->term.position;
     }
-    flatten_block(fn, fn->epilogue_label);
+    LirBlock *epilogue = &fn->blocks[fn->epilogue_label];
+    epilogue->start_position = position;
+    for (int i = 0; i < epilogue->ninstr; i++)
+        epilogue->instrs[i].position = position++;
+    epilogue->term.position = position++;
+    epilogue->end_position = epilogue->term.position;
+    fn->npositions = position;
 }
 
 void lir_cfg_lower(LirFn *fn)
 {
+    if (fn->stage != LIR_STAGE_SSA)
+        diag_fatal("cannot lower non-SSA LIR in function '%s'", fn->name);
     eliminate_phis(fn);
     lir_cfg_rebuild_preds(fn);
-    flatten(fn);
+    fn->stage = LIR_STAGE_LOWERED;
+    lir_cfg_number_instructions(fn);
 }

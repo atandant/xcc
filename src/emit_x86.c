@@ -1169,6 +1169,71 @@ static void emit_epilogue(EmitCtx *c)
     fprintf(c->out, "  ret\n");
 }
 
+static LirCond invert_cond(LirCond cc)
+{
+    switch (cc) {
+    case CC_EQ: return CC_NE;
+    case CC_NE: return CC_EQ;
+    case CC_LT: return CC_GE;
+    case CC_LE: return CC_GT;
+    case CC_GT: return CC_LE;
+    case CC_GE: return CC_LT;
+    }
+    return CC_EQ;
+}
+
+static int next_layout_block(const LirFn *lf, int block)
+{
+    for (int b = block + 1; b < lf->nblocks; b++) {
+        if (b != lf->epilogue_label)
+            return b;
+    }
+    if (block != lf->epilogue_label)
+        return lf->epilogue_label;
+    return LIR_NO_BLOCK;
+}
+
+static void emit_terminator(EmitCtx *c, const LirBlock *block, int next)
+{
+    const LirTerminator *term = &block->term;
+    Instr ins = {0};
+
+    if (term->kind == LIR_TERM_RET)
+        return;
+    if (term->kind == LIR_TERM_JMP) {
+        if (term->target == next)
+            return;
+        ins.op = LIR_JMP;
+        ins.label = term->target;
+        emit_instr(c, &ins);
+        return;
+    }
+
+    ins.op = LIR_BR;
+    ins.a = term->a;
+    ins.b = term->b;
+    ins.w = term->w;
+    ins.sgn = term->sgn;
+    if (term->false_target == next) {
+        ins.cc = term->cc;
+        ins.label = term->true_target;
+        emit_instr(c, &ins);
+        return;
+    }
+    if (term->true_target == next) {
+        ins.cc = invert_cond(term->cc);
+        ins.label = term->false_target;
+        emit_instr(c, &ins);
+        return;
+    }
+
+    ins.cc = term->cc;
+    ins.label = term->true_target;
+    emit_instr(c, &ins);
+    ins = (Instr){ .op = LIR_JMP, .label = term->false_target };
+    emit_instr(c, &ins);
+}
+
 void emit_x86_function(LirFn *lf, Function *fn, AllocResult *alloc,
                        FILE *out, const TargetDesc *td)
 {
@@ -1198,12 +1263,26 @@ void emit_x86_function(LirFn *lf, Function *fn, AllocResult *alloc,
                                type_decay(p->ty), p->offset);
     }
 
-    for (int j = 0; j < lf->ninstr; j++) {
-        Instr *ins = &lf->instrs[j];
-        if (ins->op == LIR_RET)
+    for (int b = 0; b < lf->nblocks; b++) {
+        LirBlock *block;
+        int next;
+
+        if (b == lf->epilogue_label)
             continue;
-        emit_instr(&ctx, ins);
+        block = &lf->blocks[b];
+        emit_label_ref(&ctx, b);
+        fprintf(out, ":\n");
+        for (int i = 0; i < block->ninstr; i++)
+            emit_instr(&ctx, &block->instrs[i]);
+        next = next_layout_block(lf, b);
+        emit_terminator(&ctx, block, next);
     }
+
+    LirBlock *epilogue = &lf->blocks[lf->epilogue_label];
+    emit_label_ref(&ctx, lf->epilogue_label);
+    fprintf(out, ":\n");
+    for (int i = 0; i < epilogue->ninstr; i++)
+        emit_instr(&ctx, &epilogue->instrs[i]);
 
     emit_epilogue(&ctx);
 }

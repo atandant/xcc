@@ -89,10 +89,11 @@ static int protect_home_before(LowerCtx *c, int v, Node *later)
     return v;
 }
 
-static void emit_load_slot(LowerCtx *c, int dst, Type *ty, int offset);
+static int emit_load_slot(LowerCtx *c, int dst, Type *ty, int offset);
 static void emit_store_slot(LowerCtx *c, int src, Type *ty, int offset);
 static void lower_bitfield_store_off(LowerCtx *c, int struct_off, Member *m, int val);
-static void lower_cast_into(LowerCtx *c, int dst, Node *n);
+static int lower_cast_value(LowerCtx *c, Node *n);
+static int convert_value(LowerCtx *c, int v, Type *from, Type *to);
 
 static void lower_params(LowerCtx *c)
 {
@@ -193,25 +194,27 @@ static LirWidth load_lir_width(Type *ty)
     return LIR_W4;
 }
 
-static void emit_widen_to_rax(LowerCtx *c, int v, Type *ty)
+static int widen_loaded_value(LowerCtx *c, int v, Type *ty)
 {
     if (load_lir_width(ty) == LIR_W8)
-        return;
+        return v;
     if (type_is_char(ty))
-        return;
+        return v;
     if (load_lir_width(ty) == LIR_W4 && !type_is_short(ty))
-        return;
+        return v;
     if (type_is_short(ty) && load_sign(ty) == LIR_SGN_S) {
         int t = fresh(c);
         emit(c, (Instr){
             .op = LIR_CONV, .dst = t, .a = lir_vreg(v), .conv = CONV_SEXT16 });
-        emit(c, (Instr){ .op = LIR_MOV, .dst = v, .a = lir_vreg(t) });
+        v = t;
     }
+    int dst = fresh(c);
     emit(c, (Instr){
-        .op = LIR_CONV, .dst = v, .a = lir_vreg(v), .conv = CONV_SEXT32_64 });
+        .op = LIR_CONV, .dst = dst, .a = lir_vreg(v), .conv = CONV_SEXT32_64 });
+    return dst;
 }
 
-static void emit_load_slot(LowerCtx *c, int dst, Type *ty, int offset)
+static int emit_load_slot(LowerCtx *c, int dst, Type *ty, int offset)
 {
     int bytes = store_width_bytes(ty);
     emit(c, (Instr){
@@ -222,7 +225,7 @@ static void emit_load_slot(LowerCtx *c, int dst, Type *ty, int offset)
         .sgn = load_sign(ty),
         .aux = bytes,
     });
-    emit_widen_to_rax(c, dst, ty);
+    return widen_loaded_value(c, dst, ty);
 }
 
 static void emit_store_slot(LowerCtx *c, int src, Type *ty, int offset)
@@ -452,9 +455,10 @@ static int lower_bitfield_unit_load_off(LowerCtx *c, int struct_off, int unit_of
         .sgn = LIR_SGN_Z,
         .aux = 4,
     });
+    int conv = fresh(c);
     emit(c, (Instr){
-        .op = LIR_CONV, .dst = dst, .a = lir_vreg(dst), .conv = CONV_ZEXT32 });
-    return dst;
+        .op = LIR_CONV, .dst = conv, .a = lir_vreg(dst), .conv = CONV_ZEXT32 });
+    return conv;
 }
 
 static void lower_bitfield_unit_store_off(LowerCtx *c, int struct_off, int unit_off, int val)
@@ -506,9 +510,10 @@ static int lower_bitfield_unit_load(LowerCtx *c, Node *base, int unit_off)
             .sgn = LIR_SGN_Z,
             .aux = 4,
         });
+        int conv = fresh(c);
         emit(c, (Instr){
-            .op = LIR_CONV, .dst = dst, .a = lir_vreg(dst), .conv = CONV_ZEXT32 });
-        return dst;
+            .op = LIR_CONV, .dst = conv, .a = lir_vreg(dst), .conv = CONV_ZEXT32 });
+        return conv;
     }
 }
 
@@ -546,8 +551,11 @@ static int lower_bitfield_load(LowerCtx *c, Node *n, Member *m)
     emit_binop_imm(c, LIR_AND, dst, t, mask);
     if (type_is_signed(m->ty) && !type_is_unsigned(m->ty)) {
         int sh = 64 - m->bit_width;
-        emit_binop_imm(c, LIR_SHL, dst, dst, sh);
-        emit_binop_imm(c, LIR_SAR, dst, dst, sh);
+        int s1 = fresh(c);
+        int s2 = fresh(c);
+        emit_binop_imm(c, LIR_SHL, s1, dst, sh);
+        emit_binop_imm(c, LIR_SAR, s2, s1, sh);
+        return s2;
     }
     return dst;
 }
@@ -632,8 +640,7 @@ static int lower_addr(LowerCtx *c, Node *n)
         }
         {
             int dst = fresh(c);
-            emit_load_slot(c, dst, n->ty, n->offset);
-            return dst;
+            return emit_load_slot(c, dst, n->ty, n->offset);
         }
     case ND_DEREF:
         return lower_expr(c, n->operand);
@@ -645,9 +652,11 @@ static int lower_addr(LowerCtx *c, Node *n)
     }
 }
 
-static void emit_conv(LowerCtx *c, int dst, ConvKind k)
+static int emit_conv_value(LowerCtx *c, int src, ConvKind k)
 {
-    emit(c, (Instr){ .op = LIR_CONV, .dst = dst, .a = lir_vreg(dst), .conv = k });
+    int dst = fresh(c);
+    emit(c, (Instr){ .op = LIR_CONV, .dst = dst, .a = lir_vreg(src), .conv = k });
+    return dst;
 }
 
 /*
@@ -701,19 +710,12 @@ static void lower_struct_from_scalar(LowerCtx *c, int addr, Type *sty, Node *sca
     int sw = store_width_bytes(scalar->ty);
     int store_bytes = sw < sz ? sw : sz;
     int val = lower_expr(c, scalar);
-    int t = fresh(c);
-    Node widen = {0};
+    int t;
 
     if (sz > store_bytes)
         lower_mem_zero(c, addr, sz);
 
-    emit(c, (Instr){ .op = LIR_MOV, .dst = t, .a = lir_vreg(val) });
-    widen.kind = ND_CAST;
-    widen.ty = type_long();
-    widen.cast_ty = type_long();
-    widen.operand = scalar;
-    widen.loc = scalar->loc;
-    lower_cast_into(c, t, &widen);
+    t = convert_value(c, val, scalar->ty, type_long());
     emit(c, (Instr){
         .op = LIR_STORE,
         .a = lir_mem(addr, 0),
@@ -723,21 +725,15 @@ static void lower_struct_from_scalar(LowerCtx *c, int addr, Type *sty, Node *sca
     });
 }
 
-static void lower_cast_into(LowerCtx *c, int dst, Node *n)
+static int convert_value(LowerCtx *c, int v, Type *from, Type *to)
 {
-    int v = lower_expr(c, n->operand);
-    Type *to = n->ty;
-    Type *from = n->operand->ty;
-
-    emit(c, (Instr){ .op = LIR_MOV, .dst = dst, .a = lir_vreg(v) });
-
     if (type_is_void(to))
-        return;
+        return v;
 
     TypeScalarInfo di;
     TypeScalarInfo si;
     if (!type_scalar_info(to, &di) || !type_scalar_info(from, &si))
-        return;
+        return v;
 
     int dw = di.width;
     int ds = di.is_signed;
@@ -746,46 +742,51 @@ static void lower_cast_into(LowerCtx *c, int dst, Node *n)
 
     /* No representation change. */
     if (dw == sw && ds == ss)
-        return;
+        return v;
 
     if (dw >= 8) {
         /* Widen to 64 bits preserving the source value (per source sign). */
         if (sw >= 8)
-            return;
+            return v;
         if (sw == 4) {
-            emit_conv(c, dst, ss ? CONV_SEXT32_64 : CONV_ZEXT32);
+            v = emit_conv_value(c, v, ss ? CONV_SEXT32_64 : CONV_ZEXT32);
         } else if (sw == 2) {
-            emit_conv(c, dst, ss ? CONV_SEXT16 : CONV_ZEXT16);
+            v = emit_conv_value(c, v, ss ? CONV_SEXT16 : CONV_ZEXT16);
         } else {
             if (ss) {
-                emit_conv(c, dst, CONV_SEXT8);
-                emit_conv(c, dst, CONV_SEXT32_64);
+                v = emit_conv_value(c, v, CONV_SEXT8);
+                v = emit_conv_value(c, v, CONV_SEXT32_64);
             } else {
-                emit_conv(c, dst, CONV_ZEXT8);
+                v = emit_conv_value(c, v, CONV_ZEXT8);
             }
         }
-        return;
+        return v;
     }
 
     if (dw == 4) {
         /* Truncate to 32 bits then re-canonicalise per destination sign.
            A signed int from a <=32-bit source is already canonical. */
         if (sw >= 8)
-            emit_conv(c, dst, ds ? CONV_SEXT32_64 : CONV_ZEXT32);
+            v = emit_conv_value(c, v, ds ? CONV_SEXT32_64 : CONV_ZEXT32);
         else if (ds && sw == 4)
-            emit_conv(c, dst, CONV_SEXT32_64);
+            v = emit_conv_value(c, v, CONV_SEXT32_64);
         else if (!ds)
-            emit_conv(c, dst, CONV_ZEXT32);
-        return;
+            v = emit_conv_value(c, v, CONV_ZEXT32);
+        return v;
     }
 
     if (dw == 2) {
-        emit_conv(c, dst, ds ? CONV_SEXT16 : CONV_ZEXT16);
-        return;
+        return emit_conv_value(c, v, ds ? CONV_SEXT16 : CONV_ZEXT16);
     }
 
     /* dw == 1 */
-    emit_conv(c, dst, ds ? CONV_SEXT8 : CONV_ZEXT8);
+    return emit_conv_value(c, v, ds ? CONV_SEXT8 : CONV_ZEXT8);
+}
+
+static int lower_cast_value(LowerCtx *c, Node *n)
+{
+    int v = lower_expr(c, n->operand);
+    return convert_value(c, v, n->operand->ty, n->ty);
 }
 
 static void lower_ptr_diff(LowerCtx *c, int dst, Node *lhs, Node *rhs)
@@ -1301,8 +1302,7 @@ static int lower_expr(LowerCtx *c, Node *n)
     }
     case ND_VAR: {
         int dst = fresh(c);
-        emit_load_slot(c, dst, n->ty, n->offset);
-        return dst;
+        return emit_load_slot(c, dst, n->ty, n->offset);
     }
     case ND_CALL:
         if (n->func_ty && abi_type_is_record_pass(n->func_ty->ret))
@@ -1424,8 +1424,7 @@ static int lower_expr(LowerCtx *c, Node *n)
             .sgn = load_sign(n->ty),
             .aux = bytes,
         });
-        emit_widen_to_rax(c, dst, n->ty);
-        return dst;
+        return widen_loaded_value(c, dst, n->ty);
     }
     case ND_MEMBER: {
         Member *m = member_meta(n);
@@ -1442,13 +1441,10 @@ static int lower_expr(LowerCtx *c, Node *n)
             .sgn = load_sign(n->ty),
             .aux = bytes,
         });
-        emit_widen_to_rax(c, dst, n->ty);
-        return dst;
+        return widen_loaded_value(c, dst, n->ty);
     }
     case ND_CAST: {
-        int dst = fresh(c);
-        lower_cast_into(c, dst, n);
-        return dst;
+        return lower_cast_value(c, n);
     }
     case ND_ASSIGN: {
         if (type_is_record(n->lhs->ty)) {

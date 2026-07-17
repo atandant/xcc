@@ -97,11 +97,9 @@ static void operand_phys_touch(Liveness *lv, Operand o, int idx)
         block_phys(lv, o.u.phys, idx);
 }
 
-static void instr_use_def(LirFn *lf, int i, const TargetDesc *td, Liveness *lv,
+static void instr_use_def(Instr *ins, int i, const TargetDesc *td, Liveness *lv,
                           int *uses, int *nu, int *defs, int *nd)
 {
-    Instr *ins = &lf->instrs[i];
-
     *nu = 0;
     *nd = 0;
 
@@ -215,20 +213,21 @@ static int bit_test(const unsigned long *bits, int v)
     return (bits[v / word_bits] >> (v % word_bits)) & 1UL;
 }
 
-static void operand_bit_uses(unsigned long *bits, Operand o)
+static void block_operand_uses(unsigned long *uses, const unsigned long *defs,
+                               Operand operand)
 {
-    switch (o.kind) {
-    case OPND_VREG:
-        bit_set(bits, o.u.vreg);
+    if (operand.kind == OPND_VREG) {
+        if (!bit_test(defs, operand.u.vreg))
+            bit_set(uses, operand.u.vreg);
         return;
-    case OPND_MEM:
-        if (o.u.mem.base >= 0)
-            bit_set(bits, o.u.mem.base);
-        if (o.u.mem.index >= 0 && o.u.mem.index != LIR_NO_IDX)
-            bit_set(bits, o.u.mem.index);
-        return;
-    default:
-        return;
+    }
+    if (operand.kind == OPND_MEM) {
+        if (operand.u.mem.base >= 0 &&
+            !bit_test(defs, operand.u.mem.base))
+            bit_set(uses, operand.u.mem.base);
+        if (operand.u.mem.index != LIR_NO_IDX &&
+            !bit_test(defs, operand.u.mem.index))
+            bit_set(uses, operand.u.mem.index);
     }
 }
 
@@ -250,7 +249,6 @@ void liveness_compute(LirFn *lf, const TargetDesc *td, Liveness *out)
     unsigned long *def_bits;
     unsigned long *live_in;
     unsigned long *live_out;
-    int *label_instr;
 
     memset(out, 0, sizeof(*out));
 
@@ -260,9 +258,9 @@ void liveness_compute(LirFn *lf, const TargetDesc *td, Liveness *out)
     nwords = (int)(((size_t)lf->nvreg + (size_t)word_bits - 1) /
                    (size_t)word_bits);
     assert(nwords > 0);
-    if ((size_t)lf->ninstr > SIZE_MAX / (size_t)nwords)
+    if ((size_t)lf->nblocks > SIZE_MAX / (size_t)nwords)
         diag_fatal("liveness data is too large");
-    matrix_words = (size_t)lf->ninstr * (size_t)nwords;
+    matrix_words = (size_t)lf->nblocks * (size_t)nwords;
     if (matrix_words > SIZE_MAX / sizeof(*use_bits))
         diag_fatal("liveness data is too large");
     use_bits = arena_alloc_zeroed(matrix_words * sizeof(*use_bits));
@@ -270,63 +268,70 @@ void liveness_compute(LirFn *lf, const TargetDesc *td, Liveness *out)
     live_in = arena_alloc_zeroed(matrix_words * sizeof(*live_in));
     live_out = arena_alloc_zeroed(matrix_words * sizeof(*live_out));
 
-    label_instr = arena_alloc((size_t)lf->label_count * sizeof(*label_instr));
-    for (int label = 0; label < lf->label_count; label++)
-        label_instr[label] = -1;
-    for (int i = 0; i < lf->ninstr; i++) {
-        Instr *ins = &lf->instrs[i];
-        if (ins->op == LIR_LABEL) {
-            assert(ins->label >= 0 && ins->label < lf->label_count);
-            label_instr[ins->label] = i;
-        }
-    }
+    for (int b = 0; b < lf->nblocks; b++) {
+        LirBlock *block = &lf->blocks[b];
+        unsigned long *ub = use_bits + (size_t)b * (size_t)nwords;
+        unsigned long *db = def_bits + (size_t)b * (size_t)nwords;
 
-    for (int i = 0; i < lf->ninstr; i++) {
-        int uses[MAX_REG_OPS];
-        int defs[MAX_REG_OPS];
-        int nu, nd;
-        unsigned long *ub = use_bits + (size_t)i * (size_t)nwords;
-        unsigned long *db = def_bits + (size_t)i * (size_t)nwords;
+        for (int i = 0; i < block->ninstr; i++) {
+            Instr *ins = &block->instrs[i];
+            int uses[MAX_REG_OPS], defs[MAX_REG_OPS];
+            int nu, nd;
 
-        instr_use_def(lf, i, td, out, uses, &nu, defs, &nd);
-        for (int u = 0; u < nu; u++)
-            bit_set(ub, uses[u]);
-        if (lf->instrs[i].op == LIR_CALL) {
-            for (int a = 0; a < lf->instrs[i].nargs; a++)
-                operand_bit_uses(ub, lf->instrs[i].call_args[a]);
+            instr_use_def(ins, ins->position, td, out,
+                          uses, &nu, defs, &nd);
+            for (int u = 0; u < nu; u++) {
+                if (!bit_test(db, uses[u]))
+                    bit_set(ub, uses[u]);
+            }
+            if (ins->op == LIR_CALL) {
+                for (int a = 0; a < ins->nargs; a++)
+                    block_operand_uses(ub, db, ins->call_args[a]);
+            }
+            for (int d = 0; d < nd; d++)
+                bit_set(db, defs[d]);
         }
-        for (int d = 0; d < nd; d++)
-            bit_set(db, defs[d]);
+
+        if (block->term.kind == LIR_TERM_BR ||
+            block->term.kind == LIR_TERM_RET) {
+            Instr term = {0};
+            int uses[MAX_REG_OPS], defs[MAX_REG_OPS];
+            int nu, nd;
+
+            term.op = block->term.kind == LIR_TERM_BR ? LIR_BR : LIR_RET;
+            term.a = block->term.a;
+            term.b = block->term.b;
+            instr_use_def(&term, block->term.position, td, out,
+                          uses, &nu, defs, &nd);
+            for (int u = 0; u < nu; u++) {
+                if (!bit_test(db, uses[u]))
+                    bit_set(ub, uses[u]);
+            }
+        }
     }
 
     for (;;) {
         int changed = 0;
 
-        for (int i = lf->ninstr - 1; i >= 0; i--) {
-            Instr *ins = &lf->instrs[i];
-            unsigned long *in = live_in + (size_t)i * (size_t)nwords;
-            unsigned long *out_bits = live_out + (size_t)i * (size_t)nwords;
-            unsigned long *ub = use_bits + (size_t)i * (size_t)nwords;
-            unsigned long *db = def_bits + (size_t)i * (size_t)nwords;
-            int target = -1;
-
-            if (ins->op == LIR_JMP || ins->op == LIR_BR) {
-                assert(ins->label >= 0 && ins->label < lf->label_count);
-                target = label_instr[ins->label];
-                assert(target >= 0);
-            }
+        for (int b = lf->nblocks - 1; b >= 0; b--) {
+            LirBlock *block = &lf->blocks[b];
+            unsigned long *in = live_in + (size_t)b * (size_t)nwords;
+            unsigned long *out_bits = live_out + (size_t)b * (size_t)nwords;
+            unsigned long *ub = use_bits + (size_t)b * (size_t)nwords;
+            unsigned long *db = def_bits + (size_t)b * (size_t)nwords;
 
             for (int w = 0; w < nwords; w++) {
                 unsigned long new_out = 0;
                 unsigned long new_in;
 
-                if (ins->op == LIR_JMP) {
-                    new_out = live_in[(size_t)target * (size_t)nwords + (size_t)w];
-                } else if (ins->op != LIR_RET) {
-                    if (i + 1 < lf->ninstr)
-                        new_out = live_in[(size_t)(i + 1) * (size_t)nwords + (size_t)w];
-                    if (ins->op == LIR_BR)
-                        new_out |= live_in[(size_t)target * (size_t)nwords + (size_t)w];
+                if (block->term.kind == LIR_TERM_JMP) {
+                    new_out = live_in[
+                        (size_t)block->term.target * (size_t)nwords + (size_t)w];
+                } else if (block->term.kind == LIR_TERM_BR) {
+                    new_out = live_in[
+                        (size_t)block->term.true_target * (size_t)nwords + (size_t)w];
+                    new_out |= live_in[
+                        (size_t)block->term.false_target * (size_t)nwords + (size_t)w];
                 }
                 new_in = ub[w] | (new_out & ~db[w]);
                 if (out_bits[w] != new_out || in[w] != new_in) {
@@ -346,19 +351,58 @@ void liveness_compute(LirFn *lf, const TargetDesc *td, Liveness *out)
         out->by_vreg[v].start = INT_MAX;
         out->by_vreg[v].end = -1;
     }
+    for (int r = 0; r < PHYS_COUNT; r++)
+        out->phys[r].npts = 0;
 
-    for (int i = 0; i < lf->ninstr; i++) {
-        unsigned long *ub = use_bits + (size_t)i * (size_t)nwords;
-        unsigned long *db = def_bits + (size_t)i * (size_t)nwords;
-        unsigned long *in = live_in + (size_t)i * (size_t)nwords;
-        unsigned long *out_bits = live_out + (size_t)i * (size_t)nwords;
-
+    for (int b = 0; b < lf->nblocks; b++) {
+        LirBlock *block = &lf->blocks[b];
+        unsigned long *in = live_in + (size_t)b * (size_t)nwords;
+        unsigned long *out_bits = live_out + (size_t)b * (size_t)nwords;
         for (int v = 0; v < lf->nvreg; v++) {
-            if (!bit_test(ub, v) && !bit_test(db, v) &&
-                !bit_test(in, v) && !bit_test(out_bits, v))
-                continue;
-            touch_vreg_def(out, v, i);
-            touch_vreg_use(out, v, i);
+            if (bit_test(in, v))
+                touch_vreg_use(out, v, block->start_position);
+            if (bit_test(out_bits, v))
+                touch_vreg_use(out, v, block->end_position);
+        }
+
+        for (int i = 0; i < block->ninstr; i++) {
+            Instr *ins = &block->instrs[i];
+            int uses[MAX_REG_OPS], defs[MAX_REG_OPS];
+            int nu, nd;
+
+            instr_use_def(ins, ins->position, td, out,
+                          uses, &nu, defs, &nd);
+            for (int u = 0; u < nu; u++)
+                touch_vreg_use(out, uses[u], ins->position);
+            if (ins->op == LIR_CALL) {
+                for (int a = 0; a < ins->nargs; a++) {
+                    Operand arg = ins->call_args[a];
+                    if (arg.kind == OPND_VREG)
+                        touch_vreg_use(out, arg.u.vreg, ins->position);
+                    else if (arg.kind == OPND_MEM) {
+                        touch_vreg_use(out, arg.u.mem.base, ins->position);
+                        if (arg.u.mem.index != LIR_NO_IDX)
+                            touch_vreg_use(out, arg.u.mem.index, ins->position);
+                    }
+                }
+            }
+            for (int d = 0; d < nd; d++)
+                touch_vreg_def(out, defs[d], ins->position);
+        }
+
+        if (block->term.kind == LIR_TERM_BR ||
+            block->term.kind == LIR_TERM_RET) {
+            Instr term = {0};
+            int uses[MAX_REG_OPS], defs[MAX_REG_OPS];
+            int nu, nd;
+
+            term.op = block->term.kind == LIR_TERM_BR ? LIR_BR : LIR_RET;
+            term.a = block->term.a;
+            term.b = block->term.b;
+            instr_use_def(&term, block->term.position, td, out,
+                          uses, &nu, defs, &nd);
+            for (int u = 0; u < nu; u++)
+                touch_vreg_use(out, uses[u], block->term.position);
         }
     }
 

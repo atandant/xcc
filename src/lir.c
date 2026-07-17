@@ -171,8 +171,9 @@ int lir_max_outgoing(const LirFn *lf)
 {
     int max_out = 0;
 
-    for (int i = 0; i < lf->ninstr; i++) {
-        const Instr *ins = &lf->instrs[i];
+    for (int b = 0; b < lf->nblocks; b++) {
+      for (int i = 0; i < lf->blocks[b].ninstr; i++) {
+        const Instr *ins = &lf->blocks[b].instrs[i];
 
         if (ins->op != LIR_CALL)
             continue;
@@ -181,6 +182,7 @@ int lir_max_outgoing(const LirFn *lf)
         int out = 8 * (ins->nargs - ins->call_nreg);
         if (out > max_out)
             max_out = out;
+      }
     }
     return max_out;
 }

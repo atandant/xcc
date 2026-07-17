@@ -107,6 +107,7 @@ struct Instr {
     int call_nreg;
     Operand *call_args;
     int aux; /* LOAD/STORE: byte width; POW2 ops: log2(divisor) */
+    int position; /* allocator order, assigned after phi elimination */
 };
 
 typedef int LirBlockId;
@@ -134,6 +135,7 @@ typedef enum {
 
 typedef struct {
     LirTermKind kind;
+    int position;
     LirBlockId target;
     LirBlockId true_target;
     LirBlockId false_target;
@@ -146,6 +148,8 @@ typedef struct {
 
 typedef struct {
     LirBlockId id;
+    int start_position;
+    int end_position;
     Instr *instrs;
     int ninstr;
     int cap;
@@ -158,6 +162,11 @@ typedef struct {
     int preds_cap;
 } LirBlock;
 
+typedef enum {
+    LIR_STAGE_SSA,
+    LIR_STAGE_LOWERED,
+} LirStage;
+
 typedef struct {
     int offset;
     int vreg;
@@ -166,12 +175,14 @@ typedef struct {
 typedef struct LirFn LirFn;
 struct LirFn {
     char *name;
+    LirStage stage;
     LirBlock *blocks;
     int nblocks;
     int blocks_cap;
     LirBlockId entry_block;
     LirBlockId *label_blocks;
     int label_blocks_cap;
+    int npositions;
 
     /* Linear backend form, populated by lir_cfg_lower(). */
     Instr *instrs;

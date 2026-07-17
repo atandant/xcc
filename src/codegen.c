@@ -21,6 +21,8 @@ void codegen(Function *prog, FILE *out, int verify_lir)
         if (verify_lir)
             lir_cfg_verify(lf);
         lir_cfg_lower(lf);
+        if (verify_lir)
+            lir_cfg_verify(lf);
 
         lopt_function(lf, fn);
 

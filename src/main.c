@@ -228,6 +228,8 @@ int main(int argc, char **argv)
             if (emit_lir_alloc) {
                 Liveness lv;
                 lir_cfg_lower(lf);
+                if (verify_lir)
+                    lir_cfg_verify(lf);
                 liveness_compute(lf, &X86_SYSV, &lv);
                 liveness_dump(lf, &lv, &X86_SYSV, stdout);
             } else {

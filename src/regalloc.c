@@ -63,11 +63,16 @@ static int interval_spans_call(const LirFn *lf, int start, int end)
 {
     if (start < 0)
         start = 0;
-    if (end >= lf->ninstr)
-        end = lf->ninstr - 1;
-    for (int i = start; i <= end; i++) {
-        if (lf->instrs[i].op == LIR_CALL)
-            return 1;
+    if (end >= lf->npositions)
+        end = lf->npositions - 1;
+    for (int b = 0; b < lf->nblocks; b++) {
+        const LirBlock *block = &lf->blocks[b];
+        for (int i = 0; i < block->ninstr; i++) {
+            const Instr *ins = &block->instrs[i];
+            if (ins->position >= start && ins->position <= end &&
+                ins->op == LIR_CALL)
+                return 1;
+        }
     }
     return 0;
 }
