@@ -1298,6 +1298,16 @@ static void resolve_stmt(Node *s);
 
 static int loop_depth;
 
+typedef struct SwitchCtx SwitchCtx;
+struct SwitchCtx {
+    Node *node;
+    Node *last_case;
+    Type *control_ty;
+    SwitchCtx *prev;
+};
+
+static SwitchCtx *current_switch;
+
 /* A controlling expression (if/while/for condition) must be scalar: an
  * integer or a pointer. A NULL `for` condition is an infinite loop. */
 static void require_scalar_cond(Node *cond)
@@ -1406,8 +1416,8 @@ static void resolve_stmt(Node *s)
             resolve_stmt(s->else_body);
         return;
     case ND_BREAK:
-        if (loop_depth == 0)
-            diag_error_at(s->loc, "break statement not within loop");
+        if (loop_depth == 0 && !current_switch)
+            diag_error_at(s->loc, "break statement not within loop or switch");
         return;
     case ND_CONTINUE:
         if (loop_depth == 0)
@@ -1428,6 +1438,69 @@ static void resolve_stmt(Node *s)
         loop_depth++;
         resolve_stmt(s->then_body);
         loop_depth--;
+        return;
+    case ND_SWITCH: {
+        SwitchCtx sw = {
+            .node = s,
+            .control_ty = type_int(),
+            .prev = current_switch,
+        };
+        resolve_expr_ctx(s->cond, CTX_RVALUE);
+        if (!type_is_integer(s->cond->ty))
+            diag_error_at(s->cond->loc,
+                          "switch quantity is not an integer");
+        else {
+            sw.control_ty = type_int_promote(s->cond->ty);
+            convert_integer_expr(&s->cond, sw.control_ty);
+        }
+        current_switch = &sw;
+        resolve_stmt(s->then_body);
+        current_switch = sw.prev;
+        return;
+    }
+    case ND_CASE: {
+        long value;
+        resolve_expr_ctx(s->operand, CTX_RVALUE);
+        if (!current_switch) {
+            diag_error_at(s->loc, "case label not within a switch statement");
+        } else if (!type_is_integer(s->operand->ty)) {
+            diag_error_at(s->loc, "case label does not have integer type");
+        } else if (!ice_eval(s->operand, &value)) {
+            diag_error_at(s->loc,
+                          "case label is not an integer constant expression");
+        } else {
+            Node *prev;
+            value = type_convert_const(value, current_switch->control_ty);
+            for (prev = current_switch->node->cases; prev;
+                 prev = prev->case_next) {
+                if (prev->case_val == value) {
+                    diag_error_at(s->loc, "duplicate case value");
+                    diag_note_at(prev->loc, "previous case is here");
+                    break;
+                }
+            }
+            s->case_val = value;
+            if (current_switch->last_case)
+                current_switch->last_case->case_next = s;
+            else
+                current_switch->node->cases = s;
+            current_switch->last_case = s;
+        }
+        resolve_stmt(s->then_body);
+        return;
+    }
+    case ND_DEFAULT:
+        if (!current_switch) {
+            diag_error_at(s->loc,
+                          "default label not within a switch statement");
+        } else if (current_switch->node->default_case) {
+            diag_error_at(s->loc, "multiple default labels in one switch");
+            diag_note_at(current_switch->node->default_case->loc,
+                         "previous default is here");
+        } else {
+            current_switch->node->default_case = s;
+        }
+        resolve_stmt(s->then_body);
         return;
     case ND_BLOCK:
         enter_scope();
@@ -1514,6 +1587,17 @@ static void sema_scan_call_member_scratch(Node *n, int *maxsz)
         sema_scan_call_member_scratch(n->init, maxsz);
         sema_scan_call_member_scratch(n->cond, maxsz);
         sema_scan_call_member_scratch(n->step, maxsz);
+        sema_scan_call_member_scratch(n->then_body, maxsz);
+        return;
+    case ND_SWITCH:
+        sema_scan_call_member_scratch(n->cond, maxsz);
+        sema_scan_call_member_scratch(n->then_body, maxsz);
+        return;
+    case ND_CASE:
+        sema_scan_call_member_scratch(n->operand, maxsz);
+        sema_scan_call_member_scratch(n->then_body, maxsz);
+        return;
+    case ND_DEFAULT:
         sema_scan_call_member_scratch(n->then_body, maxsz);
         return;
     case ND_BLOCK:
@@ -1615,6 +1699,17 @@ static void sema_scan_sret_call_scratch(Node *n, int *maxsz)
         sema_scan_sret_call_scratch(n->init, maxsz);
         sema_scan_sret_call_scratch(n->cond, maxsz);
         sema_scan_sret_call_scratch(n->step, maxsz);
+        sema_scan_sret_call_scratch(n->then_body, maxsz);
+        return;
+    case ND_SWITCH:
+        sema_scan_sret_call_scratch(n->cond, maxsz);
+        sema_scan_sret_call_scratch(n->then_body, maxsz);
+        return;
+    case ND_CASE:
+        sema_scan_sret_call_scratch(n->operand, maxsz);
+        sema_scan_sret_call_scratch(n->then_body, maxsz);
+        return;
+    case ND_DEFAULT:
         sema_scan_sret_call_scratch(n->then_body, maxsz);
         return;
     case ND_BLOCK:

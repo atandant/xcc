@@ -214,6 +214,29 @@ Node *node_for(Node *init, Node *cond, Node *step, Node *body, SourceLoc loc)
     return n;
 }
 
+Node *node_switch(Node *cond, Node *body, SourceLoc loc)
+{
+    Node *n = new_node(ND_SWITCH, loc);
+    n->cond = cond;
+    n->then_body = body;
+    return n;
+}
+
+Node *node_case(Node *expr, Node *stmt, SourceLoc loc)
+{
+    Node *n = new_node(ND_CASE, loc);
+    n->operand = expr;
+    n->then_body = stmt;
+    return n;
+}
+
+Node *node_default(Node *stmt, SourceLoc loc)
+{
+    Node *n = new_node(ND_DEFAULT, loc);
+    n->then_body = stmt;
+    return n;
+}
+
 Node *node_break(SourceLoc loc)
 {
     return new_node(ND_BREAK, loc);

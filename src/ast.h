@@ -47,8 +47,11 @@ typedef enum {
     ND_IF,         /* if (cond) then [else else]   */
     ND_WHILE,      /* while (cond) body            */
     ND_FOR,        /* for (init; cond; step) body  */
-    ND_BREAK,      /* break innermost loop           */
-    ND_CONTINUE,   /* continue innermost loop        */
+    ND_SWITCH,     /* switch (cond) body            */
+    ND_CASE,       /* case constant-expression: stmt */
+    ND_DEFAULT,    /* default: stmt                 */
+    ND_BREAK,      /* break innermost loop/switch   */
+    ND_CONTINUE,   /* continue innermost loop       */
     ND_BLOCK,      /* { body }                     */
     ND_TYPEDEF,    /* typedef specifier declarator; */
     ND_MEMBER      /* lhs.name  (`->` desugars to (*p).name) */
@@ -84,18 +87,25 @@ struct Node {
     BinOp op;          /* ND_BINOP                                  */
     Node *lhs, *rhs;   /* ND_BINOP, ND_ASSIGN                       */
 
-    Node *operand;     /* ND_NEG, ND_RETURN, ND_EXPR_STMT, ND_CAST  */
+    Node *operand;     /* ND_NEG, ND_RETURN, ND_EXPR_STMT, ND_CAST,
+                        * ND_CASE constant expression               */
     Type *cast_ty;     /* ND_CAST: parsed target type               */
     Type *decl_spec;   /* ND_DECL: base specifier before declarator */
     Declarator *decl;  /* ND_DECL: parsed declarator (sema → ty)    */
     Node *init;        /* ND_DECL initializer, ND_FOR init (NULL ok)*/
-    Node *cond;        /* ND_IF, ND_WHILE, ND_FOR (FOR cond NULL ok)*/
+    Node *cond;        /* ND_IF, ND_WHILE, ND_FOR, ND_SWITCH        */
     Node *then_expr;   /* ND_COND selected when cond is nonzero      */
     Node *else_expr;   /* ND_COND selected when cond is zero         */
     Node *step;        /* ND_FOR step (may be NULL)                 */
-    Node *then_body;   /* ND_IF, ND_WHILE, ND_FOR loop body         */
+    Node *then_body;   /* ND_IF/loops/switch body, ND_CASE/DEFAULT stmt */
     Node *else_body;   /* ND_IF (may be NULL)                       */
     Node *body;        /* ND_BLOCK linked list of statements        */
+
+    Node *cases;       /* ND_SWITCH: source-ordered ND_CASE list    */
+    Node *default_case;/* ND_SWITCH: ND_DEFAULT, if present         */
+    Node *case_next;   /* ND_CASE: next case in enclosing switch    */
+    long case_val;     /* ND_CASE: converted controlling-type value */
+    int label;         /* ND_CASE/ND_DEFAULT: lowering label        */
 
     Node *args;        /* ND_CALL argument list (chained via next)  */
     int nargs;         /* ND_CALL argument count                    */
@@ -206,6 +216,9 @@ Node *node_call(Node *callee, NodeList *args, SourceLoc loc);
 Node *node_if(Node *cond, Node *then_body, Node *else_body, SourceLoc loc);
 Node *node_while(Node *cond, Node *body, SourceLoc loc);
 Node *node_for(Node *init, Node *cond, Node *step, Node *body, SourceLoc loc);
+Node *node_switch(Node *cond, Node *body, SourceLoc loc);
+Node *node_case(Node *expr, Node *stmt, SourceLoc loc);
+Node *node_default(Node *stmt, SourceLoc loc);
 Node *node_break(SourceLoc loc);
 Node *node_continue(SourceLoc loc);
 Node *node_block(Node *body, SourceLoc loc);

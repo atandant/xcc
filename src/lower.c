@@ -12,14 +12,20 @@
 #include <limits.h>
 #include <string.h>
 
+typedef struct ControlCtx ControlCtx;
+
+struct ControlCtx {
+    int continue_label;
+    int break_label;
+    ControlCtx *prev;
+};
+
 typedef struct {
     LirFn *lf;
     Function *fn;
     int ret_label;
     LirBlockId current;
-    int loop_continue[64];
-    int loop_break[64];
-    int loop_depth;
+    ControlCtx *control;
 } LowerCtx;
 
 static LirBlock *current_block(LowerCtx *c)
@@ -372,19 +378,18 @@ static int lower_object_addr(LowerCtx *c, Node *n)
     }
 }
 
-static void loop_push(LowerCtx *c, int continue_label, int break_label)
+static void control_push(LowerCtx *c, ControlCtx *control,
+                         int continue_label, int break_label)
 {
-    if (c->loop_depth >= 64)
-        return;
-    c->loop_continue[c->loop_depth] = continue_label;
-    c->loop_break[c->loop_depth] = break_label;
-    c->loop_depth++;
+    control->continue_label = continue_label;
+    control->break_label = break_label;
+    control->prev = c->control;
+    c->control = control;
 }
 
-static void loop_pop(LowerCtx *c)
+static void control_pop(LowerCtx *c)
 {
-    if (c->loop_depth > 0)
-        c->loop_depth--;
+    c->control = c->control->prev;
 }
 
 static void lower_stmt(LowerCtx *c, Node *n);
@@ -1638,14 +1643,15 @@ static void lower_stmt(LowerCtx *c, Node *n)
         int begin_id = lir_new_label(c->lf);
         int body_id = lir_new_label(c->lf);
         int end_id = lir_new_label(c->lf);
-        loop_push(c, begin_id, end_id);
+        ControlCtx loop;
+        control_push(c, &loop, begin_id, end_id);
         emit(c, (Instr){ .op = LIR_LABEL, .label = begin_id });
         lower_branch(c, n->cond, body_id, end_id);
         emit(c, (Instr){ .op = LIR_LABEL, .label = body_id });
         lower_stmt(c, n->then_body);
         emit(c, (Instr){ .op = LIR_JMP, .label = begin_id });
         emit(c, (Instr){ .op = LIR_LABEL, .label = end_id });
-        loop_pop(c);
+        control_pop(c);
         return;
     }
     case ND_FOR: {
@@ -1653,9 +1659,10 @@ static void lower_stmt(LowerCtx *c, Node *n)
         int body_id = lir_new_label(c->lf);
         int step_id = lir_new_label(c->lf);
         int end_id = lir_new_label(c->lf);
+        ControlCtx loop;
         if (n->init)
             lower_expr(c, n->init);
-        loop_push(c, step_id, end_id);
+        control_push(c, &loop, step_id, end_id);
         emit(c, (Instr){ .op = LIR_LABEL, .label = begin_id });
         if (n->cond)
             lower_branch(c, n->cond, body_id, end_id);
@@ -1668,19 +1675,74 @@ static void lower_stmt(LowerCtx *c, Node *n)
             lower_expr(c, n->step);
         emit(c, (Instr){ .op = LIR_JMP, .label = begin_id });
         emit(c, (Instr){ .op = LIR_LABEL, .label = end_id });
-        loop_pop(c);
+        control_pop(c);
         return;
     }
+    case ND_SWITCH: {
+        int value = lower_expr(c, n->cond);
+        int end_id = lir_new_label(c->lf);
+        ControlCtx control;
+        Node *case_node;
+
+        for (case_node = n->cases; case_node;
+             case_node = case_node->case_next)
+            case_node->label = lir_new_label(c->lf);
+        if (n->default_case)
+            n->default_case->label = lir_new_label(c->lf);
+
+        for (case_node = n->cases; case_node;
+             case_node = case_node->case_next) {
+            Operand case_value;
+            if (fits_imm32(case_node->case_val)) {
+                case_value = lir_imm(case_node->case_val);
+            } else {
+                int case_vreg = fresh(c);
+                emit(c, (Instr){ .op = LIR_MOVI, .dst = case_vreg,
+                                  .a = lir_imm(case_node->case_val) });
+                case_value = lir_vreg(case_vreg);
+            }
+            emit(c, (Instr){
+                .op = LIR_BR,
+                .a = lir_vreg(value),
+                .b = case_value,
+                .w = expr_width(n->cond),
+                .cc = CC_EQ,
+                .label = case_node->label,
+            });
+        }
+        emit(c, (Instr){
+            .op = LIR_JMP,
+            .label = n->default_case ? n->default_case->label : end_id,
+        });
+
+        control_push(c, &control, -1, end_id);
+        lower_stmt(c, n->then_body);
+        control_pop(c);
+        emit(c, (Instr){ .op = LIR_JMP, .label = end_id });
+        emit(c, (Instr){ .op = LIR_LABEL, .label = end_id });
+        return;
+    }
+    case ND_CASE:
+    case ND_DEFAULT:
+        emit(c, (Instr){ .op = LIR_LABEL, .label = n->label });
+        lower_stmt(c, n->then_body);
+        return;
     case ND_BREAK:
-        if (c->loop_depth > 0)
+        if (c->control)
             emit(c, (Instr){ .op = LIR_JMP,
-                              .label = c->loop_break[c->loop_depth - 1] });
+                              .label = c->control->break_label });
         return;
-    case ND_CONTINUE:
-        if (c->loop_depth > 0)
+    case ND_CONTINUE: {
+        ControlCtx *control;
+        for (control = c->control;
+             control && control->continue_label < 0;
+             control = control->prev)
+            ;
+        if (control)
             emit(c, (Instr){ .op = LIR_JMP,
-                              .label = c->loop_continue[c->loop_depth - 1] });
+                              .label = control->continue_label });
         return;
+    }
     case ND_BLOCK:
         for (Node *s = n->body; s; s = s->next)
             lower_stmt(c, s);

@@ -252,6 +252,17 @@ static int fold_stmt(Node *s)
         changed |= cosfold_expr(&s->step);
         changed |= fold_stmt(s->then_body);
         return changed;
+    case ND_SWITCH:
+        changed |= cosfold_expr(&s->cond);
+        changed |= fold_stmt(s->then_body);
+        return changed;
+    case ND_CASE:
+        changed |= cosfold_expr(&s->operand);
+        changed |= fold_stmt(s->then_body);
+        return changed;
+    case ND_DEFAULT:
+        changed |= fold_stmt(s->then_body);
+        return changed;
     case ND_BLOCK:
         return fold_stmt_list(s->body);
     default:

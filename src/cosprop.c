@@ -202,6 +202,17 @@ static void invalidate_assigned_in_stmt(Node *s)
         invalidate_assigned_in_expr(s->step);
         invalidate_assigned_in_stmt(s->then_body);
         return;
+    case ND_SWITCH:
+        invalidate_assigned_in_expr(s->cond);
+        invalidate_assigned_in_stmt(s->then_body);
+        return;
+    case ND_CASE:
+        invalidate_assigned_in_expr(s->operand);
+        invalidate_assigned_in_stmt(s->then_body);
+        return;
+    case ND_DEFAULT:
+        invalidate_assigned_in_stmt(s->then_body);
+        return;
     default:
         return;
     }
@@ -252,6 +263,17 @@ static int prop_stmt_loop(Node *s)
         changed |= prop_expr(&s->init, 1, 0);
         changed |= prop_expr(&s->cond, 1, 0);
         changed |= prop_expr(&s->step, 1, 0);
+        changed |= prop_stmt_loop(s->then_body);
+        return changed;
+    case ND_SWITCH:
+        changed |= prop_expr(&s->cond, 1, 0);
+        changed |= prop_stmt_loop(s->then_body);
+        return changed;
+    case ND_CASE:
+        changed |= prop_expr(&s->operand, 1, 0);
+        changed |= prop_stmt_loop(s->then_body);
+        return changed;
+    case ND_DEFAULT:
         changed |= prop_stmt_loop(s->then_body);
         return changed;
     case ND_BREAK:
@@ -418,6 +440,19 @@ static int prop_stmt(Node *s)
             bind_restore(&snap);
         }
         invalidate_assigned_in_stmt(s);
+        return changed;
+    case ND_SWITCH:
+        changed |= prop_expr_rvalue(&s->cond);
+        {
+            BindSnap snap;
+
+            bind_snapshot(&snap);
+            bind_enter_scope();
+            changed |= prop_stmt_loop(s->then_body);
+            bind_leave_scope();
+            bind_restore(&snap);
+        }
+        invalidate_assigned_in_stmt(s->then_body);
         return changed;
     case ND_BLOCK:
         changed |= prop_stmt_list(s->body);
