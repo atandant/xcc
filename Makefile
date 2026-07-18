@@ -13,7 +13,8 @@ SRCS = src/main.c src/arena.c src/ast.c src/type.c src/diag.c src/sema.c \
        src/sema_scope.c src/sema_functab.c src/sema_typedef.c src/sema_struct.c \
        src/sema_enum.c src/abi_sysv_amd64.c \
        src/intconst.c src/ast_const_fold.c src/ast_const_prop.c src/ast_opt.c \
-       src/lir_opt.c src/lir_strength_reduce.c src/lir_simplify_conv.c src/codegen.c \
+       src/lir_opt.c src/lir_algebraic_simplify.c src/lir_strength_reduce.c \
+       src/lir_simplify_conv.c src/codegen.c \
        src/lir.c src/lir_cfg.c src/lower.c src/liveness.c src/regalloc.c src/emit_x86.c
 OBJS = $(patsubst src/%.c,$(BUILD)/%.o,$(SRCS))
 

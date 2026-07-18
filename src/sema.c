@@ -61,6 +61,16 @@ static int is_arith_op(BinOp op)
            op == OP_DIV || op == OP_MOD;
 }
 
+static int is_bitwise_op(BinOp op)
+{
+    return op == OP_BITAND || op == OP_BITXOR || op == OP_BITOR;
+}
+
+static int is_shift_op(BinOp op)
+{
+    return op == OP_SHL || op == OP_SHR;
+}
+
 static int is_eq_op(BinOp op)
 {
     return op == OP_EQ || op == OP_NE;
@@ -835,6 +845,34 @@ static int check_arith_binop(Node *n)
     return 0;
 }
 
+static int check_bitwise_binop(Node *n)
+{
+    Type *common;
+
+    if (!type_is_integer(n->lhs->ty) || !type_is_integer(n->rhs->ty))
+        return 0;
+    common = type_arith_convert(n->lhs->ty, n->rhs->ty);
+    convert_integer_expr(&n->lhs, common);
+    convert_integer_expr(&n->rhs, common);
+    n->ty = common;
+    return 1;
+}
+
+static int check_shift_binop(Node *n)
+{
+    Type *left;
+    Type *right;
+
+    if (!type_is_integer(n->lhs->ty) || !type_is_integer(n->rhs->ty))
+        return 0;
+    left = type_int_promote(n->lhs->ty);
+    right = type_int_promote(n->rhs->ty);
+    convert_integer_expr(&n->lhs, left);
+    convert_integer_expr(&n->rhs, right);
+    n->ty = left;
+    return 1;
+}
+
 static void resolve_expr_inner(Node *n, ExprCtx ctx);
 
 /* Resolve names/offsets and assign a Type * (and lvalue flag) to every
@@ -1065,6 +1103,14 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
             if (!check_arith_binop(n))
                 diag_error_at(n->loc,
                               "invalid operands to arithmetic operator");
+        } else if (is_bitwise_op(n->op)) {
+            if (!check_bitwise_binop(n))
+                diag_error_at(n->loc,
+                              "invalid operands to bitwise operator");
+        } else if (is_shift_op(n->op)) {
+            if (!check_shift_binop(n))
+                diag_error_at(n->loc,
+                              "invalid operands to shift operator");
         } else if (is_eq_op(n->op)) {
             if (record_cmp_error(n->lhs, n->rhs))
                 diag_error_at(n->loc,

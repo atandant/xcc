@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include "lir_opt.h"
 
+#include "lir_algebraic_simplify.h"
 #include "lir_simplify_conv.h"
 #include "lir_strength_reduce.h"
 
@@ -11,6 +12,7 @@ void lir_optimize_function(LirFn *lf)
     for (int round = 0; round < MAX_ROUNDS; round++) {
         int changed = 0;
 
+        changed |= lir_algebraic_simplify_function(lf);
         changed |= lir_strength_reduce_function(lf);
         changed |= lir_simplify_conversions_function(lf);
         if (!changed)

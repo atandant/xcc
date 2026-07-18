@@ -47,10 +47,11 @@ Function *g_program = NULL;
 %token <num> NUM
 %token <str> IDENT TYPEDEF_NAME
 %token INT CHAR SHORT LONG VOID UNSIGNED SIGNED RETURN IF ELSE WHILE FOR SWITCH CASE DEFAULT BREAK CONTINUE SIZEOF TYPEDEF STRUCT UNION ENUM
-%token EQ NE LE GE ARROW LAND LOR
+%token EQ NE LE GE ARROW LAND LOR SHL SHR
 
 %type <node> expr expr_opt arg_expr conditional_expr logical_or_expr
-             logical_and_expr equality_expr relational_expr additive_expr
+             logical_and_expr bitwise_or_expr bitwise_xor_expr bitwise_and_expr
+             equality_expr relational_expr shift_expr additive_expr
              multiplicative_expr cast_expr unary_expr postfix_expr primary_expr
              stmt initializer init_list initializer_opt
 %type <list> stmt_list arg_clause arg_list
@@ -441,9 +442,27 @@ logical_or_expr:
   ;
 
 logical_and_expr:
-    equality_expr            { $$ = $1; }
-  | logical_and_expr LAND equality_expr
+    bitwise_or_expr           { $$ = $1; }
+  | logical_and_expr LAND bitwise_or_expr
                              { $$ = node_logand($1, $3, LOC(@2)); }
+  ;
+
+bitwise_or_expr:
+    bitwise_xor_expr         { $$ = $1; }
+  | bitwise_or_expr '|' bitwise_xor_expr
+                             { $$ = node_binop(OP_BITOR, $1, $3, LOC(@2)); }
+  ;
+
+bitwise_xor_expr:
+    bitwise_and_expr         { $$ = $1; }
+  | bitwise_xor_expr '^' bitwise_and_expr
+                             { $$ = node_binop(OP_BITXOR, $1, $3, LOC(@2)); }
+  ;
+
+bitwise_and_expr:
+    equality_expr            { $$ = $1; }
+  | bitwise_and_expr '&' equality_expr
+                             { $$ = node_binop(OP_BITAND, $1, $3, LOC(@2)); }
   ;
 
 equality_expr:
@@ -455,15 +474,23 @@ equality_expr:
   ;
 
 relational_expr:
-    additive_expr           { $$ = $1; }
-  | relational_expr '<' additive_expr
+    shift_expr              { $$ = $1; }
+  | relational_expr '<' shift_expr
                              { $$ = node_binop(OP_LT, $1, $3, LOC(@2)); }
-  | relational_expr LE additive_expr
+  | relational_expr LE shift_expr
                              { $$ = node_binop(OP_LE, $1, $3, LOC(@2)); }
-  | relational_expr '>' additive_expr
+  | relational_expr '>' shift_expr
                              { $$ = node_binop(OP_GT, $1, $3, LOC(@2)); }
-  | relational_expr GE additive_expr
+  | relational_expr GE shift_expr
                              { $$ = node_binop(OP_GE, $1, $3, LOC(@2)); }
+  ;
+
+shift_expr:
+    additive_expr           { $$ = $1; }
+  | shift_expr SHL additive_expr
+                             { $$ = node_binop(OP_SHL, $1, $3, LOC(@2)); }
+  | shift_expr SHR additive_expr
+                             { $$ = node_binop(OP_SHR, $1, $3, LOC(@2)); }
   ;
 
 additive_expr:

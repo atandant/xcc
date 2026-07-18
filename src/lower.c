@@ -920,6 +920,23 @@ static void lower_binop(LowerCtx *c, int dst, BinOp op, Node *lhs, Node *rhs,
             .op = LIR_MUL, .dst = dst, .a = lir_vreg(vl), .b = rb,
             .w = (LirWidth)w });
         return;
+    case OP_BITAND:
+    case OP_BITXOR:
+    case OP_BITOR:
+        emit(c, (Instr){
+            .op = op == OP_BITAND ? LIR_AND :
+                  op == OP_BITXOR ? LIR_XOR : LIR_OR,
+            .dst = dst, .a = lir_vreg(vl), .b = rb,
+            .w = (LirWidth)w });
+        return;
+    case OP_SHL:
+    case OP_SHR:
+        emit(c, (Instr){
+            .op = op == OP_SHL ? LIR_SHL :
+                  (sgn == LIR_SGN_U ? LIR_SHR : LIR_SAR),
+            .dst = dst, .a = lir_vreg(vl), .b = rb,
+            .w = (LirWidth)w, .sgn = sgn });
+        return;
     case OP_DIV:
     case OP_MOD:
         if (rhs->kind == ND_NUM && fits_imm32(rhs->val)) {

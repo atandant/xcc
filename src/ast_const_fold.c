@@ -4,6 +4,8 @@
 #include "intconst.h"
 #include "type.h"
 
+#include <string.h>
+
 static Node *fold_to_num(long v, Type *ty, SourceLoc loc)
 {
     Node *n = node_num(v, loc);
@@ -70,7 +72,8 @@ static Type *fold_binop_ty(Node *n, Type *lty, Type *rty)
     Type *la = type_int_promote(lty);
     Type *rb = type_int_promote(rty);
 
-    (void)n;
+    if (n->op == OP_SHL || n->op == OP_SHR)
+        return la;
     return type_arith_convert(la, rb);
 }
 
@@ -87,6 +90,14 @@ static int foldable_binop(Node *n)
         !fold_literal_operand(n->rhs, &rv, &rty))
         return 0;
     return type_is_integer(n->ty);
+}
+
+static int same_scalar_variable(Node *lhs, Node *rhs)
+{
+    return lhs && rhs && lhs->kind == ND_VAR && rhs->kind == ND_VAR &&
+           type_is_scalar(lhs->ty) && type_is_scalar(rhs->ty) &&
+           lhs->offset == rhs->offset && lhs->name && rhs->name &&
+           strcmp(lhs->name, rhs->name) == 0;
 }
 
 int ast_const_fold_expr(Node **np)
@@ -106,6 +117,13 @@ int ast_const_fold_expr(Node **np)
         changed |= ast_const_fold_expr(&n->rhs);
         if (n->op == OP_COMMA && n->lhs && n->lhs->kind == ND_NUM) {
             replace_expr_preserve_next(np, n, n->rhs);
+            return 1;
+        }
+        /* x - x is zero for the same non-volatile scalar object.  xcc does
+           not yet support volatile-qualified types; add that guard here when
+           qualifiers are introduced. */
+        if (n->op == OP_SUB && same_scalar_variable(n->lhs, n->rhs)) {
+            replace_expr_preserve_next(np, n, fold_to_num(0, n->ty, n->loc));
             return 1;
         }
         if (foldable_binop(n) &&

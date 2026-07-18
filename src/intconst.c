@@ -70,6 +70,15 @@ int int_const_binop(BinOp op, long a, long b, long *out)
             return 0;
         *out = (op == OP_DIV) ? a / b : a % b;
         return 1;
+    case OP_BITAND:
+        *out = a & b;
+        return 1;
+    case OP_BITXOR:
+        *out = a ^ b;
+        return 1;
+    case OP_BITOR:
+        *out = a | b;
+        return 1;
     case OP_EQ:
         *out = a == b;
         return 1;
@@ -88,6 +97,10 @@ int int_const_binop(BinOp op, long a, long b, long *out)
     case OP_GE:
         *out = a >= b;
         return 1;
+    case OP_SHL:
+    case OP_SHR:
+    case OP_COMMA:
+        return 0;
     }
     return 0;
 }
@@ -114,6 +127,15 @@ static int uint_const_binop(BinOp op, unsigned long a, unsigned long b,
             return 0;
         *out = (op == OP_DIV) ? a / b : a % b;
         return 1;
+    case OP_BITAND:
+        *out = a & b;
+        return 1;
+    case OP_BITXOR:
+        *out = a ^ b;
+        return 1;
+    case OP_BITOR:
+        *out = a | b;
+        return 1;
     case OP_EQ:
         *out = a == b;
         return 1;
@@ -132,6 +154,10 @@ static int uint_const_binop(BinOp op, unsigned long a, unsigned long b,
     case OP_GE:
         *out = a >= b;
         return 1;
+    case OP_SHL:
+    case OP_SHR:
+    case OP_COMMA:
+        return 0;
     }
     return 0;
 }
@@ -161,6 +187,36 @@ int int_const_binop_ty(BinOp op, long a, long b, Type *ty, long *out)
 
     if (!out || !ty || !type_is_integer(ty))
         return 0;
+
+    if (op == OP_SHL || op == OP_SHR) {
+        int bits = type_int_width(ty) * 8;
+
+        if (b < 0 || b >= bits)
+            return 0;
+        if (type_is_unsigned(ty)) {
+            ua = truncate_unsigned((unsigned long)a, ty);
+            ur = op == OP_SHL ? ua << b : ua >> b;
+            *out = (long)truncate_unsigned(ur, ty);
+            return 1;
+        }
+        a = type_convert_const(a, ty);
+        if (op == OP_SHR) {
+            *out = a < 0 ? ~(~a >> b) : a >> b;
+            return 1;
+        }
+        if (a < 0)
+            return 0;
+        {
+            intconst_wide wide = (intconst_wide)a << b;
+            intconst_wide max = bits == (int)(sizeof(long) * 8)
+                ? LONG_MAX : ((intconst_wide)1 << (bits - 1)) - 1;
+
+            if (wide > max)
+                return 0;
+            *out = (long)wide;
+            return 1;
+        }
+    }
 
     if (!type_is_unsigned(ty))
         return int_const_binop(op, a, b, out);
@@ -282,9 +338,15 @@ int int_const_eval(Node *expr, IntConstLookupFn lookup,
         if (!int_const_eval(expr->lhs, lookup, eval_sizeof, ctx, &l, &lty) ||
             !int_const_eval(expr->rhs, lookup, eval_sizeof, ctx, &r, &rty))
             return 0;
-        ty = type_arith_convert(lty, rty);
-        l = type_convert_const(l, ty);
-        r = type_convert_const(r, ty);
+        if (expr->op == OP_SHL || expr->op == OP_SHR) {
+            ty = type_int_promote(lty);
+            l = type_convert_const(l, ty);
+            r = type_convert_const(r, type_int_promote(rty));
+        } else {
+            ty = type_arith_convert(lty, rty);
+            l = type_convert_const(l, ty);
+            r = type_convert_const(r, ty);
+        }
         if (!int_const_binop_ty(expr->op, l, r, ty, out_value))
             return 0;
         if (out_ty)

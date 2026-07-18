@@ -22,6 +22,7 @@ typedef enum {
     LIR_UDIV_POW2, /* unsigned / 2^aux */
     LIR_UMOD_POW2, /* unsigned % 2^aux */
     LIR_AND,
+    LIR_XOR,
     LIR_OR,
     LIR_SHL,
     LIR_SHR,

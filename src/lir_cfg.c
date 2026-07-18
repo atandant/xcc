@@ -84,6 +84,7 @@ static int op_defines_dst(const Instr *ins)
     case LIR_UDIV_POW2:
     case LIR_UMOD_POW2:
     case LIR_AND:
+    case LIR_XOR:
     case LIR_OR:
     case LIR_SHL:
     case LIR_SHR:

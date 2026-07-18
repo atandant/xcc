@@ -147,6 +147,7 @@ static void instr_use_def(Instr *ins, int i, const TargetDesc *td, Liveness *lv,
     case LIR_SUB:
     case LIR_MUL:
     case LIR_AND:
+    case LIR_XOR:
     case LIR_OR:
     case LIR_SHL:
     case LIR_SHR:
@@ -155,6 +156,9 @@ static void instr_use_def(Instr *ins, int i, const TargetDesc *td, Liveness *lv,
         operand_vreg_uses(ins->a, uses, nu);
         operand_vreg_uses(ins->b, uses, nu);
         add_def(defs, nd, ins->dst);
+        if ((ins->op == LIR_SHL || ins->op == LIR_SHR || ins->op == LIR_SAR) &&
+            ins->b.kind != OPND_IMM)
+            block_phys(lv, td->shift_count_reg, i);
         return;
 
     case LIR_DIV:

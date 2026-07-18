@@ -59,7 +59,9 @@ typedef enum {
 
 typedef enum {
     OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_MOD,
+    OP_SHL, OP_SHR,
     OP_EQ, OP_NE, OP_LT, OP_LE, OP_GT, OP_GE,
+    OP_BITAND, OP_BITXOR, OP_BITOR,
     OP_COMMA
 } BinOp;
 

@@ -20,6 +20,7 @@ struct TargetDesc {
     int ret_reg;
     int div_num_reg;
     int div_rem_reg;
+    int shift_count_reg;
     unsigned memcpy_clobber_mask;
     int scratch0;
     int scratch1;

@@ -99,6 +99,7 @@ const TargetDesc X86_SYSV = {
     .ret_reg = PHYS_RAX,
     .div_num_reg = PHYS_RAX,
     .div_rem_reg = PHYS_RDX,
+    .shift_count_reg = PHYS_RCX,
     .memcpy_clobber_mask = (1u << PHYS_RAX) | (1u << PHYS_RCX) |
                            (1u << PHYS_RSI) | (1u << PHYS_RDI),
     .scratch0 = PHYS_R10,
@@ -686,6 +687,28 @@ static void emit_binop_into(EmitCtx *c, Instr *ins, int dst_phys, LirWidth w,
     invalidate_rax(c);
 }
 
+static void emit_shift(EmitCtx *c, Instr *ins)
+{
+    const char *op = ins->op == LIR_SHL ? "sal" :
+                     ins->op == LIR_SHR ? "shr" : "sar";
+    int result = c->td->scratch0;
+
+    load_operand(c, ins->a, reg64_name(result), ins->w);
+    if (ins->b.kind == OPND_IMM) {
+        fprintf(c->out, "  %s $%ld, %s\n", op, ins->b.u.imm,
+                ins->w == LIR_W4 ? reg32_name(result) : reg64_name(result));
+    } else {
+        load_operand(c, ins->b, reg64_name(c->td->shift_count_reg), LIR_W8);
+        fprintf(c->out, "  %s %%cl, %s\n", op,
+                ins->w == LIR_W4 ? reg32_name(result) : reg64_name(result));
+    }
+    if (ins->w == LIR_W4)
+        fprintf(c->out, "  movslq %s, %s\n",
+                reg32_name(result), reg64_name(result));
+    store_vreg_slot(c, ins->dst, reg64_name(result));
+    invalidate_rax(c);
+}
+
 static void emit_reg_to_stack(EmitCtx *c, int phys, int offset, int bytes)
 {
     switch (bytes) {
@@ -854,10 +877,9 @@ static void emit_instr(EmitCtx *c, Instr *ins)
     case LIR_SUB:
     case LIR_MUL:
     case LIR_AND:
+    case LIR_XOR:
     case LIR_OR:
-    case LIR_SHL:
-    case LIR_SHR:
-    case LIR_SAR: {
+    {
         LirWidth w = ins->w;
         int off_b = spilled_vreg_off(c, ins->b);
         int off_a = spilled_vreg_off(c, ins->a);
@@ -865,9 +887,9 @@ static void emit_instr(EmitCtx *c, Instr *ins)
                          ins->op == LIR_SUB ? "sub" :
                          ins->op == LIR_MUL ? "imul" :
                          ins->op == LIR_AND ? "and" :
+                         ins->op == LIR_XOR ? "xor" :
                          ins->op == LIR_OR ? "or" :
-                         ins->op == LIR_SHL ? "sal" :
-                         ins->op == LIR_SHR ? "shr" : "sar";
+                         "?";
         int dp;
 
         if (ins->dst != LIR_NO_VREG && dst_phys(c, ins->dst, &dp)) {
@@ -941,6 +963,12 @@ static void emit_instr(EmitCtx *c, Instr *ins)
         store_vreg_slot(c, ins->dst, "%rax");
         return;
     }
+
+    case LIR_SHL:
+    case LIR_SHR:
+    case LIR_SAR:
+        emit_shift(c, ins);
+        return;
 
     case LIR_SDIV_POW2:
         emit_sdiv_pow2(c, ins);

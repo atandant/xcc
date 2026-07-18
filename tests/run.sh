@@ -134,6 +134,39 @@ while IFS='|' read -r kind file expected expected_err xcc_args; do
     esac
 done < "$MANIFEST"
 
+# Optimizer checks must inspect LIR: runtime equivalence alone does not prove
+# that the intended rewrites happened.
+cat > "$TMP/opt-lir.c" <<'EOF'
+long mul_left(long x) { return 8 * x; }
+long ptr_diff(long *a, long *b) { return a - b; }
+int sub_self(int x) { return x - x; }
+int add_zero(int x) { return x + 0; }
+int and_zero(int x) { return x & 0; }
+int or_zero(int x) { return x | 0; }
+int xor_zero(int x) { return x ^ 0; }
+int shift_zero(int x) { return x << 0; }
+EOF
+if $XCC --xcc-dump-lir "$TMP/opt-lir.c" > "$TMP/opt-lir" 2> "$TMP/err" &&
+   sed -n '/function mul_left /,/^}/p' "$TMP/opt-lir" | grep -Eq '^[[:space:]]+[0-9]+[[:space:]]+shl[[:space:]]' &&
+   ! sed -n '/function mul_left /,/^}/p' "$TMP/opt-lir" | grep -Eq '^[[:space:]]+[0-9]+[[:space:]]+mul[[:space:]]' &&
+   sed -n '/function ptr_diff /,/^}/p' "$TMP/opt-lir" | grep -Eq '^[[:space:]]+[0-9]+[[:space:]]+sdiv_pow2[[:space:]]' &&
+   ! sed -n '/function ptr_diff /,/^}/p' "$TMP/opt-lir" | grep -Eq '^[[:space:]]+[0-9]+[[:space:]]+div[[:space:]]' &&
+   sed -n '/function sub_self /,/^}/p' "$TMP/opt-lir" | grep -Eq '^[[:space:]]+[0-9]+[[:space:]]+movi.*= 0' &&
+   ! sed -n '/function sub_self /,/^}/p' "$TMP/opt-lir" | grep -Eq '^[[:space:]]+[0-9]+[[:space:]]+sub[[:space:]]' &&
+   ! sed -n '/function add_zero /,/^}/p' "$TMP/opt-lir" | grep -Eq '^[[:space:]]+[0-9]+[[:space:]]+add[[:space:]]' &&
+   ! sed -n '/function and_zero /,/^}/p' "$TMP/opt-lir" | grep -Eq '^[[:space:]]+[0-9]+[[:space:]]+and[[:space:]]' &&
+   ! sed -n '/function or_zero /,/^}/p' "$TMP/opt-lir" | grep -Eq '^[[:space:]]+[0-9]+[[:space:]]+or[[:space:]]' &&
+   ! sed -n '/function xor_zero /,/^}/p' "$TMP/opt-lir" | grep -Eq '^[[:space:]]+[0-9]+[[:space:]]+xor[[:space:]]' &&
+   ! sed -n '/function shift_zero /,/^}/p' "$TMP/opt-lir" | grep -Eq '^[[:space:]]+[0-9]+[[:space:]]+shl[[:space:]]'; then
+    echo "ok   lir-algebraic-simplification"
+    pass=$((pass + 1))
+else
+    echo "FAIL lir-algebraic-simplification: expected optimizer rewrites"
+    sed 's/^/      /' "$TMP/err"
+    sed 's/^/      /' "$TMP/opt-lir"
+    fail=$((fail + 1))
+fi
+
 # CLI-only checks (no dedicated source file).
 if ! $XCC -Wnot-a-real-warning "$DIR/warn_implicit_function_decl.c" -o "$TMP/out.s" 2> "$TMP/err"; then
     if grep -q "unknown warning option '-Wnot-a-real-warning'" "$TMP/err"; then

@@ -251,6 +251,7 @@ static const char *op_name(LirOp op)
     case LIR_UDIV_POW2: return "udiv_pow2";
     case LIR_UMOD_POW2: return "umod_pow2";
     case LIR_AND:   return "and";
+    case LIR_XOR:   return "xor";
     case LIR_OR:    return "or";
     case LIR_SHL:   return "shl";
     case LIR_SHR:   return "shr";
@@ -365,6 +366,7 @@ static void dump_instr(FILE *out, Instr *ins, int index)
         case LIR_UDIV_POW2:
         case LIR_UMOD_POW2:
         case LIR_AND:
+        case LIR_XOR:
         case LIR_OR:
         case LIR_SHL:
         case LIR_SHR:
