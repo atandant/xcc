@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: MIT */
-#include "cosfold.h"
+#include "ast_const_fold.h"
 
 #include "intconst.h"
 #include "type.h"
@@ -89,7 +89,7 @@ static int foldable_binop(Node *n)
     return type_is_integer(n->ty);
 }
 
-int cosfold_expr(Node **np)
+int ast_const_fold_expr(Node **np)
 {
     Node *n = *np;
     int changed = 0;
@@ -102,8 +102,8 @@ int cosfold_expr(Node **np)
         long lv, rv;
         Type *lty, *rty;
 
-        changed |= cosfold_expr(&n->lhs);
-        changed |= cosfold_expr(&n->rhs);
+        changed |= ast_const_fold_expr(&n->lhs);
+        changed |= ast_const_fold_expr(&n->rhs);
         if (n->op == OP_COMMA && n->lhs && n->lhs->kind == ND_NUM) {
             replace_expr_preserve_next(np, n, n->rhs);
             return 1;
@@ -125,7 +125,7 @@ int cosfold_expr(Node **np)
         return changed;
     }
     case ND_NEG:
-        changed |= cosfold_expr(&n->operand);
+        changed |= ast_const_fold_expr(&n->operand);
         if (n->operand && n->operand->kind == ND_NUM &&
             type_is_integer(n->ty)) {
             long v;
@@ -136,7 +136,7 @@ int cosfold_expr(Node **np)
         }
         return changed;
     case ND_NOT:
-        changed |= cosfold_expr(&n->operand);
+        changed |= ast_const_fold_expr(&n->operand);
         if (n->operand && n->operand->kind == ND_NUM) {
             replace_expr_preserve_next(np, n,
                 fold_to_num(!n->operand->val, type_int(), n->loc));
@@ -145,8 +145,8 @@ int cosfold_expr(Node **np)
         return changed;
     case ND_LOGAND:
     case ND_LOGOR:
-        changed |= cosfold_expr(&n->lhs);
-        changed |= cosfold_expr(&n->rhs);
+        changed |= ast_const_fold_expr(&n->lhs);
+        changed |= ast_const_fold_expr(&n->rhs);
         if (n->lhs && n->rhs && n->lhs->kind == ND_NUM &&
             n->rhs->kind == ND_NUM) {
             long value = n->kind == ND_LOGAND
@@ -158,9 +158,9 @@ int cosfold_expr(Node **np)
         }
         return changed;
     case ND_COND:
-        changed |= cosfold_expr(&n->cond);
-        changed |= cosfold_expr(&n->then_expr);
-        changed |= cosfold_expr(&n->else_expr);
+        changed |= ast_const_fold_expr(&n->cond);
+        changed |= ast_const_fold_expr(&n->then_expr);
+        changed |= ast_const_fold_expr(&n->else_expr);
         if (n->cond && n->cond->kind == ND_NUM) {
             Node *selected = n->cond->val ? n->then_expr : n->else_expr;
             replace_expr_preserve_next(np, n, selected);
@@ -168,13 +168,13 @@ int cosfold_expr(Node **np)
         }
         return changed;
     case ND_ADDR:
-        changed |= cosfold_expr(&n->operand);
+        changed |= ast_const_fold_expr(&n->operand);
         return changed;
     case ND_DEREF:
-        changed |= cosfold_expr(&n->operand);
+        changed |= ast_const_fold_expr(&n->operand);
         return changed;
     case ND_CAST:
-        changed |= cosfold_expr(&n->operand);
+        changed |= ast_const_fold_expr(&n->operand);
         /* Fold a cast of a constant to a constant of the target type.
          * Plain (char) reduces modulo 256 (unsigned-byte model); (void) has
          * no value, so it is left for codegen to discard. */
@@ -187,17 +187,17 @@ int cosfold_expr(Node **np)
         }
         return changed;
     case ND_ASSIGN:
-        changed |= cosfold_expr(&n->lhs);
-        changed |= cosfold_expr(&n->rhs);
+        changed |= ast_const_fold_expr(&n->lhs);
+        changed |= ast_const_fold_expr(&n->rhs);
         return changed;
     case ND_CALL:
-        changed |= cosfold_expr(&n->callee);
+        changed |= ast_const_fold_expr(&n->callee);
         for (Node **ap = &n->args; *ap; ap = &(*ap)->next)
-            changed |= cosfold_expr(ap);
+            changed |= ast_const_fold_expr(ap);
         return changed;
     case ND_INIT_LIST:
         for (Node **p = &n->body; *p; p = &(*p)->next)
-            changed |= cosfold_expr(p);
+            changed |= ast_const_fold_expr(p);
         return changed;
     case ND_NUM:
     case ND_VAR:
@@ -229,35 +229,35 @@ static int fold_stmt(Node *s)
     case ND_DECL:
         if (s->init && s->init->kind == ND_INIT_LIST) {
             for (Node **p = &s->init->body; *p; p = &(*p)->next)
-                changed |= cosfold_expr(p);
+                changed |= ast_const_fold_expr(p);
         } else
-            changed |= cosfold_expr(&s->init);
+            changed |= ast_const_fold_expr(&s->init);
         return changed;
     case ND_RETURN:
     case ND_EXPR_STMT:
-        changed |= cosfold_expr(&s->operand);
+        changed |= ast_const_fold_expr(&s->operand);
         return changed;
     case ND_IF:
-        changed |= cosfold_expr(&s->cond);
+        changed |= ast_const_fold_expr(&s->cond);
         changed |= fold_stmt(s->then_body);
         changed |= fold_stmt(s->else_body);
         return changed;
     case ND_WHILE:
-        changed |= cosfold_expr(&s->cond);
+        changed |= ast_const_fold_expr(&s->cond);
         changed |= fold_stmt(s->then_body);
         return changed;
     case ND_FOR:
-        changed |= cosfold_expr(&s->init);
-        changed |= cosfold_expr(&s->cond);
-        changed |= cosfold_expr(&s->step);
+        changed |= ast_const_fold_expr(&s->init);
+        changed |= ast_const_fold_expr(&s->cond);
+        changed |= ast_const_fold_expr(&s->step);
         changed |= fold_stmt(s->then_body);
         return changed;
     case ND_SWITCH:
-        changed |= cosfold_expr(&s->cond);
+        changed |= ast_const_fold_expr(&s->cond);
         changed |= fold_stmt(s->then_body);
         return changed;
     case ND_CASE:
-        changed |= cosfold_expr(&s->operand);
+        changed |= ast_const_fold_expr(&s->operand);
         changed |= fold_stmt(s->then_body);
         return changed;
     case ND_DEFAULT:
@@ -270,7 +270,7 @@ static int fold_stmt(Node *s)
     }
 }
 
-int cosfold_function(Function *fn)
+int ast_const_fold_function(Function *fn)
 {
     if (!fn || !fn->body)
         return 0;

@@ -5,7 +5,7 @@
 #include "ast.h"
 #include "type.h"
 
-/* Overflow-safe signed-long constant arithmetic for ICE and cosfold.
+/* Overflow-safe signed-long constant arithmetic for ICE and AST folding.
  * Returns 1 on success and stores the result in *out; returns 0 when the
  * operation is undefined or the result does not fit in signed long. */
 

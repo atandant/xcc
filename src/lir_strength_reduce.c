@@ -1,7 +1,19 @@
 /* SPDX-License-Identifier: MIT */
-#include "loptstr.h"
+#include "lir_strength_reduce.h"
 
-#include "lopt.h"
+static int imm_pow2_log2(long n)
+{
+    int k;
+
+    if (n <= 0)
+        return -1;
+    k = 0;
+    while ((n & 1) == 0) {
+        n >>= 1;
+        k++;
+    }
+    return n == 1 ? k : -1;
+}
 
 static int imm_pow2_log2_operand(Operand op, int *log2_out)
 {
@@ -12,11 +24,11 @@ static int imm_pow2_log2_operand(Operand op, int *log2_out)
   imm = op.u.imm;
   if (imm <= 0)
     return 0;
-  *log2_out = lopt_imm_pow2_log2(imm);
+  *log2_out = imm_pow2_log2(imm);
   return *log2_out >= 0;
 }
 
-int loptstr_function(LirFn *lf)
+int lir_strength_reduce_function(LirFn *lf)
 {
     int changed = 0;
 

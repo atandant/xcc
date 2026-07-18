@@ -1,6 +1,5 @@
 /* SPDX-License-Identifier: MIT */
 #include "lower.h"
-#include "lopt.h"
 #include "target.h"
 #include "abi_sysv_amd64.h"
 #include "diag.h"
@@ -268,6 +267,20 @@ static int ptr_elem_size(Type *ptr_ty)
 static int fits_imm32(long v)
 {
     return v >= -2147483647L - 1 && v <= 2147483647L;
+}
+
+static int imm_pow2_log2(long n)
+{
+    int k;
+
+    if (n <= 0)
+        return -1;
+    k = 0;
+    while ((n & 1) == 0) {
+        n >>= 1;
+        k++;
+    }
+    return n == 1 ? k : -1;
 }
 
 static int is_ptr_int_arith(BinOp op, Node *lhs, Node *rhs)
@@ -910,7 +923,7 @@ static void lower_binop(LowerCtx *c, int dst, BinOp op, Node *lhs, Node *rhs,
     case OP_DIV:
     case OP_MOD:
         if (rhs->kind == ND_NUM && fits_imm32(rhs->val)) {
-            int k = lopt_imm_pow2_log2(rhs->val);
+            int k = imm_pow2_log2(rhs->val);
 
             if (k >= 0) {
                 LirOp pop;

@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: MIT */
-#include "cosprop.h"
+#include "ast_const_prop.h"
 
-#include "cosfold.h"
+#include "ast_const_fold.h"
 #include "type.h"
 
 #include <string.h>
@@ -293,7 +293,7 @@ static int prop_expr(Node **np, int rvalue, int allow_subst)
     if (!n)
         return 0;
 
-    changed |= cosfold_expr(np);
+    changed |= ast_const_fold_expr(np);
     n = *np;
     if (!n)
         return changed;
@@ -462,7 +462,7 @@ static int prop_stmt(Node *s)
     }
 }
 
-int cosprop_function(Function *fn)
+int ast_const_prop_function(Function *fn)
 {
     if (!fn || !fn->body)
         return 0;

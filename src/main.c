@@ -12,12 +12,13 @@
 #include "sema_typedef.h"
 #include "sema_struct.h"
 #include "sema_enum.h"
-#include "copts.h"
+#include "ast_opt.h"
 #include "codegen.h"
 #include "arena.h"
 #include "lower.h"
 #include "lir.h"
 #include "lir_cfg.h"
+#include "lir_opt.h"
 #include "liveness.h"
 #include "target.h"
 
@@ -37,7 +38,8 @@ static void usage(FILE *f)
         "  --help      show this help\n"
         "  --help-warnings  list warnings and -W flags\n"
         "  --version   show version\n"
-        "  --xcc-dump-lir  dump lowered LIR to stdout (debug)\n"
+        "  --xcc-dump-raw-lir  dump unoptimized SSA LIR (debug)\n"
+        "  --xcc-dump-lir  dump optimized, phi-lowered LIR (debug)\n"
         "  --xcc-dump-lir-alloc  dump LIR live intervals (debug)\n"
         "  --xcc-verify-lir  verify internal LIR (default)\n"
         "  --xcc-no-verify-lir  disable internal LIR verification\n"
@@ -128,8 +130,7 @@ int main(int argc, char **argv)
 {
     const char *inpath = NULL;
     const char *outpath = NULL;
-    int emit_lir = 0;
-    int emit_lir_alloc = 0;
+    int lir_dump_mode = 0;
     int verify_lir = 1;
     char **source_lines = NULL;
     int nsource_lines = 0;
@@ -145,10 +146,12 @@ int main(int argc, char **argv)
         } else if (strcmp(argv[i], "--version") == 0) {
             printf("xcc 0.0.1\n");
             return 0;
+        } else if (strcmp(argv[i], "--xcc-dump-raw-lir") == 0) {
+            lir_dump_mode = 1;
         } else if (strcmp(argv[i], "--xcc-dump-lir") == 0) {
-            emit_lir = 1;
+            lir_dump_mode = 2;
         } else if (strcmp(argv[i], "--xcc-dump-lir-alloc") == 0) {
-            emit_lir_alloc = 1;
+            lir_dump_mode = 3;
         } else if (strcmp(argv[i], "--xcc-verify-lir") == 0) {
             verify_lir = 1;
         } else if (strcmp(argv[i], "--xcc-no-verify-lir") == 0) {
@@ -215,9 +218,9 @@ int main(int argc, char **argv)
     if (diag_error_count > 0)
         return 1;
 
-    copts_optimize(g_program);
+    ast_optimize_program(g_program);
 
-    if (emit_lir || emit_lir_alloc) {
+    if (lir_dump_mode != 0) {
         for (Function *fn = g_program; fn; fn = fn->next) {
             if (!fn->is_definition)
                 continue;
@@ -225,11 +228,16 @@ int main(int argc, char **argv)
             lir_cfg_rebuild_preds(lf);
             if (verify_lir)
                 lir_cfg_verify(lf);
-            if (emit_lir_alloc) {
-                Liveness lv;
+            if (lir_dump_mode != 1) {
                 lir_cfg_lower(lf);
                 if (verify_lir)
                     lir_cfg_verify(lf);
+                lir_optimize_function(lf);
+                if (verify_lir)
+                    lir_cfg_verify(lf);
+            }
+            if (lir_dump_mode == 3) {
+                Liveness lv;
                 liveness_compute(lf, &X86_SYSV, &lv);
                 liveness_dump(lf, &lv, &X86_SYSV, stdout);
             } else {

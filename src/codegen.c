@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include "codegen.h"
 #include "lower.h"
-#include "lopt.h"
+#include "lir_opt.h"
 #include "regalloc.h"
 #include "emit_x86.h"
 #include "liveness.h"
@@ -24,7 +24,9 @@ void codegen(Function *prog, FILE *out, int verify_lir)
         if (verify_lir)
             lir_cfg_verify(lf);
 
-        lopt_function(lf, fn);
+        lir_optimize_function(lf);
+        if (verify_lir)
+            lir_cfg_verify(lf);
 
         Liveness lv;
         liveness_compute(lf, &X86_SYSV, &lv);
