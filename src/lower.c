@@ -1811,6 +1811,8 @@ static int stmt_returns(Node *n)
 LirFn *lower_function(Function *fn)
 {
     LirFn *lf = lir_fn_new(fn->name);
+    lf->frame_locals = fn->frame_locals;
+    lf->nframe_locals = fn->nframe_locals;
     LowerCtx ctx = {
         .lf = lf,
         .fn = fn,

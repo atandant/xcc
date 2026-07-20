@@ -140,6 +140,8 @@ struct ParamClause {
 
 typedef struct {
     int offset;
+    int size;
+    int promotable_scalar;
     int address_taken;
 } FrameLocal;
 

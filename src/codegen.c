@@ -20,6 +20,9 @@ void codegen(Function *prog, FILE *out, int verify_lir)
         lir_cfg_rebuild_preds(lf);
         if (verify_lir)
             lir_cfg_verify(lf);
+        lir_optimize_ssa_function(lf);
+        if (verify_lir)
+            lir_cfg_verify(lf);
         lir_cfg_lower(lf);
         if (verify_lir)
             lir_cfg_verify(lf);

@@ -229,6 +229,9 @@ int main(int argc, char **argv)
             if (verify_lir)
                 lir_cfg_verify(lf);
             if (lir_dump_mode != 1) {
+                lir_optimize_ssa_function(lf);
+                if (verify_lir)
+                    lir_cfg_verify(lf);
                 lir_cfg_lower(lf);
                 if (verify_lir)
                     lir_cfg_verify(lf);

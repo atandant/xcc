@@ -192,6 +192,8 @@ struct LirFn {
     int nvreg;
     int label_count;
     int epilogue_label;
+    FrameLocal *frame_locals;
+    int nframe_locals;
     LocalHome *homes;
     int nhomes;
     int homes_cap;

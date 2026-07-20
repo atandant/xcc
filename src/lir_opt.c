@@ -2,10 +2,18 @@
 #include "lir_opt.h"
 
 #include "lir_algebraic_simplify.h"
+#include "lir_licm.h"
+#include "lir_mem2reg.h"
 #include "lir_simplify_conv.h"
 #include "lir_strength_reduce.h"
 
 #define MAX_ROUNDS 4
+
+void lir_optimize_ssa_function(LirFn *lf)
+{
+    lir_promote_memory_to_registers(lf);
+    lir_licm_function(lf);
+}
 
 void lir_optimize_function(LirFn *lf)
 {

@@ -2,6 +2,7 @@
 #include "sema_scope.h"
 #include "diag.h"
 #include "arena.h"
+#include "type.h"
 
 #include <string.h>
 
@@ -21,14 +22,17 @@ typedef struct {
 } Scope;
 
 static Local locals[MAX_LOCALS];
+static FrameLocal frame_locals[MAX_LOCALS];
 static Scope scopes[MAX_SCOPES];
 static int nlocals;
+static int nframe_locals;
 static int nscopes;
 static int cur_offset; /* grows downward from the frame pointer, in bytes */
 
 void scope_reset(void)
 {
     nlocals = 0;
+    nframe_locals = 0;
     nscopes = 0;
     cur_offset = 0;
 }
@@ -97,7 +101,24 @@ int scope_alloc_local(Type *ty)
     cur_offset -= size;
     if (align > 1)
         cur_offset = align_down(cur_offset, align);
+    if (nframe_locals < MAX_LOCALS) {
+        frame_locals[nframe_locals++] = (FrameLocal){
+            .offset = cur_offset,
+            .size = size,
+            .promotable_scalar = type_is_scalar(ty) &&
+                                 (size == 4 || size == 8),
+        };
+    }
     return cur_offset;
+}
+
+static FrameLocal *find_frame_local(int offset)
+{
+    for (int i = 0; i < nframe_locals; i++) {
+        if (frame_locals[i].offset == offset)
+            return &frame_locals[i];
+    }
+    return NULL;
 }
 
 int scope_lookup_loc_here(const char *name, SourceLoc *out_loc)
@@ -125,13 +146,30 @@ void scope_bind(char *name, Type *ty, int offset, SourceLoc loc)
     locals[nlocals].loc = loc;
     locals[nlocals].address_taken = 0;
     nlocals++;
+
+    /* Stack-passed parameters have caller-frame offsets and therefore do not
+       pass through scope_alloc_local().  Record them here as frame objects. */
+    if (!find_frame_local(offset) && nframe_locals < MAX_LOCALS) {
+        int size = type_size(ty);
+        frame_locals[nframe_locals++] = (FrameLocal){
+            .offset = offset,
+            .size = size,
+            .promotable_scalar = type_is_scalar(ty) &&
+                                 (size == 4 || size == 8),
+        };
+    }
 }
 
 void scope_mark_address_taken(const char *name)
 {
     for (int i = nlocals - 1; i >= 0; i--) {
         if (strcmp(locals[i].name, name) == 0) {
+            FrameLocal *frame_local;
+
             locals[i].address_taken = 1;
+            frame_local = find_frame_local(locals[i].offset);
+            if (frame_local)
+                frame_local->address_taken = 1;
             return;
         }
     }
@@ -139,22 +177,16 @@ void scope_mark_address_taken(const char *name)
 
 int scope_offset_address_taken(int offset)
 {
-    for (int i = 0; i < nlocals; i++) {
-        if (locals[i].offset == offset)
-            return locals[i].address_taken;
-    }
-    return 0;
+    FrameLocal *frame_local = find_frame_local(offset);
+    return frame_local ? frame_local->address_taken : 0;
 }
 
 void scope_export_frame_locals(FrameLocal **out, int *out_n)
 {
-    FrameLocal *fl = arena_alloc((size_t)nlocals * sizeof(*fl));
-    for (int i = 0; i < nlocals; i++) {
-        fl[i].offset = locals[i].offset;
-        fl[i].address_taken = locals[i].address_taken;
-    }
+    FrameLocal *fl = arena_alloc((size_t)nframe_locals * sizeof(*fl));
+    memcpy(fl, frame_locals, (size_t)nframe_locals * sizeof(*fl));
     *out = fl;
-    *out_n = nlocals;
+    *out_n = nframe_locals;
 }
 
 int scope_add_local(char *name, Type *ty, SourceLoc loc)

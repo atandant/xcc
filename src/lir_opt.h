@@ -4,6 +4,9 @@
 
 #include "lir.h"
 
+/* Optimize SSA LIR before phi elimination. */
+void lir_optimize_ssa_function(LirFn *lf);
+
 /* Optimize phi-lowered LIR before liveness and register allocation. */
 void lir_optimize_function(LirFn *lf);
 
