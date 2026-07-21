@@ -205,6 +205,7 @@ Operand lir_imm(long imm);
 Operand lir_mem(int base, long disp);
 Operand lir_mem_idx(int base, int index, int scale, long disp);
 Operand lir_none(void);
+int lir_instruction_defines_vreg(const Instr *ins);
 
 LirFn *lir_fn_new(const char *name);
 int lir_new_vreg(LirFn *fn);

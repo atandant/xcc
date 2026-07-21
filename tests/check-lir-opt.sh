@@ -37,6 +37,40 @@ int mem2reg_narrow(void) {
     c = 300;
     return c;
 }
+int dce_dead_chain(int x) {
+    (x + 1) * 3;
+    return 9;
+}
+int dce_dead_division(int x, int y) {
+    x / y;
+    x % y;
+    return 9;
+}
+int dce_live_division(int x, int y) {
+    return x / y;
+}
+int dce_dead_load(int *p) {
+    *p;
+    return 9;
+}
+int dce_side_effect(void) {
+    return 1;
+}
+int dce_keep_call(void) {
+    dce_side_effect();
+    return 2;
+}
+int dce_dead_phi(int n) {
+    int i;
+    int dead;
+    i = 0;
+    dead = 0;
+    while (i < n) {
+        dead = dead + 1;
+        i = i + 1;
+    }
+    return i;
+}
 int licm_conditional(int n, int flag, int x, int y) {
     int i;
     int sum;
@@ -102,9 +136,15 @@ if sed -n '/function mul_left /,/^}/p' "$TMP/opt-lir" | grep -Eq '^[[:space:]]+[
    ! sed -n '/function xor_zero /,/^}/p' "$TMP/opt-lir" | grep -Eq '^[[:space:]]+[0-9]+[[:space:]]+xor[[:space:]]' &&
    ! sed -n '/function shift_zero /,/^}/p' "$TMP/opt-lir" | grep -Eq '^[[:space:]]+[0-9]+[[:space:]]+shl[[:space:]]' &&
    ! sed -n '/function mem2reg_loop /,/^}/p' "$TMP/opt-lir" | grep -Eq '^[[:space:]]+[0-9]+[[:space:]]+store[[:space:]]' &&
-   [ "$(sed -n '/function mem2reg_loop /,/^}/p' "$TMP/opt-lir" | grep -Ec '^[[:space:]]+[0-9]+[[:space:]]+load[[:space:]]')" -eq 3 ] &&
+   [ "$(sed -n '/function mem2reg_loop /,/^}/p' "$TMP/opt-lir" | grep -Ec '^[[:space:]]+[0-9]+[[:space:]]+load[[:space:]]')" -eq 1 ] &&
    sed -n '/function mem2reg_address_taken /,/^}/p' "$TMP/opt-lir" | grep -Eq '^[[:space:]]+[0-9]+[[:space:]]+store[[:space:]]' &&
    sed -n '/function mem2reg_narrow /,/^}/p' "$TMP/opt-lir" | grep -Eq '^[[:space:]]+[0-9]+[[:space:]]+store[[:space:]]' &&
+   ! sed -n '/function dce_dead_chain /,/^}/p' "$TMP/opt-lir" | grep -Eq '^[[:space:]]+[0-9]+[[:space:]]+(add|mul)[[:space:]]' &&
+   ! sed -n '/function dce_dead_division /,/^}/p' "$TMP/opt-lir" | grep -Eq '^[[:space:]]+[0-9]+[[:space:]]+(div|mod)[[:space:]]' &&
+   sed -n '/function dce_live_division /,/^}/p' "$TMP/opt-lir" | grep -Eq '^[[:space:]]+[0-9]+[[:space:]]+div[[:space:]]' &&
+   ! sed -n '/function dce_dead_load /,/^}/p' "$TMP/opt-lir" | grep -Eq '^[[:space:]]+[0-9]+[[:space:]]+load[[:space:]]' &&
+   sed -n '/function dce_keep_call /,/^}/p' "$TMP/opt-lir" | grep -Eq '^[[:space:]]+[0-9]+[[:space:]]+call[[:space:]]' &&
+   [ "$(sed -n '/function dce_dead_phi /,/^}/p' "$TMP/opt-lir" | grep -Ec '^[[:space:]]+[0-9]+[[:space:]]+add[[:space:]]')" -eq 1 ] &&
    [ -n "$conditional_mul" ] && [ "$conditional_mul" -lt "$conditional_header" ] &&
    [ -n "$variant_mul" ] && [ "$variant_mul" -gt "$variant_header" ] &&
    [ -n "$division" ] && [ "$division" -gt "$division_header" ]; then

@@ -49,6 +49,38 @@ Operand lir_none(void)
     return o;
 }
 
+int lir_instruction_defines_vreg(const Instr *ins)
+{
+    switch (ins->op) {
+    case LIR_MOVI:
+    case LIR_MOV:
+    case LIR_LOAD:
+    case LIR_LEA:
+    case LIR_LEA_SYM:
+    case LIR_ADD:
+    case LIR_SUB:
+    case LIR_MUL:
+    case LIR_DIV:
+    case LIR_MOD:
+    case LIR_SDIV_POW2:
+    case LIR_SMOD_POW2:
+    case LIR_UDIV_POW2:
+    case LIR_UMOD_POW2:
+    case LIR_AND:
+    case LIR_XOR:
+    case LIR_OR:
+    case LIR_SHL:
+    case LIR_SHR:
+    case LIR_SAR:
+    case LIR_NEG:
+    case LIR_SETCC:
+    case LIR_CONV:
+        return ins->dst >= 0;
+    default:
+        return 0;
+    }
+}
+
 LirFn *lir_fn_new(const char *name)
 {
     LirFn *fn = arena_alloc_zeroed(sizeof(*fn));

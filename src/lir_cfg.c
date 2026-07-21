@@ -66,38 +66,6 @@ static int has_pred(const LirBlock *block, LirBlockId pred)
     return 0;
 }
 
-static int op_defines_dst(const Instr *ins)
-{
-    switch (ins->op) {
-    case LIR_MOVI:
-    case LIR_MOV:
-    case LIR_LOAD:
-    case LIR_LEA:
-    case LIR_LEA_SYM:
-    case LIR_ADD:
-    case LIR_SUB:
-    case LIR_MUL:
-    case LIR_DIV:
-    case LIR_MOD:
-    case LIR_SDIV_POW2:
-    case LIR_SMOD_POW2:
-    case LIR_UDIV_POW2:
-    case LIR_UMOD_POW2:
-    case LIR_AND:
-    case LIR_XOR:
-    case LIR_OR:
-    case LIR_SHL:
-    case LIR_SHR:
-    case LIR_SAR:
-    case LIR_NEG:
-    case LIR_SETCC:
-    case LIR_CONV:
-        return ins->dst >= 0;
-    default:
-        return 0;
-    }
-}
-
 static void verify_operand(const LirFn *fn, int block, Operand operand)
 {
     if (operand.kind == OPND_VREG &&
@@ -155,7 +123,7 @@ void lir_cfg_verify(const LirFn *fn)
                 for (int a = 0; a < ins->nargs; a++)
                     verify_operand(fn, i, ins->call_args[a]);
             }
-            if (op_defines_dst(ins)) {
+            if (lir_instruction_defines_vreg(ins)) {
                 if (ins->dst >= fn->nvreg)
                     malformed(fn, i, "instruction defines an invalid vreg");
                 if (fn->stage == LIR_STAGE_SSA && defined[ins->dst])

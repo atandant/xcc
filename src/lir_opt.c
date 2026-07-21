@@ -2,6 +2,7 @@
 #include "lir_opt.h"
 
 #include "lir_algebraic_simplify.h"
+#include "lir_dce.h"
 #include "lir_licm.h"
 #include "lir_mem2reg.h"
 #include "lir_simplify_conv.h"
@@ -12,6 +13,7 @@
 void lir_optimize_ssa_function(LirFn *lf)
 {
     lir_promote_memory_to_registers(lf);
+    lir_eliminate_dead_code(lf);
     lir_licm_function(lf);
 }
 
