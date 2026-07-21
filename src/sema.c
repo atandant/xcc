@@ -1353,6 +1353,64 @@ struct SwitchCtx {
 };
 
 static SwitchCtx *current_switch;
+static Node *function_labels;
+
+static Node *find_label(const char *name)
+{
+    for (Node *label = function_labels; label; label = label->label_next)
+        if (strcmp(label->name, name) == 0)
+            return label;
+    return NULL;
+}
+
+static void collect_labels(Node *s, Function *fn);
+
+static void collect_label_list(Node *body, Function *fn)
+{
+    for (Node *s = body; s; s = s->next)
+        collect_labels(s, fn);
+}
+
+static void collect_labels(Node *s, Function *fn)
+{
+    Node *previous;
+
+    if (!s)
+        return;
+    switch (s->kind) {
+    case ND_LABEL:
+        previous = find_label(s->name);
+        if (previous) {
+            diag_error_at(s->loc, "duplicate label '%s'", s->name);
+            diag_note_at(previous->loc, "previous label is here");
+        } else {
+            s->label_next = function_labels;
+            function_labels = s;
+        }
+        collect_labels(s->then_body, fn);
+        return;
+    case ND_GOTO:
+        fn->has_goto = 1;
+        return;
+    case ND_IF:
+        collect_labels(s->then_body, fn);
+        collect_labels(s->else_body, fn);
+        return;
+    case ND_WHILE:
+    case ND_DO_WHILE:
+    case ND_FOR:
+    case ND_SWITCH:
+    case ND_CASE:
+    case ND_DEFAULT:
+        collect_labels(s->then_body, fn);
+        return;
+    case ND_BLOCK:
+        collect_label_list(s->body, fn);
+        return;
+    default:
+        return;
+    }
+}
 
 /* A controlling expression (if/while/for condition) must be scalar: an
  * integer or a pointer. A NULL `for` condition is an infinite loop. */
@@ -1470,6 +1528,7 @@ static void resolve_stmt(Node *s)
             diag_error_at(s->loc, "continue statement not within loop");
         return;
     case ND_WHILE:
+    case ND_DO_WHILE:
         resolve_expr_ctx(s->cond, CTX_RVALUE);
         require_scalar_cond(s->cond);
         loop_depth++;
@@ -1547,6 +1606,14 @@ static void resolve_stmt(Node *s)
             current_switch->node->default_case = s;
         }
         resolve_stmt(s->then_body);
+        return;
+    case ND_LABEL:
+        resolve_stmt(s->then_body);
+        return;
+    case ND_GOTO:
+        s->goto_target = find_label(s->name);
+        if (!s->goto_target)
+            diag_error_at(s->loc, "label '%s' used but not defined", s->name);
         return;
     case ND_BLOCK:
         enter_scope();
@@ -1629,6 +1696,7 @@ static void sema_scan_call_member_scratch(Node *n, int *maxsz)
         sema_scan_call_member_scratch(n->else_body, maxsz);
         return;
     case ND_WHILE:
+    case ND_DO_WHILE:
     case ND_FOR:
         sema_scan_call_member_scratch(n->init, maxsz);
         sema_scan_call_member_scratch(n->cond, maxsz);
@@ -1645,6 +1713,11 @@ static void sema_scan_call_member_scratch(Node *n, int *maxsz)
         return;
     case ND_DEFAULT:
         sema_scan_call_member_scratch(n->then_body, maxsz);
+        return;
+    case ND_LABEL:
+        sema_scan_call_member_scratch(n->then_body, maxsz);
+        return;
+    case ND_GOTO:
         return;
     case ND_BLOCK:
         for (Node *s = n->body; s; s = s->next)
@@ -1741,6 +1814,7 @@ static void sema_scan_sret_call_scratch(Node *n, int *maxsz)
         sema_scan_sret_call_scratch(n->else_body, maxsz);
         return;
     case ND_WHILE:
+    case ND_DO_WHILE:
     case ND_FOR:
         sema_scan_sret_call_scratch(n->init, maxsz);
         sema_scan_sret_call_scratch(n->cond, maxsz);
@@ -1758,6 +1832,11 @@ static void sema_scan_sret_call_scratch(Node *n, int *maxsz)
     case ND_DEFAULT:
         sema_scan_sret_call_scratch(n->then_body, maxsz);
         return;
+    case ND_LABEL:
+        sema_scan_sret_call_scratch(n->then_body, maxsz);
+        return;
+    case ND_GOTO:
+        return;
     case ND_BLOCK:
         for (Node *s = n->body; s; s = s->next)
             sema_scan_sret_call_scratch(s, maxsz);
@@ -1772,6 +1851,9 @@ static void sema_function(Function *fn)
     AbiRetPlan ret_plan;
 
     scope_reset();
+    function_labels = NULL;
+    fn->has_goto = 0;
+    collect_label_list(fn->body, fn);
     typedef_enter_scope();
     cur_ret_ty = fn->ret_ty;
     cur_fname = fn->name;

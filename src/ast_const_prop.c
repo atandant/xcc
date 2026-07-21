@@ -193,6 +193,7 @@ static void invalidate_assigned_in_stmt(Node *s)
         invalidate_assigned_in_stmt(s->else_body);
         return;
     case ND_WHILE:
+    case ND_DO_WHILE:
         invalidate_assigned_in_expr(s->cond);
         invalidate_assigned_in_stmt(s->then_body);
         return;
@@ -212,6 +213,11 @@ static void invalidate_assigned_in_stmt(Node *s)
         return;
     case ND_DEFAULT:
         invalidate_assigned_in_stmt(s->then_body);
+        return;
+    case ND_LABEL:
+        invalidate_assigned_in_stmt(s->then_body);
+        return;
+    case ND_GOTO:
         return;
     default:
         return;
@@ -259,6 +265,7 @@ static int prop_stmt_loop(Node *s)
         bind_leave_scope();
         return changed;
     case ND_WHILE:
+    case ND_DO_WHILE:
     case ND_FOR:
         changed |= prop_expr(&s->init, 1, 0);
         changed |= prop_expr(&s->cond, 1, 0);
@@ -276,6 +283,10 @@ static int prop_stmt_loop(Node *s)
     case ND_DEFAULT:
         changed |= prop_stmt_loop(s->then_body);
         return changed;
+    case ND_LABEL:
+        return prop_stmt_loop(s->then_body);
+    case ND_GOTO:
+        return 0;
     case ND_BREAK:
     case ND_CONTINUE:
         return 0;
@@ -414,6 +425,7 @@ static int prop_stmt(Node *s)
         return changed;
     }
     case ND_WHILE:
+    case ND_DO_WHILE:
         changed |= prop_expr(&s->cond, 1, 0);
         {
             BindSnap snap;
@@ -454,6 +466,10 @@ static int prop_stmt(Node *s)
         }
         invalidate_assigned_in_stmt(s->then_body);
         return changed;
+    case ND_LABEL:
+        return prop_stmt(s->then_body);
+    case ND_GOTO:
+        return 0;
     case ND_BLOCK:
         changed |= prop_stmt_list(s->body);
         return changed;
@@ -464,7 +480,7 @@ static int prop_stmt(Node *s)
 
 int ast_const_prop_function(Function *fn)
 {
-    if (!fn || !fn->body)
+    if (!fn || !fn->body || fn->has_goto)
         return 0;
     bind_clear();
     return prop_stmt_list(fn->body);

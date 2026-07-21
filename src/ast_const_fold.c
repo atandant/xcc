@@ -261,6 +261,7 @@ static int fold_stmt(Node *s)
         changed |= fold_stmt(s->else_body);
         return changed;
     case ND_WHILE:
+    case ND_DO_WHILE:
         changed |= ast_const_fold_expr(&s->cond);
         changed |= fold_stmt(s->then_body);
         return changed;
@@ -281,6 +282,10 @@ static int fold_stmt(Node *s)
     case ND_DEFAULT:
         changed |= fold_stmt(s->then_body);
         return changed;
+    case ND_LABEL:
+        return fold_stmt(s->then_body);
+    case ND_GOTO:
+        return 0;
     case ND_BLOCK:
         return fold_stmt_list(s->body);
     default:

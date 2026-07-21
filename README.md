@@ -30,16 +30,15 @@ make
 ./examples/build.sh
 ```
 
-## Status (v0.0.1.7)
+## Status
 
 The pipeline runs end to end (lex → parse → sema → lower → liveness →
-regalloc → emit → `.s` → gcc) with a typed semantic layer and 565+ acceptance
-tests.
+regalloc → emit → `.s` → gcc) with a typed semantic layer and 696 test checks.
 
 | Supported | Not yet |
 | --- | --- |
-| `int`, `char`, `long`, `void`, pointers (`*`, `&`, dereference) | preprocessor (`#include`, `#define`) |
-| `unsigned` (`char`/`short`/`int`/`long`), usual arithmetic conversions | multiple translation units |
+| `char`, `short`, `int`, `long`, `void`, pointers (`*`, `&`, dereference) | preprocessor (`#include`, `#define`) |
+| signed and unsigned integer types, promotions and usual arithmetic conversions | multiple translation units |
 | parenthesized declarators (`int (*p)[3]`), casts (`(int (*)[3])`) | |
 | N-dimensional arrays, `[]` subscript, `ptr ± int/long`, `ptr - ptr`, param decay | |
 | typed declarations, parameters, returns | |
@@ -51,8 +50,10 @@ tests.
 | casts `(type)expr`, `(void)expr` discard | |
 | `sizeof expr`, `sizeof(type)` (compile-time fold, `unsigned long`) | |
 | function calls (prototyped arg checking, void `*` conversions) | |
-| `if` / `else`, `while`, `for`, blocks | |
-| `+ - * / %`, unary `-`, comparisons (signed and unsigned) | |
+| `if` / `else`, `while`, `do ... while`, `for`, blocks and null statements | |
+| `switch` / `case` / `default`, fallthrough, `break`, `continue` | |
+| function-scoped labels and `goto` (forward and backward) | |
+| arithmetic, bitwise, shifts, comparisons, `&&`, `\|\|`, `!`, `?:`, comma | |
 | pointer `==` / `!=` / ordering, truthiness, `p == 0` | |
 | `L`/`l` literal suffixes; `0x` hex literals (C89 typing) | |
 | `int`/`long` promotions; `ptr - ptr` → `long` | |
@@ -107,7 +108,12 @@ records use sret/stack memory.
                                                   function table)
                                                    │
                                                    ▼
-                                      lower ──▶ LIR
+                                      lower ──▶ CFG LIR
+                                                   │
+                                                   ▼
+                                  mem2reg / SSA optimizations
+                                  (constant folding, DCE, LICM,
+                                   algebraic and strength reduction)
                                                    │
                                                    ▼
                                       liveness ──▶ regalloc (linear scan)
@@ -117,12 +123,16 @@ records use sret/stack memory.
 ```
 
 The parser builds AST nodes and attaches parsed types to declarations. **sema**
-owns type checking. **lower** builds LIR with virtual registers; **liveness**
-and **regalloc** assign registers or spill slots; **emit_x86** prints AT&T
-assembly. Scalar locals and parameters that are not address-taken may live in
-registers across loops; arrays and address-taken locals stay on the stack.
+owns type checking. **lower** builds CFG-based LIR with virtual registers;
+mem2reg promotes eligible locals into SSA form before CFG optimizations run.
+**liveness** and **regalloc** then assign registers or spill slots, and
+**emit_x86** prints AT&T assembly. Scalar locals and parameters that are not
+address-taken may live in registers across loops; arrays and address-taken
+locals stay on the stack.
 
-Debug flags: `--xcc-dump-lir` (LIR before allocation), `--xcc-dump-lir-alloc` (after).
+Debug flags: `--xcc-dump-raw-lir` (unoptimized SSA LIR), `--xcc-dump-lir`
+(optimized, phi-lowered LIR), `--xcc-dump-lir-alloc` (live intervals),
+`--xcc-verify-lir`, and `--xcc-no-verify-lir`.
 
 Warning flags: `-W<name>`, `-Wno-<name>`, `-Wall`, `-w`, `-Werror` — see
 `--help-warnings` for the catalog. xcc `-Wall` enables warnings that default to
@@ -142,19 +152,12 @@ committed.
 
 ## Roadmap
 
-- `0.0.1.1` — `while`, `for` ✓
-- `0.0.1.2` — functions, parameters, calls (System V ABI) ✓
-- `0.0.1.3` — type system, pointers, `char`, `void *` ✓
-- `0.0.1.4` — 1D arrays, subscript, pointer arithmetic, layout fix ✓
-- `0.0.1.5` — `long` (LP64 64-bit), literal suffixes, promotions, `ptr - ptr` ✓
-- `0.0.1.6` — LIR lowering, liveness, linear-scan register allocation ✓
-- `0.0.1.6` — `sizeof` (compile-time fold, abstract declarator types) ✓
-- `0.0.1.7` — `typedef` (scoped names, declarator application) ✓
-- `0.0.1.7` — `struct` (tags, forward-decl, layout, `.`/`->`, assign, bitfields) ✓
-- `0.0.1.7` — `union` (tags, forward-decl, overlap layout, member access, assign) ✓
-- `0.0.1.7` — `enum` (tagged/anonymous, enumerator ICEs, enum variables) ✓
-- `0.0.1.7` — function pointers (declarators, typedef, casts, indirect calls) ✓
-- later — preprocessor, struct/union-by-value ABI, and enough to compile real projects
+- string literals and file-scope/static objects
+- remaining nested declarator corner cases
+- preprocessor support
+- multiple translation units and driver behavior
+- broaden the SysV AMD64 ABI beyond the current integer/pointer record subset
+- compile increasingly substantial C89 programs and libraries
 
 ## License
 

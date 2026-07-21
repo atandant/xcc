@@ -204,6 +204,14 @@ Node *node_while(Node *cond, Node *body, SourceLoc loc)
     return n;
 }
 
+Node *node_do_while(Node *body, Node *cond, SourceLoc loc)
+{
+    Node *n = new_node(ND_DO_WHILE, loc);
+    n->cond = cond;
+    n->then_body = body;
+    return n;
+}
+
 Node *node_for(Node *init, Node *cond, Node *step, Node *body, SourceLoc loc)
 {
     Node *n = new_node(ND_FOR, loc);
@@ -234,6 +242,22 @@ Node *node_default(Node *stmt, SourceLoc loc)
 {
     Node *n = new_node(ND_DEFAULT, loc);
     n->then_body = stmt;
+    return n;
+}
+
+Node *node_label(char *name, Node *stmt, SourceLoc loc)
+{
+    Node *n = new_node(ND_LABEL, loc);
+    n->name = name;
+    n->then_body = stmt;
+    n->label = -1;
+    return n;
+}
+
+Node *node_goto(char *name, SourceLoc loc)
+{
+    Node *n = new_node(ND_GOTO, loc);
+    n->name = name;
     return n;
 }
 

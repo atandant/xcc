@@ -407,6 +407,13 @@ static void control_pop(LowerCtx *c)
 
 static void lower_stmt(LowerCtx *c, Node *n);
 
+static int named_label_id(LowerCtx *c, Node *label)
+{
+    if (label->label < 0)
+        label->label = lir_new_label(c->lf);
+    return label->label;
+}
+
 static Member *member_meta(Node *n)
 {
     return &n->lhs->ty->members[n->member_index];
@@ -1624,7 +1631,8 @@ static void lower_stmt(LowerCtx *c, Node *n)
         return;
     }
     case ND_EXPR_STMT:
-        (void)lower_expr(c, n->operand);
+        if (n->operand)
+            (void)lower_expr(c, n->operand);
         return;
     case ND_DECL:
         if (n->init && n->init->kind == ND_CALL &&
@@ -1680,6 +1688,20 @@ static void lower_stmt(LowerCtx *c, Node *n)
         emit(c, (Instr){ .op = LIR_LABEL, .label = body_id });
         lower_stmt(c, n->then_body);
         emit(c, (Instr){ .op = LIR_JMP, .label = begin_id });
+        emit(c, (Instr){ .op = LIR_LABEL, .label = end_id });
+        control_pop(c);
+        return;
+    }
+    case ND_DO_WHILE: {
+        int body_id = lir_new_label(c->lf);
+        int cond_id = lir_new_label(c->lf);
+        int end_id = lir_new_label(c->lf);
+        ControlCtx loop;
+        control_push(c, &loop, cond_id, end_id);
+        emit(c, (Instr){ .op = LIR_LABEL, .label = body_id });
+        lower_stmt(c, n->then_body);
+        emit(c, (Instr){ .op = LIR_LABEL, .label = cond_id });
+        lower_branch(c, n->cond, body_id, end_id);
         emit(c, (Instr){ .op = LIR_LABEL, .label = end_id });
         control_pop(c);
         return;
@@ -1773,6 +1795,15 @@ static void lower_stmt(LowerCtx *c, Node *n)
                               .label = control->continue_label });
         return;
     }
+    case ND_LABEL:
+        emit(c, (Instr){ .op = LIR_LABEL,
+                          .label = named_label_id(c, n) });
+        lower_stmt(c, n->then_body);
+        return;
+    case ND_GOTO:
+        emit(c, (Instr){ .op = LIR_JMP,
+                          .label = named_label_id(c, n->goto_target) });
+        return;
     case ND_BLOCK:
         for (Node *s = n->body; s; s = s->next)
             lower_stmt(c, s);
@@ -1803,6 +1834,8 @@ static int stmt_returns(Node *n)
                stmt_returns(n->else_body);
     case ND_BLOCK:
         return stmt_list_returns(n->body);
+    case ND_LABEL:
+        return stmt_returns(n->then_body);
     default:
         return 0;
     }

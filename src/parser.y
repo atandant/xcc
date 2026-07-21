@@ -46,7 +46,7 @@ Function *g_program = NULL;
 
 %token <num> NUM
 %token <str> IDENT TYPEDEF_NAME
-%token INT CHAR SHORT LONG VOID UNSIGNED SIGNED RETURN IF ELSE WHILE FOR SWITCH CASE DEFAULT BREAK CONTINUE SIZEOF TYPEDEF STRUCT UNION ENUM
+%token INT CHAR SHORT LONG VOID UNSIGNED SIGNED RETURN IF ELSE WHILE DO FOR SWITCH CASE DEFAULT GOTO BREAK CONTINUE SIZEOF TYPEDEF STRUCT UNION ENUM
 %token EQ NE LE GE ARROW LAND LOR SHL SHR
 
 %type <node> expr expr_opt arg_expr conditional_expr logical_or_expr
@@ -64,7 +64,7 @@ Function *g_program = NULL;
 %type <fields> struct_declaration_list struct_declaration struct_declarator_list
                struct_decl_item
 %type <enumr> enumerator_list enumerator
-%type <str> struct_tag enum_tag member_name
+%type <str> struct_tag enum_tag member_name label_name
 %type <decl> declarator direct_declarator abstract_declarator
              abstract_declarator_opt direct_abstract_declarator
 %type <scope> param_scope_start block_scope_start
@@ -364,7 +364,8 @@ stmt_list:
   ;
 
 stmt:
-    expr ';'                 { $$ = node_expr_stmt($1, LOC(@2)); }
+    ';'                      { $$ = node_expr_stmt(NULL, LOC(@1)); }
+  | expr ';'                 { $$ = node_expr_stmt($1, LOC(@2)); }
   | RETURN expr ';'          { $$ = node_return($2, LOC(@1)); }
   | RETURN ';'               { $$ = node_return(NULL, LOC(@1)); }
   | TYPEDEF decl_specifier declarator ';'
@@ -383,17 +384,26 @@ stmt:
   | IF '(' expr ')' stmt ELSE stmt
                               { $$ = node_if($3, $5, $7, LOC(@1)); }
   | WHILE '(' expr ')' stmt   { $$ = node_while($3, $5, LOC(@1)); }
+  | DO stmt WHILE '(' expr ')' ';'
+                              { $$ = node_do_while($2, $5, LOC(@1)); }
   | FOR '(' expr_opt ';' expr_opt ';' expr_opt ')' stmt
                               { $$ = node_for($3, $5, $7, $9, LOC(@1)); }
   | SWITCH '(' expr ')' stmt  { $$ = node_switch($3, $5, LOC(@1)); }
   | CASE conditional_expr ':' stmt
                               { $$ = node_case($2, $4, LOC(@1)); }
   | DEFAULT ':' stmt          { $$ = node_default($3, LOC(@1)); }
+  | label_name ':' stmt       { $$ = node_label($1, $3, LOC(@1)); }
+  | GOTO label_name ';'       { $$ = node_goto($2, LOC(@1)); }
   | BREAK ';'                { $$ = node_break(LOC(@1)); }
   | CONTINUE ';'             { $$ = node_continue(LOC(@1)); }
   | '{' block_scope_start stmt_list '}'
         { (void)$2; typedef_leave_scope(); struct_tag_leave_scope();
           $$ = node_block(stmt_list_head($3), LOC(@1)); }
+  ;
+
+label_name:
+    IDENT                    { $$ = $1; }
+  | TYPEDEF_NAME             { $$ = $1; }
   ;
 
 initializer_opt:
