@@ -59,7 +59,7 @@ Function *g_program = NULL;
 %type <pclause> param_clause
 %type <func> toplevel
 %type <tdecl> typedef_toplevel
-%type <type> type specifier cast_type decl_specifier keyword_specifier struct_specifier
+%type <type> cast_type decl_specifier keyword_specifier struct_specifier
              union_specifier enum_specifier
 %type <fields> struct_declaration_list struct_declaration struct_declarator_list
                struct_decl_item
@@ -67,13 +67,13 @@ Function *g_program = NULL;
 %type <str> struct_tag enum_tag member_name label_name
 %type <decl> declarator direct_declarator abstract_declarator
              abstract_declarator_opt direct_abstract_declarator
-%type <scope> param_scope_start block_scope_start
+%type <scope> param_scope_start block_scope_start function_body_scope_start
 
 %precedence IFX
 %precedence ELSE
 
 %destructor { if ($$) { typedef_leave_scope(); struct_tag_leave_scope(); } }
-            param_scope_start block_scope_start
+            param_scope_start block_scope_start function_body_scope_start
 
 %%
 
@@ -102,12 +102,17 @@ typedef_toplevel:
   ;
 
 toplevel:
-    type IDENT '(' param_scope_start param_clause ')' '{' stmt_list '}'
-        { (void)$4; typedef_leave_scope(); struct_tag_leave_scope();
-          $$ = func_new($2, $5, $1, 1, stmt_list_head($8), LOC(@2)); }
-  | type IDENT '(' param_scope_start param_clause ')' ';'
-        { (void)$4; typedef_leave_scope(); struct_tag_leave_scope();
-          $$ = func_new($2, $5, $1, 0, NULL, LOC(@2)); }
+    decl_specifier declarator function_body_scope_start
+        {
+            ParamClause *pc = declarator_function_params($2);
+            for (Param *p = pc ? pc->head : NULL; p; p = p->next)
+                typedef_hide_name(p->name, LOC(@2));
+        }
+    '{' stmt_list '}'
+        { (void)$3; typedef_leave_scope(); struct_tag_leave_scope();
+          $$ = func_new_decl($1, $2, 1, stmt_list_head($6), LOC(@2)); }
+  | decl_specifier declarator ';'
+        { $$ = func_new_decl($1, $2, 0, NULL, LOC(@2)); }
   ;
 
 /* Integer / void specifiers (never a bare identifier). */
@@ -246,16 +251,6 @@ struct_decl_item:
         { $$ = struct_field_append_bit(NULL, NULL, NULL, $2, LOC(@1)); }
   ;
 
-specifier:
-    decl_specifier             { $$ = $1; }
-  ;
-
-/* Function return types may still use a trailing `*` prefix. */
-type:
-    specifier                { $$ = $1; }
-  | type '*'                 { $$ = type_ptr($1); }
-  ;
-
 cast_type:
     decl_specifier abstract_declarator_opt
         { $$ = type_apply_declarator($1, $2, LOC(@1)); }
@@ -265,10 +260,6 @@ declarator:
     '*' declarator           { $$ = declarator_ptr($2); }
   | direct_declarator
   ;
-
-/* SHELVED: nested function-pointer declarators such as
- *   int (*(*x)(int))(char)
- * (legal C89, parser/declarator builder not yet). Use typedefs meanwhile. */
 
 direct_declarator:
     IDENT
@@ -318,6 +309,11 @@ param_scope_start:
   ;
 
 block_scope_start:
+    %empty                   { typedef_enter_scope(); struct_tag_enter_scope();
+                               $$ = 1; }
+  ;
+
+function_body_scope_start:
     %empty                   { typedef_enter_scope(); struct_tag_enter_scope();
                                $$ = 1; }
   ;

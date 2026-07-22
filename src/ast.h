@@ -5,23 +5,25 @@
 #include "token.h"
 #include "type.h"
 
-#define MAX_DECL_DIMS 16
 #define XCC_MAX_CALL_ARGS 4096
 
 typedef struct Node Node;
 
 typedef struct Declarator Declarator;
 typedef struct ParamClause ParamClause;
+typedef enum {
+    DECL_IDENT,
+    DECL_PTR,
+    DECL_ARRAY,
+    DECL_FUNC
+} DeclaratorKind;
+
 struct Declarator {
+    DeclaratorKind kind;
     char *name;
-    int nptr;
-    int ndims_suffix;
-    Node *dims_suffix[MAX_DECL_DIMS]; /* NULL = unsized `[]`; ND_NUM = bound */
-    int ndims_paren_outer;
-    Node *dims_paren_outer[MAX_DECL_DIMS];
-    int was_paren;     /* `(` declarator `)` with no following `[]` yet */
-    Declarator *inner; /* set when `[]` immediately follows `( declarator )` */
-    ParamClause *func_params; /* `D(params)` suffix; NULL if not a function declarator */
+    Declarator *inner;
+    Node *array_dim;   /* DECL_ARRAY: NULL means unsized `[]` */
+    ParamClause *func_params; /* DECL_FUNC parameter clause */
     Node *bit_width_expr; /* struct bit-field `: width`; NULL if ordinary member */
 };
 
@@ -257,6 +259,8 @@ Param *param_append_decl(Param *list, Type *spec_ty, Declarator *decl,
 ParamClause *param_clause(Param *head, int prototyped);
 Function *func_new(char *name, ParamClause *pc, Type *ret_ty,
                    int is_definition, Node *body, SourceLoc loc);
+Function *func_new_decl(Type *spec, Declarator *decl, int is_definition,
+                        Node *body, SourceLoc loc);
 Function *func_rebuild_type(Function *fn);
 Function *func_append(Function *list, Function *f);
 
@@ -270,6 +274,7 @@ Declarator *declarator_paren_outer(Declarator *d, Node *dim);
 Declarator *declarator_func(Declarator *d, ParamClause *pc);
 int declarator_was_paren(const Declarator *d);
 char *declarator_name(const Declarator *d);
+ParamClause *declarator_function_params(const Declarator *d);
 
 typedef int (*DeclDimEvalFn)(Node *expr, long *out, SourceLoc loc, void *ctx);
 Type *type_apply_declarator_cb(Type *base, Declarator *d, SourceLoc loc,
