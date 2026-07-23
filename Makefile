@@ -26,6 +26,16 @@ DEPS = $(OBJS:.o=.d) $(GEN_OBJS:.o=.d)
 
 .PHONY: all clean test examples
 
+LIR_TEST_SRCS = tests/lir/main.c tests/lir/test.c \
+                tests/lir/algebraic.c tests/lir/strength_reduce.c \
+                tests/lir/simplify_conv.c tests/lir/dce.c \
+                tests/lir/licm.c tests/lir/mem2reg.c
+LIR_TEST_OBJS = $(BUILD)/arena.o $(BUILD)/diag.o $(BUILD)/lir.o \
+                $(BUILD)/lir_cfg.o $(BUILD)/lir_dom.o $(BUILD)/lir_mem2reg.o \
+                $(BUILD)/lir_dce.o $(BUILD)/lir_licm.o \
+                $(BUILD)/lir_algebraic_simplify.o $(BUILD)/lir_strength_reduce.o \
+                $(BUILD)/lir_simplify_conv.o
+
 all: $(BIN)
 
 $(BIN): $(OBJS) $(GEN_OBJS)
@@ -57,7 +67,11 @@ $(BUILD)/parser.o: $(BUILD)/parser.c | $(BUILD)
 $(BUILD)/lexer.o: $(BUILD)/lexer.c $(BUILD)/parser.h | $(BUILD)
 	$(CC) $(CFLAGS) $(GEN_CPPFLAGS) -w -MMD -MP -c $< -o $@
 
-test: $(BIN)
+$(BUILD)/lir-tests: $(LIR_TEST_SRCS) $(LIR_TEST_OBJS)
+	$(CC) $(CFLAGS) $(CPPFLAGS) $(LIR_TEST_SRCS) $(LIR_TEST_OBJS) -o $@
+
+test: $(BIN) $(BUILD)/lir-tests
+	./$(BUILD)/lir-tests
 	./tests/run.sh
 
 examples: $(BIN)
