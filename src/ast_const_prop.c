@@ -151,10 +151,22 @@ static void invalidate_assigned_in_expr(Node *n)
         return;
     case ND_NEG:
     case ND_NOT:
+    case ND_PREINC:
+    case ND_PREDEC:
+    case ND_POSTINC:
+    case ND_POSTDEC:
     case ND_DEREF:
     case ND_CAST:
     case ND_ADDR:
         invalidate_assigned_in_expr(n->operand);
+        if (n->kind == ND_PREINC || n->kind == ND_PREDEC ||
+            n->kind == ND_POSTINC || n->kind == ND_POSTDEC) {
+            if (n->operand && n->operand->kind == ND_VAR &&
+                type_is_integer(n->operand->ty))
+                bind_clear_offset(n->operand->offset);
+            else if (n->operand && n->operand->kind == ND_DEREF)
+                invalidate_all_binds();
+        }
         return;
     default:
         return;
@@ -345,6 +357,31 @@ static int prop_expr(Node **np, int rvalue, int allow_subst)
     case ND_DEREF:
     case ND_CAST:
         changed |= prop_expr(&n->operand, 1, allow_subst);
+        return changed;
+    case ND_PREINC:
+    case ND_PREDEC:
+    case ND_POSTINC:
+    case ND_POSTDEC:
+        changed |= prop_expr(&n->operand, 0, 0);
+        if (allow_subst && n->operand && n->operand->kind == ND_VAR &&
+            type_is_integer(n->operand->ty)) {
+            long v;
+            long step = (n->kind == ND_PREINC || n->kind == ND_POSTINC) ? 1 : -1;
+            int is_post = n->kind == ND_POSTINC || n->kind == ND_POSTDEC;
+
+            if (bind_get(n->operand->offset, &v)) {
+                long nv = v + step;
+                Node *subst;
+
+                bind_set(n->operand->offset, nv);
+                subst = node_num(is_post ? v : nv, n->loc);
+                subst->ty = n->ty;
+                subst->next = n->next;
+                *np = subst;
+                return 1;
+            }
+            bind_clear_offset(n->operand->offset);
+        }
         return changed;
     case ND_ADDR:
         changed |= prop_expr(&n->operand, 0, 0);

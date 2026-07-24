@@ -153,6 +153,12 @@ int ast_const_fold_expr(Node **np)
             }
         }
         return changed;
+    case ND_PREINC:
+    case ND_PREDEC:
+    case ND_POSTINC:
+    case ND_POSTDEC:
+        changed |= ast_const_fold_expr(&n->operand);
+        return changed;
     case ND_NOT:
         changed |= ast_const_fold_expr(&n->operand);
         if (n->operand && n->operand->kind == ND_NUM) {

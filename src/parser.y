@@ -14,7 +14,7 @@
 extern int yylex(void);
 void yyerror(const char *msg);
 
-Function *g_program = NULL;
+ExternalDecl *g_program = NULL;
 
 #define LOC(L) ((SourceLoc){ (L).first_line, (L).first_column })
 %}
@@ -36,6 +36,7 @@ Function *g_program = NULL;
     Param *param;
     ParamClause *pclause;
     Function *func;
+    ExternalDecl *external;
     Type *type;
     Declarator *decl;
     TypedefDecl *tdecl;
@@ -47,7 +48,7 @@ Function *g_program = NULL;
 %token <num> NUM
 %token <str> IDENT TYPEDEF_NAME
 %token INT CHAR SHORT LONG VOID UNSIGNED SIGNED RETURN IF ELSE WHILE DO FOR SWITCH CASE DEFAULT GOTO BREAK CONTINUE SIZEOF TYPEDEF STRUCT UNION ENUM
-%token EQ NE LE GE ARROW LAND LOR SHL SHR
+%token EQ NE LE GE ARROW LAND LOR SHL SHR INC DEC
 
 %type <node> expr expr_opt arg_expr conditional_expr logical_or_expr
              logical_and_expr bitwise_or_expr bitwise_xor_expr bitwise_and_expr
@@ -57,7 +58,7 @@ Function *g_program = NULL;
 %type <list> stmt_list arg_clause arg_list
 %type <param> param_list param
 %type <pclause> param_clause
-%type <func> toplevel
+%type <external> toplevel
 %type <tdecl> typedef_toplevel
 %type <type> cast_type decl_specifier keyword_specifier struct_specifier
              union_specifier enum_specifier
@@ -79,7 +80,7 @@ Function *g_program = NULL;
 
 program:
     %empty                   { }
-  | program toplevel         { if ($2) g_program = func_append(g_program, $2); }
+  | program toplevel         { if ($2) g_program = external_append(g_program, $2); }
   | program typedef_toplevel { g_typedef_decls = typedef_decl_append(g_typedef_decls,
                                                                      $2->spec,
                                                                      $2->decl,
@@ -110,9 +111,10 @@ toplevel:
         }
     '{' stmt_list '}'
         { (void)$3; typedef_leave_scope(); struct_tag_leave_scope();
-          $$ = func_new_decl($1, $2, 1, stmt_list_head($6), LOC(@2)); }
-  | decl_specifier declarator ';'
-        { $$ = func_new_decl($1, $2, 0, NULL, LOC(@2)); }
+          $$ = external_function(
+              func_new_decl($1, $2, 1, stmt_list_head($6), LOC(@2))); }
+  | decl_specifier declarator initializer_opt ';'
+        { $$ = external_declaration($1, $2, $3, LOC(@2)); }
   ;
 
 /* Integer / void specifiers (never a bare identifier). */
@@ -525,6 +527,8 @@ cast_expr:
 
 unary_expr:
     postfix_expr            { $$ = $1; }
+  | INC cast_expr           { $$ = node_preinc($2, LOC(@1)); }
+  | DEC cast_expr           { $$ = node_predec($2, LOC(@1)); }
   | '-' cast_expr           { $$ = node_neg($2, LOC(@1)); }
   | '!' cast_expr           { $$ = node_not($2, LOC(@1)); }
   | '&' cast_expr           { $$ = node_addr($2, LOC(@1)); }
@@ -542,6 +546,10 @@ postfix_expr:
         { $$ = node_member($1, $3, LOC(@2)); }
   | postfix_expr ARROW member_name
         { $$ = node_member(node_deref($1, LOC(@2)), $3, LOC(@2)); }
+  | postfix_expr INC
+        { $$ = node_postinc($1, LOC(@2)); }
+  | postfix_expr DEC
+        { $$ = node_postdec($1, LOC(@2)); }
   ;
 
 primary_expr:

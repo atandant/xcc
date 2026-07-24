@@ -32,6 +32,10 @@ typedef enum {
     ND_VAR,        /* reference to a local         */
     ND_BINOP,      /* lhs <op> rhs                 */
     ND_NEG,        /* unary minus on operand       */
+    ND_PREINC,     /* ++operand (prefix)           */
+    ND_PREDEC,     /* --operand (prefix)           */
+    ND_POSTINC,    /* operand++ (postfix)          */
+    ND_POSTDEC,    /* operand-- (postfix)          */
     ND_NOT,        /* logical !operand             */
     ND_LOGAND,     /* lhs && rhs (short-circuit)   */
     ND_LOGOR,      /* lhs || rhs (short-circuit)   */
@@ -70,6 +74,13 @@ typedef enum {
     OP_COMMA
 } BinOp;
 
+typedef enum {
+    VAR_STORAGE_NONE,
+    VAR_STORAGE_LOCAL,
+    VAR_STORAGE_GLOBAL,
+    VAR_STORAGE_FUNCTION,
+} VarStorage;
+
 typedef struct Node Node;
 typedef struct NodeList NodeList;
 struct Node {
@@ -89,13 +100,14 @@ struct Node {
     Node *callee;      /* ND_CALL: callee expression (sema)         */
     int call_direct;   /* ND_CALL: 1 → emit direct call by name     */
     int func_decay;    /* ND_VAR: 1 → function/array address escape  */
+    VarStorage storage;/* ND_VAR: resolved object/function storage   */
     int offset;        /* stack offset from frame pointer (sema)     */
 
     BinOp op;          /* ND_BINOP                                  */
     Node *lhs, *rhs;   /* ND_BINOP, ND_ASSIGN                       */
 
-    Node *operand;     /* ND_NEG, ND_RETURN, ND_EXPR_STMT, ND_CAST,
-                        * ND_CASE constant expression               */
+    Node *operand;     /* ND_NEG, ND_PRE/POST INC/DEC, ND_RETURN, ND_EXPR_STMT,
+                        * ND_CAST, ND_CASE constant expression       */
     Type *cast_ty;     /* ND_CAST: parsed target type               */
     Type *decl_spec;   /* ND_DECL: base specifier before declarator */
     Declarator *decl;  /* ND_DECL: parsed declarator (sema → ty)    */
@@ -174,6 +186,32 @@ struct Function {
     Function *next;    /* next function in the translation unit       */
 };
 
+typedef struct GlobalObject GlobalObject;
+struct GlobalObject {
+    char *name;
+    SourceLoc loc;
+    Type *decl_spec;
+    Declarator *decl;
+    Type *ty;
+    Node *init;
+    long init_value;
+    int has_init_value;
+    int emit;
+};
+
+typedef enum {
+    EXT_FUNCTION,
+    EXT_OBJECT,
+} ExternalKind;
+
+typedef struct ExternalDecl ExternalDecl;
+struct ExternalDecl {
+    ExternalKind kind;
+    Function *function;
+    GlobalObject *object;
+    ExternalDecl *next;
+};
+
 /* File-scope typedef collected before functions (parser → sema). */
 typedef struct TypedefDecl TypedefDecl;
 struct TypedefDecl {
@@ -208,6 +246,10 @@ Node *node_num(long v, SourceLoc loc);
 Node *node_var(char *name, SourceLoc loc);
 Node *node_binop(BinOp op, Node *l, Node *r, SourceLoc loc);
 Node *node_neg(Node *o, SourceLoc loc);
+Node *node_preinc(Node *o, SourceLoc loc);
+Node *node_predec(Node *o, SourceLoc loc);
+Node *node_postinc(Node *o, SourceLoc loc);
+Node *node_postdec(Node *o, SourceLoc loc);
 Node *node_not(Node *o, SourceLoc loc);
 Node *node_logand(Node *l, Node *r, SourceLoc loc);
 Node *node_logor(Node *l, Node *r, SourceLoc loc);
@@ -263,6 +305,11 @@ Function *func_new_decl(Type *spec, Declarator *decl, int is_definition,
                         Node *body, SourceLoc loc);
 Function *func_rebuild_type(Function *fn);
 Function *func_append(Function *list, Function *f);
+ExternalDecl *external_function(Function *fn);
+ExternalDecl *external_declaration(Type *spec, Declarator *decl, Node *init,
+                                   SourceLoc loc);
+ExternalDecl *external_append(ExternalDecl *list, ExternalDecl *external);
+Function *external_functions(ExternalDecl *list);
 
 Declarator *declarator_empty(void);
 Declarator *declarator_ident(char *name);

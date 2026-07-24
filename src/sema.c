@@ -226,6 +226,10 @@ static void check_init_from_self(Node *n, Node *decl)
         return;
     case ND_NEG:
     case ND_NOT:
+    case ND_PREINC:
+    case ND_PREDEC:
+    case ND_POSTINC:
+    case ND_POSTDEC:
     case ND_DEREF:
     case ND_CAST:
         check_init_from_self(n->operand, decl);
@@ -942,12 +946,19 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
 
         n->var_decay = 0;
         n->func_decay = 0;
+        n->storage = VAR_STORAGE_NONE;
         if (!scope_lookup(n->name, &off, &decl_ty)) {
-            FuncSym *fs = functab_find(n->name);
+            FuncSym *fs = filesym_find(n->name);
 
             if (fs) {
                 n->ty = fs->ty;
-                n->is_lvalue = 0;
+                if (fs->kind == FILESYM_FUNCTION) {
+                    n->storage = VAR_STORAGE_FUNCTION;
+                    n->is_lvalue = 0;
+                } else {
+                    n->storage = VAR_STORAGE_GLOBAL;
+                    n->is_lvalue = (ctx != CTX_RVALUE) && type_is_object(fs->ty);
+                }
             } else if (enum_const_lookup(n->name, &enum_val)) {
                 n->kind = ND_NUM;
                 n->val = enum_val;
@@ -965,6 +976,7 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
         } else {
             n->offset = off;
             n->ty = decl_ty;
+            n->storage = VAR_STORAGE_LOCAL;
             /* Array decay (rvalue context) is applied by resolve_expr_ctx. */
             n->is_lvalue = (ctx != CTX_RVALUE) && type_is_object(decl_ty);
         }
@@ -989,7 +1001,7 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
         }
         if (n->callee->kind == ND_VAR) {
             if (!scope_lookup(n->callee->name, &off, NULL) &&
-                !functab_find(n->callee->name)) {
+                !filesym_find(n->callee->name)) {
                 FuncSym *imp = functab_add(n->callee->name,
                                            type_func(type_int(), NULL, 0, 0),
                                            0, 1, n->loc);
@@ -1013,11 +1025,14 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
                     diag_error_at(n->loc, "called object '%s' is not a function",
                                   n->callee->name);
             } else {
-                s = functab_find(n->callee->name);
-                if (s) {
+                s = filesym_find(n->callee->name);
+                if (s && s->kind == FILESYM_FUNCTION) {
                     fty = s->ty;
                     n->call_direct = 1;
                     n->name = s->name;
+                } else if (s && type_is_function_pointer(s->ty)) {
+                    fty = s->ty->base;
+                    s = NULL;
                 } else {
                     diag_error_at(n->loc, "called object '%s' is not a function",
                                   n->callee->name);
@@ -1216,6 +1231,23 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
             diag_error_at(n->loc, "invalid operand to unary minus");
         n->ty = type_int_promote(n->operand->ty);
         convert_integer_expr(&n->operand, n->ty);
+        n->is_lvalue = 0;
+        return;
+    case ND_PREINC:
+    case ND_PREDEC:
+    case ND_POSTINC:
+    case ND_POSTDEC:
+        resolve_expr_ctx(n->operand, CTX_LVALUE);
+        n->var_decay = 0;
+        if (!expr_is_modifiable_lvalue(n->operand))
+            diag_error_at(n->loc,
+                          "operand of increment/decrement is not a modifiable lvalue");
+        else if (type_is_integer(n->operand->ty))
+            n->ty = type_int_promote(n->operand->ty);
+        else if (type_is_pointer(n->operand->ty))
+            n->ty = n->operand->ty;
+        else
+            diag_error_at(n->loc, "invalid operand to increment/decrement");
         n->is_lvalue = 0;
         return;
     case ND_ADDR:
@@ -1667,6 +1699,10 @@ static void sema_scan_call_member_scratch(Node *n, int *maxsz)
     case ND_EXPR_STMT:
     case ND_NEG:
     case ND_NOT:
+    case ND_PREINC:
+    case ND_PREDEC:
+    case ND_POSTINC:
+    case ND_POSTDEC:
     case ND_ADDR:
     case ND_DEREF:
     case ND_CAST:
@@ -1938,7 +1974,49 @@ static void sema_function(Function *fn)
     fn->locals_size = locals_size;
 }
 
-void sema(Function *prog)
+static void sema_global_object(GlobalObject *object)
+{
+    object->decl_spec = typedef_resolve_spec(object->decl_spec, object->loc);
+    object->ty = type_apply_declarator_cb(object->decl_spec, object->decl,
+                                          object->loc,
+                                          sema_array_bound_eval, NULL);
+    object->decl = NULL;
+    object->decl_spec = NULL;
+
+    if (!type_is_object(object->ty) || type_is_void(object->ty)) {
+        diag_error_at(object->loc, "file-scope '%s' has non-object type '%s'",
+                      object->name, type_name(object->ty));
+    } else if (!type_is_complete(object->ty)) {
+        diag_error_at(object->loc, "file-scope object '%s' has incomplete type '%s'",
+                      object->name, type_name(object->ty));
+    }
+
+    objecttab_register(object);
+    if (!object->init)
+        return;
+    if (!type_is_scalar(object->ty) || object->init->kind == ND_INIT_LIST) {
+        diag_error_at(object->loc,
+                      "file-scope initializer for '%s' is not yet supported",
+                      object->name);
+        return;
+    }
+
+    resolve_expr_ctx(object->init, CTX_RVALUE);
+    if (!expr_assignable_to(object->ty, object->init)) {
+        diag_incompatible_init(object->loc, object->ty, object->init);
+        return;
+    }
+    warn_value_conversion(object->loc, object->ty, object->init);
+    if (!ice_eval(object->init, &object->init_value)) {
+        diag_error_at(object->loc,
+                      "initializer for file-scope object '%s' is not constant",
+                      object->name);
+        return;
+    }
+    object->has_init_value = 1;
+}
+
+void sema(ExternalDecl *prog)
 {
     functab_reset();
     typedef_reset();
@@ -1946,13 +2024,17 @@ void sema(Function *prog)
     for (TypedefDecl *td = g_typedef_decls; td; td = td->next)
         typedef_declare(td->spec, td->decl, td->loc);
 
-    /* Single forward pass: each function's declaration becomes visible before
-     * its body is resolved (so recursion works), and calls to not-yet-seen
-     * names fall to C89 implicit declaration. */
-    for (Function *fn = prog; fn; fn = fn->next) {
-        sema_finish_function_types(fn);
-        functab_register(fn);
-        if (fn->is_definition)
-            sema_function(fn);
+    /* Preserve declaration order: each external name becomes visible before
+       the following declaration or function body is resolved. */
+    for (ExternalDecl *external = prog; external; external = external->next) {
+        if (external->kind == EXT_OBJECT) {
+            sema_global_object(external->object);
+        } else {
+            Function *fn = external->function;
+            sema_finish_function_types(fn);
+            functab_register(fn);
+            if (fn->is_definition)
+                sema_function(fn);
+        }
     }
 }

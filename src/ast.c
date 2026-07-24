@@ -46,6 +46,34 @@ Node *node_neg(Node *o, SourceLoc loc)
     return n;
 }
 
+Node *node_preinc(Node *o, SourceLoc loc)
+{
+    Node *n = new_node(ND_PREINC, loc);
+    n->operand = o;
+    return n;
+}
+
+Node *node_predec(Node *o, SourceLoc loc)
+{
+    Node *n = new_node(ND_PREDEC, loc);
+    n->operand = o;
+    return n;
+}
+
+Node *node_postinc(Node *o, SourceLoc loc)
+{
+    Node *n = new_node(ND_POSTINC, loc);
+    n->operand = o;
+    return n;
+}
+
+Node *node_postdec(Node *o, SourceLoc loc)
+{
+    Node *n = new_node(ND_POSTDEC, loc);
+    n->operand = o;
+    return n;
+}
+
 Node *node_not(Node *o, SourceLoc loc)
 {
     Node *n = new_node(ND_NOT, loc);
@@ -544,6 +572,66 @@ Function *func_append(Function *list, Function *f)
         tail = tail->next;
     tail->next = f;
     return list;
+}
+
+ExternalDecl *external_function(Function *fn)
+{
+    ExternalDecl *external = arena_alloc_zeroed(sizeof(*external));
+    external->kind = EXT_FUNCTION;
+    external->function = fn;
+    return external;
+}
+
+ExternalDecl *external_declaration(Type *spec, Declarator *decl, Node *init,
+                                   SourceLoc loc)
+{
+    Type *ty = type_apply_declarator(spec, decl, loc);
+
+    if (ty && ty->kind == TY_FUNC) {
+        if (init)
+            diag_error_at(loc, "function '%s' is initialized like an object",
+                          declarator_name(decl));
+        return external_function(func_new_decl(spec, decl, 0, NULL, loc));
+    }
+
+    ExternalDecl *external = arena_alloc_zeroed(sizeof(*external));
+    GlobalObject *object = arena_alloc_zeroed(sizeof(*object));
+    object->name = declarator_name(decl);
+    object->loc = loc;
+    object->decl_spec = spec;
+    object->decl = decl;
+    object->init = init;
+    external->kind = EXT_OBJECT;
+    external->object = object;
+    return external;
+}
+
+ExternalDecl *external_append(ExternalDecl *list, ExternalDecl *external)
+{
+    if (!list)
+        return external;
+
+    ExternalDecl *tail = list;
+    Function *last_function = NULL;
+    while (tail->next) {
+        if (tail->kind == EXT_FUNCTION)
+            last_function = tail->function;
+        tail = tail->next;
+    }
+    if (tail->kind == EXT_FUNCTION)
+        last_function = tail->function;
+    tail->next = external;
+    if (last_function && external->kind == EXT_FUNCTION)
+        last_function->next = external->function;
+    return list;
+}
+
+Function *external_functions(ExternalDecl *list)
+{
+    for (; list; list = list->next)
+        if (list->kind == EXT_FUNCTION)
+            return list->function;
+    return NULL;
 }
 
 Declarator *declarator_empty(void)

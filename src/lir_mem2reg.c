@@ -34,6 +34,18 @@ static int direct_frame_operand(Operand operand, long *offset)
     return 1;
 }
 
+#if 0 /* mem2reg rewrite for in-place fp updates; paired with lower emit path. */
+static int is_fp_imm_mem_update(const Instr *ins)
+{
+    return ins->dst == LIR_NO_VREG &&
+           (ins->op == LIR_ADD || ins->op == LIR_SUB) &&
+           ins->a.kind == OPND_MEM &&
+           ins->a.u.mem.base == LIR_FP &&
+           ins->a.u.mem.index == LIR_NO_IDX &&
+           ins->b.kind == OPND_IMM;
+}
+#endif
+
 static int slot_at_offset(PromoteSlot *slots, int nslots, long offset)
 {
     for (int s = 0; s < nslots; s++) {
@@ -109,6 +121,14 @@ static void find_promotable_slots(LirFn *fn, const LirDom *dom,
                 }
                 continue;
             }
+
+#if 0 /* see is_fp_imm_mem_update in lir_mem2reg.c */
+            if (is_fp_imm_mem_update(ins) && slot >= 0 && slots[slot].eligible) {
+                if (!dom->reachable[b] || ins->aux != slots[slot].frame->size)
+                    slots[slot].eligible = 0;
+                continue;
+            }
+#endif
 
             disqualify_operand_uses(slots, nslots, ins->a);
             disqualify_operand_uses(slots, nslots, ins->b);
@@ -327,6 +347,23 @@ static void rename_block(RenameCtx *ctx, int block_id)
         int slot;
 
         rewrite_instruction_operands(&ins, ctx->alias);
+#if 0 /* see is_fp_imm_mem_update in lir_mem2reg.c */
+        long offset;
+        if (is_fp_imm_mem_update(&ins) &&
+            direct_frame_operand(ins.a, &offset)) {
+            slot = slot_at_offset(ctx->slots, ctx->nslots, offset);
+            if (slot >= 0 && ctx->slots[slot].eligible) {
+                int cur = resolve_alias(ctx->alias, ctx->current[slot]);
+                int neu = lir_new_vreg(ctx->fn);
+
+                ins.dst = neu;
+                ins.a = lir_vreg(cur);
+                block->instrs[out++] = ins;
+                ctx->current[slot] = neu;
+                continue;
+            }
+        }
+#endif
         slot = instruction_slot(&ins, ctx->slots, ctx->nslots);
         if (slot >= 0 && ins.op == LIR_LOAD &&
             ins.dst != ctx->slots[slot].seed) {

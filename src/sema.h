@@ -6,6 +6,6 @@
 
 /* Separate pass over the AST: resolves names to typed symbols, checks types
  * and lvalues, and computes each function's stack frame size. */
-void sema(Function *prog);
+void sema(ExternalDecl *prog);
 
 #endif /* XCC_SEMA_H */

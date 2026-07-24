@@ -9,6 +9,18 @@ typedef enum {
     DEF_PHI,
 } DefKind;
 
+#if 0 /* DCE roots for in-place fp updates; paired with lower emit path. */
+static int is_fp_imm_mem_update(const Instr *ins)
+{
+    return ins->dst == LIR_NO_VREG &&
+           (ins->op == LIR_ADD || ins->op == LIR_SUB) &&
+           ins->a.kind == OPND_MEM &&
+           ins->a.u.mem.base == LIR_FP &&
+           ins->a.u.mem.index == LIR_NO_IDX &&
+           ins->b.kind == OPND_IMM;
+}
+#endif
+
 typedef struct {
     DefKind kind;
     const Instr *ins;
@@ -64,6 +76,11 @@ static int instruction_has_effect(const Instr *ins)
     case LIR_MEMCPY:
     case LIR_CALL:
         return 1;
+#if 0 /* see is_fp_imm_mem_update in lir_dce.c */
+    case LIR_ADD:
+    case LIR_SUB:
+        return is_fp_imm_mem_update(ins);
+#endif
     case LIR_LOAD:
         /* Ordinary loads are removable today.  When volatile is represented
            in LIR, volatile loads MUST be classified as effectful here. */

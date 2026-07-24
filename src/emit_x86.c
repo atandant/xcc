@@ -606,6 +606,43 @@ static void emit_store_fp_slot(EmitCtx *c, Operand mem, int bytes)
     }
 }
 
+#if 0 /* Emitter support for LIR `add/sub [fp+off], $imm` (see lower.c). */
+static int is_fp_mem_imm_update(const Instr *ins)
+{
+    return ins->dst == LIR_NO_VREG &&
+           ins->a.kind == OPND_MEM &&
+           ins->a.u.mem.base == LIR_FP &&
+           ins->a.u.mem.index == LIR_NO_IDX &&
+           ins->b.kind == OPND_IMM;
+}
+
+static void emit_fp_mem_imm_binop(EmitCtx *c, Instr *ins)
+{
+    long off = fp_disp(c, ins->a.u.mem.disp);
+    int bytes = ins->aux > 0 ? ins->aux : 4;
+    const char *op = ins->op == LIR_ADD ? "add" :
+                     ins->op == LIR_SUB ? "sub" : "?";
+
+    switch (bytes) {
+    case 1:
+        fprintf(c->out, "  %sb $%ld, %ld(%%rbp)\n", op, ins->b.u.imm, off);
+        break;
+    case 2:
+        fprintf(c->out, "  %sw $%ld, %ld(%%rbp)\n", op, ins->b.u.imm, off);
+        break;
+    case 4:
+        fprintf(c->out, "  %sl $%ld, %ld(%%rbp)\n", op, ins->b.u.imm, off);
+        break;
+    case 8:
+        fprintf(c->out, "  %sq $%ld, %ld(%%rbp)\n", op, ins->b.u.imm, off);
+        break;
+    default:
+        assert(0 && "unexpected fp mem binop width");
+    }
+    invalidate_rax(c);
+}
+#endif
+
 static void emit_w4_result(EmitCtx *c, int phys, const char *scratch)
 {
     if (phys >= 0)
@@ -961,6 +998,14 @@ static void emit_instr(EmitCtx *c, Instr *ins)
                          ins->op == LIR_OR ? "or" :
                          "?";
         int dp;
+
+#if 0 /* see emit_fp_mem_imm_binop in emit_x86.c */
+        if (is_fp_mem_imm_update(ins) &&
+            (ins->op == LIR_ADD || ins->op == LIR_SUB)) {
+            emit_fp_mem_imm_binop(c, ins);
+            return;
+        }
+#endif
 
         if (ins->dst != LIR_NO_VREG && dst_phys(c, ins->dst, &dp)) {
             emit_binop_into(c, ins, dp, w, off_a, off_b, op);

@@ -6,6 +6,6 @@
 #include "ast.h"
 
 /* Walks the AST and emits AT&T-syntax x86-64 assembly (System V ABI). */
-void codegen(Function *fn, FILE *out, int verify_lir);
+void codegen(ExternalDecl *prog, FILE *out, int verify_lir);
 
 #endif /* XCC_CODEGEN_H */

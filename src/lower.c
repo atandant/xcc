@@ -315,6 +315,32 @@ static void emit_store_slot(LowerCtx *c, int src, Type *ty, int offset)
     });
 }
 
+#if 0 /* In-place `addl $1, off(%rbp)` for ++/-- on stack locals.
+       * Disabled: lowering this before mem2reg updates memory while the
+       * promoted SSA vreg (e.g. loop index i) is unchanged, causing infinite
+       * loops. Re-enable only with a late pass that knows the slot is not
+       * register-resident (after mem2reg/regalloc), not from lower. */
+static void emit_binop_imm_fp_slot(LowerCtx *c, int offset, Type *ty,
+                                    LirOp op, long imm)
+{
+    emit(c, (Instr){
+        .op = op,
+        .dst = LIR_NO_VREG,
+        .a = lir_mem(LIR_FP, offset),
+        .b = lir_imm(imm),
+        .w = store_lir_width(ty),
+        .aux = store_width_bytes(ty),
+    });
+}
+
+static int is_local_integer_lvalue(Node *lv)
+{
+    return lv->kind == ND_VAR &&
+           lv->storage == VAR_STORAGE_LOCAL &&
+           type_is_integer(lv->ty);
+}
+#endif
+
 static void emit_memcpy(LowerCtx *c, int dst, int src, int size)
 {
     emit(c, (Instr){
@@ -326,6 +352,17 @@ static void emit_memcpy(LowerCtx *c, int dst, int src, int size)
 }
 
 static int lower_object_addr(LowerCtx *c, Node *n);
+
+static int lower_symbol_addr(LowerCtx *c, const char *name)
+{
+    int dst = fresh(c);
+    emit(c, (Instr){
+        .op = LIR_LEA_SYM,
+        .dst = dst,
+        .sym_name = (char *)name,
+    });
+    return dst;
+}
 
 static int ptr_elem_size(Type *ptr_ty)
 {
@@ -370,6 +407,8 @@ static void lower_branch(LowerCtx *c, Node *n, int true_label,
                          int false_label);
 static int lower_member_addr(LowerCtx *c, Node *n);
 static int lower_call_ex(LowerCtx *c, Node *n, int result_off);
+static Member *member_meta(Node *n);
+static void lower_bitfield_store(LowerCtx *c, Node *lhs, Member *m, int val);
 
 static void lower_init_from_type(LowerCtx *c, Type *ty, Node **pcursor, int base_off)
 {
@@ -429,6 +468,8 @@ static int lower_object_addr(LowerCtx *c, Node *n)
 {
     switch (n->kind) {
     case ND_VAR: {
+        if (n->storage == VAR_STORAGE_GLOBAL)
+            return lower_symbol_addr(c, n->name);
         int dst = fresh(c);
         emit(c, (Instr){
             .op = LIR_LEA,
@@ -591,7 +632,8 @@ static void lower_bitfield_store_off(LowerCtx *c, int struct_off, Member *m, int
 
 static int lower_bitfield_unit_load(LowerCtx *c, Node *base, int unit_off)
 {
-    if (base->kind == ND_VAR && !base->var_decay)
+    if (base->kind == ND_VAR && !base->var_decay &&
+        base->storage == VAR_STORAGE_LOCAL)
         return lower_bitfield_unit_load_off(c, base->offset, unit_off);
 
     {
@@ -615,7 +657,8 @@ static int lower_bitfield_unit_load(LowerCtx *c, Node *base, int unit_off)
 
 static void lower_bitfield_unit_store(LowerCtx *c, Node *base, int unit_off, int val)
 {
-    if (base->kind == ND_VAR && !base->var_decay) {
+    if (base->kind == ND_VAR && !base->var_decay &&
+        base->storage == VAR_STORAGE_LOCAL) {
         lower_bitfield_unit_store_off(c, base->offset, unit_off, val);
         return;
     }
@@ -658,7 +701,8 @@ static int lower_bitfield_load(LowerCtx *c, Node *n, Member *m)
 
 static void lower_bitfield_store(LowerCtx *c, Node *lhs, Member *m, int val)
 {
-    if (lhs->lhs->kind == ND_VAR && !lhs->lhs->var_decay) {
+    if (lhs->lhs->kind == ND_VAR && !lhs->lhs->var_decay &&
+        lhs->lhs->storage == VAR_STORAGE_LOCAL) {
         lower_bitfield_store_off(c, lhs->lhs->offset, m, val);
         return;
     }
@@ -701,7 +745,8 @@ static int lower_member_addr(LowerCtx *c, Node *n)
         return dst;
     }
 
-    if (n->lhs->kind == ND_VAR && !n->lhs->var_decay) {
+    if (n->lhs->kind == ND_VAR && !n->lhs->var_decay &&
+        n->lhs->storage == VAR_STORAGE_LOCAL) {
         emit(c, (Instr){
             .op = LIR_LEA,
             .dst = dst,
@@ -711,7 +756,7 @@ static int lower_member_addr(LowerCtx *c, Node *n)
     }
 
     {
-        int base = lower_addr(c, n->lhs);
+        int base = lower_object_addr(c, n->lhs);
         emit(c, (Instr){
             .op = LIR_LEA,
             .dst = dst,
@@ -725,6 +770,21 @@ static int lower_addr(LowerCtx *c, Node *n)
 {
     switch (n->kind) {
     case ND_VAR:
+        if (n->storage == VAR_STORAGE_GLOBAL) {
+            int addr = lower_symbol_addr(c, n->name);
+            if (n->var_decay)
+                return addr;
+            int dst = fresh(c);
+            emit(c, (Instr){
+                .op = LIR_LOAD,
+                .dst = dst,
+                .a = lir_mem(addr, 0),
+                .w = load_lir_width(n->ty),
+                .sgn = load_sign(n->ty),
+                .aux = store_width_bytes(n->ty),
+            });
+            return widen_loaded_value(c, dst, n->ty);
+        }
         if (n->var_decay) {
             int dst = fresh(c);
             emit(c, (Instr){
@@ -1392,6 +1452,102 @@ static void lower_return_record(LowerCtx *c, Node *n, Type *ret_ty)
     emit(c, (Instr){ .op = LIR_JMP, .label = c->ret_label });
 }
 
+static void lower_store_lvalue(LowerCtx *c, Node *lhs, int val)
+{
+    if (lhs->kind == ND_VAR) {
+        if (lhs->storage == VAR_STORAGE_GLOBAL) {
+            int addr = lower_symbol_addr(c, lhs->name);
+            emit(c, (Instr){
+                .op = LIR_STORE,
+                .a = lir_mem(addr, 0),
+                .b = lir_vreg(val),
+                .w = store_lir_width(lhs->ty),
+                .aux = store_width_bytes(lhs->ty),
+            });
+        } else {
+            emit_store_slot(c, val, lhs->ty, lhs->offset);
+        }
+        return;
+    }
+    if (lhs->kind == ND_MEMBER) {
+        Member *m = member_meta(lhs);
+        if (m->is_bitfield && m->bit_width > 0) {
+            lower_bitfield_store(c, lhs, m, val);
+            return;
+        }
+        int addr = lower_member_addr(c, lhs);
+        emit(c, (Instr){
+            .op = LIR_STORE,
+            .a = lir_mem(addr, 0),
+            .b = lir_vreg(val),
+            .w = store_lir_width(lhs->ty),
+            .aux = store_width_bytes(lhs->ty),
+        });
+        return;
+    }
+    {
+        int addr = lower_addr(c, lhs);
+        emit(c, (Instr){
+            .op = LIR_STORE,
+            .a = lir_mem(addr, 0),
+            .b = lir_vreg(val),
+            .w = store_lir_width(lhs->ty),
+            .aux = store_width_bytes(lhs->ty),
+        });
+    }
+}
+
+static int lower_step_value(LowerCtx *c, int old, Type *oty, int is_inc)
+{
+    if (type_is_pointer(oty)) {
+        int dst = fresh(c);
+        long delta = (long)ptr_elem_size(oty) * (is_inc ? 1 : -1);
+        if (fits_imm32(delta)) {
+            emit(c, (Instr){
+                .op = LIR_LEA,
+                .dst = dst,
+                .a = lir_mem(old, delta),
+            });
+        } else {
+            int t = fresh(c);
+            emit(c, (Instr){ .op = LIR_MOVI, .dst = t, .a = lir_imm(delta) });
+            emit(c, (Instr){
+                .op = LIR_ADD,
+                .dst = dst,
+                .a = lir_vreg(old),
+                .b = lir_vreg(t),
+                .w = LIR_W8,
+            });
+        }
+        return dst;
+    }
+    {
+        int dst = fresh(c);
+        LirWidth w = store_lir_width(oty);
+        emit(c, (Instr){
+            .op = is_inc ? LIR_ADD : LIR_SUB,
+            .dst = dst,
+            .a = lir_vreg(old),
+            .b = lir_imm(1),
+            .w = w,
+        });
+        return dst;
+    }
+}
+
+static int lower_incdec(LowerCtx *c, Node *n)
+{
+    Node *lv = n->operand;
+    int is_post = n->kind == ND_POSTINC || n->kind == ND_POSTDEC;
+    int is_inc = n->kind == ND_PREINC || n->kind == ND_POSTINC;
+    int old = lower_expr(c, lv);
+    int updated = lower_step_value(c, old, lv->ty, is_inc);
+    lower_store_lvalue(c, lv, updated);
+    if (is_post)
+        return widen_loaded_value(c, old, n->ty);
+    return widen_loaded_value(c, updated, n->ty);
+}
+
 static int lower_expr(LowerCtx *c, Node *n)
 {
     if (n->func_decay && n->kind == ND_VAR) {
@@ -1414,6 +1570,19 @@ static int lower_expr(LowerCtx *c, Node *n)
         return dst;
     }
     case ND_VAR: {
+        if (n->storage == VAR_STORAGE_GLOBAL) {
+            int addr = lower_symbol_addr(c, n->name);
+            int dst = fresh(c);
+            emit(c, (Instr){
+                .op = LIR_LOAD,
+                .dst = dst,
+                .a = lir_mem(addr, 0),
+                .w = load_lir_width(n->ty),
+                .sgn = load_sign(n->ty),
+                .aux = store_width_bytes(n->ty),
+            });
+            return widen_loaded_value(c, dst, n->ty);
+        }
         int dst = fresh(c);
         return emit_load_slot(c, dst, n->ty, n->offset);
     }
@@ -1428,6 +1597,11 @@ static int lower_expr(LowerCtx *c, Node *n)
             .op = LIR_NEG, .dst = dst, .a = lir_vreg(v), .w = expr_width(n->operand) });
         return dst;
     }
+    case ND_PREINC:
+    case ND_PREDEC:
+    case ND_POSTINC:
+    case ND_POSTDEC:
+        return lower_incdec(c, n);
     case ND_NOT: {
         int v = lower_expr(c, n->operand);
         int dst = fresh(c);
@@ -1501,15 +1675,10 @@ static int lower_expr(LowerCtx *c, Node *n)
         switch (n->operand->kind) {
         case ND_VAR:
             if (n->operand->ty && n->operand->ty->kind == TY_FUNC) {
-                int dst = fresh(c);
-
-                emit(c, (Instr){
-                    .op = LIR_LEA_SYM,
-                    .dst = dst,
-                    .sym_name = n->operand->name,
-                });
-                return dst;
+                return lower_symbol_addr(c, n->operand->name);
             }
+            if (n->operand->storage == VAR_STORAGE_GLOBAL)
+                return lower_symbol_addr(c, n->operand->name);
             emit(c, (Instr){
                 .op = LIR_LEA,
                 .dst = dst,
@@ -1563,7 +1732,8 @@ static int lower_expr(LowerCtx *c, Node *n)
         if (type_is_record(n->lhs->ty)) {
             if (n->rhs->kind == ND_CALL &&
                 abi_type_is_record_pass(n->lhs->ty) &&
-                n->lhs->kind == ND_VAR) {
+                n->lhs->kind == ND_VAR &&
+                n->lhs->storage == VAR_STORAGE_LOCAL) {
                 int val = lower_call_ex(c, n->rhs, n->lhs->offset);
                 return val;
             }
@@ -1586,7 +1756,18 @@ static int lower_expr(LowerCtx *c, Node *n)
         }
         int val = lower_expr(c, n->rhs);
         if (n->lhs->kind == ND_VAR) {
-            emit_store_slot(c, val, n->lhs->ty, n->lhs->offset);
+            if (n->lhs->storage == VAR_STORAGE_GLOBAL) {
+                int addr = lower_symbol_addr(c, n->lhs->name);
+                emit(c, (Instr){
+                    .op = LIR_STORE,
+                    .a = lir_mem(addr, 0),
+                    .b = lir_vreg(val),
+                    .w = store_lir_width(n->lhs->ty),
+                    .aux = store_width_bytes(n->lhs->ty),
+                });
+            } else {
+                emit_store_slot(c, val, n->lhs->ty, n->lhs->offset);
+            }
             return val;
         }
         if (n->lhs->kind == ND_MEMBER) {

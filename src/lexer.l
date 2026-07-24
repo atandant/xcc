@@ -142,6 +142,8 @@ static int has_long_suffix(const char *text)
 "enum"              { return ENUM; }
 "sizeof"            { return SIZEOF; }
 
+"++"                { return INC; }
+"--"                { return DEC; }
 "->"                { return ARROW; }
 "&&"                { return LAND; }
 "||"                { return LOR; }

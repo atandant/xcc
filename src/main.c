@@ -24,7 +24,7 @@
 
 extern FILE *yyin;
 int yyparse(void);
-extern Function *g_program;
+extern ExternalDecl *g_program;
 
 const char *g_filename = "<stdin>";
 
@@ -218,10 +218,10 @@ int main(int argc, char **argv)
     if (diag_error_count > 0)
         return 1;
 
-    ast_optimize_program(g_program);
+    ast_optimize_program(external_functions(g_program));
 
     if (lir_dump_mode != 0) {
-        for (Function *fn = g_program; fn; fn = fn->next) {
+        for (Function *fn = external_functions(g_program); fn; fn = fn->next) {
             if (!fn->is_definition)
                 continue;
             LirFn *lf = lower_function(fn);
