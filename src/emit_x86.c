@@ -882,6 +882,8 @@ static void emit_instr(EmitCtx *c, Instr *ins)
         {
             int dp;
             if (dst_phys(c, ins->dst, &dp)) {
+                if (operand_is_phys(c, ins->a, dp))
+                    return;
                 load_operand(c, ins->a, reg64_name(dp), LIR_W8);
                 invalidate_rax(c);
                 return;

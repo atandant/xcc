@@ -232,12 +232,13 @@ static void place_phis(LirFn *fn, const LirDom *dom, PromoteSlot *slots,
 
         for (int at = 0; at < nwork; at++) {
             int block = work[at];
+            const LirDomList *frontier = &dom->frontier[block];
 
-            for (int member = 0; member < nblocks; member++) {
+            for (int f = 0; f < frontier->nblocks; f++) {
+                int member = frontier->blocks[f];
                 int index = s * nblocks + member;
 
-                if (!lir_dom_in_frontier(dom, block, member) ||
-                    phi_vreg[index] != LIR_NO_VREG)
+                if (phi_vreg[index] != LIR_NO_VREG)
                     continue;
                 phi_vreg[index] = lir_new_vreg(fn);
                 lir_block_add_phi(&fn->blocks[member], phi_vreg[index]);
@@ -350,10 +351,9 @@ static void rename_block(RenameCtx *ctx, int block_id)
             add_successor_phi_inputs(ctx, block_id, block->term.false_target);
     }
 
-    for (int child = 0; child < ctx->fn->nblocks; child++) {
-        if (lir_dom_is_child(ctx->dom, block_id, child))
-            rename_block(ctx, child);
-    }
+    const LirDomList *children = &ctx->dom->children[block_id];
+    for (int i = 0; i < children->nblocks; i++)
+        rename_block(ctx, children->blocks[i]);
     memcpy(ctx->current, saved, (size_t)ctx->nslots * sizeof(*saved));
 }
 

@@ -220,12 +220,26 @@ void regalloc_linear(LirFn *lf, Function *fn, const Liveness *lv,
 
     int *reg = arena_alloc((size_t)nv * sizeof(*reg));
     int *stackloc = arena_alloc_zeroed((size_t)nv * sizeof(*stackloc));
+    int *move_src = arena_alloc((size_t)nv * sizeof(*move_src));
     int nspill = 0;
     SpillSlot *slots = NULL;
     int nslots = 0;
 
-    for (int i = 0; i < nv; i++)
+    for (int i = 0; i < nv; i++) {
         reg[i] = REG_NONE;
+        move_src[i] = LIR_NO_VREG;
+    }
+    for (int b = 0; b < lf->nblocks; b++) {
+        const LirBlock *block = &lf->blocks[b];
+        for (int i = 0; i < block->ninstr; i++) {
+            const Instr *ins = &block->instrs[i];
+            if (ins->op == LIR_MOV && ins->dst != LIR_NO_VREG &&
+                ins->a.kind == OPND_VREG &&
+                lv->by_vreg[ins->dst].start == ins->position &&
+                lv->by_vreg[ins->a.u.vreg].end == ins->position)
+                move_src[ins->dst] = ins->a.u.vreg;
+        }
+    }
 
     Active active[64];
     int nactive = 0;
@@ -248,7 +262,24 @@ void regalloc_linear(LirFn *lf, Function *fn, const Liveness *lv,
         }
 
         int cross_call = interval_spans_call(lf, start, end);
-        int r = free_reg(td, lv, freemask, start, end, cross_call);
+        int r = REG_NONE;
+        int src = move_src[v];
+        int src_active = -1;
+        if (src != LIR_NO_VREG && reg[src] >= 0) {
+            int preferred = reg[src];
+            src_active = active_index(active, nactive, src);
+            if ((src_active >= 0 || (freemask & (1u << preferred))) &&
+                reg_ok_for_interval(td, preferred, cross_call) &&
+                !reg_blocked(lv, preferred, start, end)) {
+                r = preferred;
+                if (src_active >= 0) {
+                    active_remove(active, &nactive, src_active);
+                    freemask |= 1u << preferred;
+                }
+            }
+        }
+        if (r == REG_NONE)
+            r = free_reg(td, lv, freemask, start, end, cross_call);
         if (r == REG_NONE) {
             int spill_v = pick_spill_victim(active, nactive, lf, lv);
             int steal = 0;

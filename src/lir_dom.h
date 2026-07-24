@@ -5,11 +5,19 @@
 #include "lir.h"
 
 typedef struct {
+    int *blocks;
+    int nblocks;
+    int cap;
+} LirDomList;
+
+typedef struct {
     int nblocks;
     unsigned char *reachable;
     int *idom;
-    unsigned char *children;
-    unsigned char *frontier;
+    LirDomList *children;
+    LirDomList *frontier;
+    int *preorder;
+    int *postorder;
 } LirDom;
 
 void lir_dom_compute(const LirFn *fn, LirDom *dom);

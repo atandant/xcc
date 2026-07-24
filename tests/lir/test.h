@@ -54,5 +54,6 @@ void test_mem2reg_loop(void);
 void test_mem2reg_rejections(void);
 void test_cfg_simplify_forwarding(void);
 void test_cfg_simplify_merge_unreachable(void);
+void test_dom_chk_sparse(void);
 
 #endif

@@ -151,6 +151,7 @@ if sed -n '/function mul_left /,/^}/p' "$TMP/opt-lir" | grep -Eq '^[[:space:]]+[
    ! sed -n '/function dce_dead_load /,/^}/p' "$TMP/opt-lir" | grep -Eq '^[[:space:]]+[0-9]+[[:space:]]+load[[:space:]]' &&
    sed -n '/function dce_keep_call /,/^}/p' "$TMP/opt-lir" | grep -Eq '^[[:space:]]+[0-9]+[[:space:]]+call[[:space:]]' &&
    [ "$(sed -n '/function dce_dead_phi /,/^}/p' "$TMP/opt-lir" | grep -Ec '^[[:space:]]+[0-9]+[[:space:]]+add[[:space:]]')" -eq 1 ] &&
+   awk '$1 == "mov" { src = $2; sub(/,$/, "", src); if (src == $3) exit 1 }' "$TMP/opt.s" &&
    ! sed -n '/^call_arg_only:/,/^[.]L[.]return[.]call_arg_only:/p' "$TMP/opt.s" | grep -Eq '^[[:space:]]+(push|pop)[[:space:]]+%(rbx|r12|r13|r14|r15)' &&
    [ -n "$conditional_mul" ] && [ "$conditional_mul" -lt "$conditional_header" ] &&
    [ -n "$variant_mul" ] && [ "$variant_mul" -gt "$variant_header" ] &&
