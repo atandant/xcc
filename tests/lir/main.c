@@ -15,6 +15,8 @@ int main(void)
         {"licm-variant",test_licm_variant}, {"licm-safety",test_licm_unsafe_and_no_preheader},
         {"mem2reg-straight",test_mem2reg_straight}, {"mem2reg-diamond",test_mem2reg_diamond},
         {"mem2reg-loop",test_mem2reg_loop}, {"mem2reg-rejections",test_mem2reg_rejections},
+        {"cfg-simplify-forwarding",test_cfg_simplify_forwarding},
+        {"cfg-simplify-merge-unreachable",test_cfg_simplify_merge_unreachable},
     };
     int failed=0, n=(int)(sizeof(cases)/sizeof(cases[0]));
     for(int i=0;i<n;i++) {

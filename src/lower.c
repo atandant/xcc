@@ -100,9 +100,80 @@ static void lower_bitfield_store_off(LowerCtx *c, int struct_off, Member *m, int
 static int lower_cast_value(LowerCtx *c, Node *n);
 static int convert_value(LowerCtx *c, int v, Type *from, Type *to);
 
+static FrameLocal *param_frame_local(LowerCtx *c, int offset)
+{
+    for (int i = 0; i < c->fn->nframe_locals; i++) {
+        FrameLocal *local = &c->fn->frame_locals[i];
+        if (local->offset == offset)
+            return local;
+    }
+    return NULL;
+}
+
 static void lower_params(LowerCtx *c)
 {
-    (void)c;
+    int nparams = c->fn->nparams;
+    Param **params = arena_alloc((size_t)nparams * sizeof(*params));
+    int *raws = arena_alloc((size_t)nparams * sizeof(*raws));
+    int at = 0;
+
+    for (Param *p = c->fn->params; p; p = p->next) {
+        params[at] = p;
+        raws[at] = LIR_NO_VREG;
+        at++;
+    }
+
+    /* Capture every incoming register before normalizing any one parameter:
+       an allocated conversion result must not overwrite a later ABI input. */
+    for (int i = 0; i < nparams; i++) {
+        Param *p = params[i];
+        TypeScalarInfo si;
+        FrameLocal *local = param_frame_local(c, p->offset);
+        int raw;
+
+        if (p->abi_gpr_start < 0 || p->abi_ngpr != 1 || !local ||
+            !local->promotable_scalar || local->address_taken ||
+            !type_scalar_info(type_decay(p->ty), &si))
+            continue;
+
+        raw = fresh(c);
+        emit(c, (Instr){
+            .op = LIR_MOV,
+            .dst = raw,
+            .a = lir_phys(X86_SYSV.arg_regs[p->abi_gpr_start]),
+        });
+        lir_precolor_vreg(c->lf, raw,
+                          X86_SYSV.arg_regs[p->abi_gpr_start]);
+        raws[i] = raw;
+    }
+
+    for (int i = 0; i < nparams; i++) {
+        Param *p = params[i];
+        TypeScalarInfo si;
+        int raw = raws[i];
+        int value;
+
+        if (raw == LIR_NO_VREG)
+            continue;
+        (void)type_scalar_info(type_decay(p->ty), &si);
+        if (si.width == 4) {
+            value = fresh(c);
+            emit(c, (Instr){
+                .op = LIR_CONV,
+                .dst = value,
+                .a = lir_vreg(raw),
+                .conv = si.is_signed ? CONV_TRUNC_LO32 : CONV_ZEXT32,
+            });
+        } else {
+            value = fresh(c);
+            emit(c, (Instr){
+                .op = LIR_MOV,
+                .dst = value,
+                .a = lir_vreg(raw),
+            });
+        }
+        lir_bind_home(c->lf, p->offset, value);
+    }
 }
 
 static int is_cmp(BinOp op)

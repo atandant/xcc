@@ -185,7 +185,9 @@ static void instr_use_def(Instr *ins, int i, const TargetDesc *td, Liveness *lv,
     case LIR_CALL:
         if (ins->call_indirect)
             add_use(uses, nu, ins->call_reg);
-        block_caller_saved(lv, td, i);
+        /* Arguments and an indirect callee are read at i.  The call clobbers
+           caller-saved registers immediately afterward, at i + 1. */
+        block_caller_saved(lv, td, i + 1);
         return;
 
     case LIR_RET:

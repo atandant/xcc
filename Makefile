@@ -29,7 +29,7 @@ DEPS = $(OBJS:.o=.d) $(GEN_OBJS:.o=.d)
 LIR_TEST_SRCS = tests/lir/main.c tests/lir/test.c \
                 tests/lir/algebraic.c tests/lir/strength_reduce.c \
                 tests/lir/simplify_conv.c tests/lir/dce.c \
-                tests/lir/licm.c tests/lir/mem2reg.c
+                tests/lir/licm.c tests/lir/mem2reg.c tests/lir/cfg.c
 LIR_TEST_OBJS = $(BUILD)/arena.o $(BUILD)/diag.o $(BUILD)/lir.o \
                 $(BUILD)/lir_cfg.o $(BUILD)/lir_dom.o $(BUILD)/lir_mem2reg.o \
                 $(BUILD)/lir_dce.o $(BUILD)/lir_licm.o \

@@ -417,6 +417,74 @@ static void emit_cmp(EmitCtx *c, Operand a, Operand b, LirWidth w)
     fprintf(c->out, "  cmp %s, %s\n", x86_reg_name_lir(s1, w), ar);
 }
 
+static int operand_depends_on_phys(EmitCtx *c, Operand operand, int phys)
+{
+    if (operand.kind == OPND_PHYS)
+        return operand.u.phys == phys;
+    if (operand.kind == OPND_VREG)
+        return vreg_phys(c, operand.u.vreg) == phys;
+    if (operand.kind != OPND_MEM)
+        return 0;
+    if (operand.u.mem.base != LIR_FP &&
+        vreg_phys(c, operand.u.mem.base) == phys)
+        return 1;
+    return operand.u.mem.index != LIR_NO_IDX &&
+           vreg_phys(c, operand.u.mem.index) == phys;
+}
+
+static int operand_is_phys(EmitCtx *c, Operand operand, int phys)
+{
+    if (operand.kind == OPND_PHYS)
+        return operand.u.phys == phys;
+    return operand.kind == OPND_VREG &&
+           vreg_phys(c, operand.u.vreg) == phys;
+}
+
+static void emit_call_register_args(EmitCtx *c, const Instr *ins)
+{
+    Operand args[6];
+    unsigned pending = 0;
+
+    for (int i = 0; i < ins->call_nreg; i++) {
+        args[i] = ins->call_args[i];
+        if (!operand_is_phys(c, args[i], c->td->arg_regs[i]))
+            pending |= 1u << i;
+    }
+
+    while (pending) {
+        int progress = 0;
+
+        for (int i = 0; i < ins->call_nreg; i++) {
+            int dst;
+            int needed = 0;
+
+            if (!(pending & (1u << i)))
+                continue;
+            dst = c->td->arg_regs[i];
+            for (int j = 0; j < ins->call_nreg; j++) {
+                if (j != i && (pending & (1u << j)) &&
+                    operand_depends_on_phys(c, args[j], dst)) {
+                    needed = 1;
+                    break;
+                }
+            }
+            if (needed)
+                continue;
+            load_operand(c, args[i], reg64_name(dst), LIR_W8);
+            pending &= ~(1u << i);
+            progress = 1;
+        }
+
+        if (!progress) {
+            int first = 0;
+            while (!(pending & (1u << first)))
+                first++;
+            load_operand(c, args[first], reg64_name(c->td->scratch0), LIR_W8);
+            args[first] = lir_phys(c->td->scratch0);
+        }
+    }
+}
+
 static void emit_store_rax_partial(EmitCtx *c, const char *base, long off,
                                    int bytes)
 {
@@ -1107,14 +1175,13 @@ static void emit_instr(EmitCtx *c, Instr *ins)
             fprintf(c->out, "  mov %%rax, %d(%%rsp)\n",
                     8 * (i - ins->call_nreg));
         }
-        for (int i = 0; i < ins->call_nreg; i++) {
-            int preg = td->arg_regs[i];
-            load_operand(c, ins->call_args[i], reg64_name(preg), LIR_W8);
-        }
+        if (ins->call_indirect)
+            load_operand(c, lir_vreg(ins->call_reg),
+                         reg64_name(td->scratch1), LIR_W8);
+        emit_call_register_args(c, ins);
         fprintf(c->out, "  mov $0, %%al\n");
         if (ins->call_indirect) {
-            load_operand(c, lir_vreg(ins->call_reg), "%rax", LIR_W8);
-            fprintf(c->out, "  call *%%rax\n");
+            fprintf(c->out, "  call *%s\n", reg64_name(td->scratch1));
         } else {
             fprintf(c->out, "  call %s\n", ins->call_name);
         }

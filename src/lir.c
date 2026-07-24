@@ -89,6 +89,11 @@ LirFn *lir_fn_new(const char *name)
     fn->blocks = arena_alloc_zeroed((size_t)fn->blocks_cap * sizeof(*fn->blocks));
     fn->cap = 64;
     fn->instrs = arena_alloc((size_t)fn->cap * sizeof(*fn->instrs));
+    fn->vreg_fixed_cap = 64;
+    fn->vreg_fixed_phys = arena_alloc((size_t)fn->vreg_fixed_cap *
+                                      sizeof(*fn->vreg_fixed_phys));
+    for (int i = 0; i < fn->vreg_fixed_cap; i++)
+        fn->vreg_fixed_phys[i] = -1;
     fn->homes_cap = 32;
     fn->homes = arena_alloc((size_t)fn->homes_cap * sizeof(*fn->homes));
     fn->entry_block = lir_new_block(fn);
@@ -162,7 +167,7 @@ void lir_phi_add_input(LirPhi *phi, LirBlockId pred, int value)
     phi->inputs[phi->ninputs++] = (PhiInput){ .pred = pred, .value = value };
 }
 
-int lir_home_vreg(LirFn *lf, int offset)
+int lir_home_vreg(const LirFn *lf, int offset)
 {
     for (int i = 0; i < lf->nhomes; i++) {
         if (lf->homes[i].offset == offset)
@@ -221,7 +226,32 @@ int lir_max_outgoing(const LirFn *lf)
 
 int lir_new_vreg(LirFn *fn)
 {
+    if (fn->nvreg >= fn->vreg_fixed_cap) {
+        int old_cap = fn->vreg_fixed_cap;
+        int new_cap = old_cap * 2;
+        int *fixed = arena_alloc((size_t)new_cap * sizeof(*fixed));
+
+        memcpy(fixed, fn->vreg_fixed_phys, (size_t)old_cap * sizeof(*fixed));
+        for (int i = old_cap; i < new_cap; i++)
+            fixed[i] = -1;
+        fn->vreg_fixed_phys = fixed;
+        fn->vreg_fixed_cap = new_cap;
+    }
+    fn->vreg_fixed_phys[fn->nvreg] = -1;
     return fn->nvreg++;
+}
+
+void lir_precolor_vreg(LirFn *fn, int vreg, int phys)
+{
+    assert(vreg >= 0 && vreg < fn->nvreg);
+    fn->vreg_fixed_phys[vreg] = phys;
+}
+
+int lir_vreg_precolor(const LirFn *fn, int vreg)
+{
+    if (vreg < 0 || vreg >= fn->nvreg)
+        return -1;
+    return fn->vreg_fixed_phys[vreg];
 }
 
 int lir_new_label(LirFn *fn)

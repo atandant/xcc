@@ -190,6 +190,8 @@ struct LirFn {
     int ninstr;
     int cap;
     int nvreg;
+    int *vreg_fixed_phys;
+    int vreg_fixed_cap;
     int label_count;
     int epilogue_label;
     FrameLocal *frame_locals;
@@ -209,6 +211,8 @@ int lir_instruction_defines_vreg(const Instr *ins);
 
 LirFn *lir_fn_new(const char *name);
 int lir_new_vreg(LirFn *fn);
+void lir_precolor_vreg(LirFn *fn, int vreg, int phys);
+int lir_vreg_precolor(const LirFn *fn, int vreg);
 int lir_new_label(LirFn *fn);
 LirBlockId lir_new_block(LirFn *fn);
 LirBlockId lir_label_block(LirFn *fn, int label);
@@ -218,7 +222,7 @@ LirPhi *lir_block_add_phi(LirBlock *block, int dst);
 void lir_phi_add_input(LirPhi *phi, LirBlockId pred, int value);
 int lir_emit(LirFn *fn, Instr ins);
 void lir_dump_fn(LirFn *fn, FILE *out);
-int lir_home_vreg(LirFn *lf, int offset);
+int lir_home_vreg(const LirFn *lf, int offset);
 int lir_is_home_vreg(const LirFn *lf, int vreg);
 void lir_bind_home(LirFn *lf, int offset, int vreg);
 int lir_max_outgoing(const LirFn *lf);

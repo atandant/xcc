@@ -52,5 +52,7 @@ void test_mem2reg_straight(void);
 void test_mem2reg_diamond(void);
 void test_mem2reg_loop(void);
 void test_mem2reg_rejections(void);
+void test_cfg_simplify_forwarding(void);
+void test_cfg_simplify_merge_unreachable(void);
 
 #endif

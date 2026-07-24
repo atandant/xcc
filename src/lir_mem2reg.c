@@ -136,21 +136,40 @@ static int count_eligible(const PromoteSlot *slots, int nslots)
     return count;
 }
 
+static int count_seed_loads(const LirFn *fn, const PromoteSlot *slots,
+                            int nslots)
+{
+    int count = 0;
+
+    for (int s = 0; s < nslots; s++) {
+        if (slots[s].eligible &&
+            lir_home_vreg(fn, slots[s].frame->offset) == LIR_NO_VREG)
+            count++;
+    }
+    return count;
+}
+
 static void insert_seed_loads(LirFn *fn, PromoteSlot *slots, int nslots)
 {
     LirBlock *entry = &fn->blocks[fn->entry_block];
-    int nseed = count_eligible(slots, nslots);
+    int nseed = count_seed_loads(fn, slots, nslots);
     Instr *instrs = arena_alloc((size_t)(entry->ninstr + nseed) * sizeof(*instrs));
     int out = 0;
 
     /* Seed every promoted object so paths that read before storing always have
-       an SSA value.  Seeds for objects initialized on every path can become
-       dead; a future DCE pass or lazy seed insertion can remove those loads. */
+       an SSA value.  Register parameters already have an incoming home vreg;
+       DCE removes memory seeds made dead by stores on every path. */
     for (int s = 0; s < nslots; s++) {
         Instr seed;
+        int home;
 
         if (!slots[s].eligible)
             continue;
+        home = lir_home_vreg(fn, slots[s].frame->offset);
+        if (home != LIR_NO_VREG) {
+            slots[s].seed = home;
+            continue;
+        }
         seed = slots[s].load_template;
         seed.dst = lir_new_vreg(fn);
         seed.position = 0;

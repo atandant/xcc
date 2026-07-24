@@ -312,6 +312,167 @@ static void eliminate_phis(LirFn *fn)
     }
 }
 
+static int forwarding_target(const LirFn *fn, int block)
+{
+    int target = block;
+
+    for (int steps = 0; steps < fn->nblocks; steps++) {
+        const LirBlock *next = &fn->blocks[target];
+
+        if (target == fn->epilogue_label || next->ninstr != 0 ||
+            next->term.kind != LIR_TERM_JMP || next->term.target == target)
+            break;
+        target = next->term.target;
+    }
+    return target;
+}
+
+static int thread_forwarding_blocks(LirFn *fn)
+{
+    int changed = 0;
+
+    for (int b = 0; b < fn->nblocks; b++) {
+        LirTerminator *term = &fn->blocks[b].term;
+
+        if (term->kind == LIR_TERM_JMP) {
+            int target = forwarding_target(fn, term->target);
+            if (target != term->target) {
+                term->target = target;
+                changed = 1;
+            }
+        } else if (term->kind == LIR_TERM_BR) {
+            int true_target = forwarding_target(fn, term->true_target);
+            int false_target = forwarding_target(fn, term->false_target);
+
+            if (true_target != term->true_target ||
+                false_target != term->false_target) {
+                term->true_target = true_target;
+                term->false_target = false_target;
+                changed = 1;
+            }
+            if (term->true_target == term->false_target) {
+                term->kind = LIR_TERM_JMP;
+                term->target = term->true_target;
+                changed = 1;
+            }
+        }
+    }
+    return changed;
+}
+
+static int merge_single_predecessor_blocks(LirFn *fn)
+{
+    int changed = 0;
+
+    lir_cfg_rebuild_preds(fn);
+    for (int b = 0; b < fn->nblocks; b++) {
+        LirBlock *block = &fn->blocks[b];
+        int successor;
+
+        if (block->term.kind != LIR_TERM_JMP)
+            continue;
+        successor = block->term.target;
+        if (successor == b || successor == fn->entry_block ||
+            successor == fn->epilogue_label ||
+            fn->blocks[successor].npreds != 1)
+            continue;
+
+        LirBlock *next = &fn->blocks[successor];
+        for (int i = 0; i < next->ninstr; i++)
+            lir_block_emit(block, next->instrs[i]);
+        block->term = next->term;
+        next->ninstr = 0;
+        next->term.kind = LIR_TERM_JMP;
+        next->term.target = successor;
+        changed = 1;
+        lir_cfg_rebuild_preds(fn);
+    }
+    return changed;
+}
+
+static void mark_cfg_reachable(const LirFn *fn, int block,
+                               unsigned char *reachable)
+{
+    const LirTerminator *term;
+
+    if (!valid_block(fn, block) || reachable[block])
+        return;
+    reachable[block] = 1;
+    term = &fn->blocks[block].term;
+    if (term->kind == LIR_TERM_JMP) {
+        mark_cfg_reachable(fn, term->target, reachable);
+    } else if (term->kind == LIR_TERM_BR) {
+        mark_cfg_reachable(fn, term->true_target, reachable);
+        mark_cfg_reachable(fn, term->false_target, reachable);
+    }
+}
+
+static int remove_unreachable_blocks(LirFn *fn)
+{
+    int old_nblocks = fn->nblocks;
+    unsigned char *reachable = arena_alloc_zeroed((size_t)old_nblocks);
+    int *map = arena_alloc((size_t)old_nblocks * sizeof(*map));
+    int nblocks = 0;
+
+    mark_cfg_reachable(fn, fn->entry_block, reachable);
+    reachable[fn->epilogue_label] = 1;
+    for (int b = 0; b < old_nblocks; b++) {
+        map[b] = reachable[b] ? nblocks++ : LIR_NO_BLOCK;
+    }
+    if (nblocks == old_nblocks)
+        return 0;
+
+    LirBlock *blocks = arena_alloc_zeroed((size_t)fn->blocks_cap *
+                                          sizeof(*blocks));
+    for (int b = 0; b < old_nblocks; b++) {
+        if (!reachable[b])
+            continue;
+        blocks[map[b]] = fn->blocks[b];
+        blocks[map[b]].id = map[b];
+    }
+    fn->blocks = blocks;
+    fn->nblocks = nblocks;
+    fn->entry_block = map[fn->entry_block];
+    fn->epilogue_label = map[fn->epilogue_label];
+
+    for (int b = 0; b < fn->nblocks; b++) {
+        LirTerminator *term = &fn->blocks[b].term;
+        if (term->kind == LIR_TERM_JMP) {
+            term->target = map[term->target];
+        } else if (term->kind == LIR_TERM_BR) {
+            term->true_target = map[term->true_target];
+            term->false_target = map[term->false_target];
+        }
+    }
+    for (int label = 0; label < fn->label_count; label++) {
+        int block = fn->label_blocks[label];
+        fn->label_blocks[label] = block >= 0 && block < old_nblocks
+                                  ? map[block] : LIR_NO_BLOCK;
+    }
+    lir_cfg_rebuild_preds(fn);
+    return 1;
+}
+
+int lir_cfg_simplify(LirFn *fn)
+{
+    int any_changed = 0;
+
+    if (fn->stage != LIR_STAGE_LOWERED)
+        diag_fatal("cannot simplify non-lowered CFG in function '%s'", fn->name);
+    for (;;) {
+        int changed = 0;
+
+        changed |= thread_forwarding_blocks(fn);
+        changed |= merge_single_predecessor_blocks(fn);
+        changed |= remove_unreachable_blocks(fn);
+        any_changed |= changed;
+        if (!changed)
+            break;
+    }
+    lir_cfg_rebuild_preds(fn);
+    return any_changed;
+}
+
 void lir_cfg_number_instructions(LirFn *fn)
 {
     int position = 0;
@@ -322,16 +483,22 @@ void lir_cfg_number_instructions(LirFn *fn)
             continue;
         block = &fn->blocks[b];
         block->start_position = position;
-        for (int i = 0; i < block->ninstr; i++)
-            block->instrs[i].position = position++;
-        block->term.position = position++;
+        for (int i = 0; i < block->ninstr; i++) {
+            block->instrs[i].position = position;
+            position += 2;
+        }
+        block->term.position = position;
+        position += 2;
         block->end_position = block->term.position;
     }
     LirBlock *epilogue = &fn->blocks[fn->epilogue_label];
     epilogue->start_position = position;
-    for (int i = 0; i < epilogue->ninstr; i++)
-        epilogue->instrs[i].position = position++;
-    epilogue->term.position = position++;
+    for (int i = 0; i < epilogue->ninstr; i++) {
+        epilogue->instrs[i].position = position;
+        position += 2;
+    }
+    epilogue->term.position = position;
+    position += 2;
     epilogue->end_position = epilogue->term.position;
     fn->npositions = position;
 }
@@ -343,5 +510,6 @@ void lir_cfg_lower(LirFn *fn)
     eliminate_phis(fn);
     lir_cfg_rebuild_preds(fn);
     fn->stage = LIR_STAGE_LOWERED;
+    lir_cfg_simplify(fn);
     lir_cfg_number_instructions(fn);
 }

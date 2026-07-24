@@ -69,7 +69,8 @@ static int interval_spans_call(const LirFn *lf, int start, int end)
         const LirBlock *block = &lf->blocks[b];
         for (int i = 0; i < block->ninstr; i++) {
             const Instr *ins = &block->instrs[i];
-            if (ins->position >= start && ins->position <= end &&
+            int clobber = ins->position + 1;
+            if (clobber >= start && clobber <= end &&
                 ins->op == LIR_CALL)
                 return 1;
         }
@@ -161,6 +162,8 @@ static int pick_spill_victim(const Active *active, int nactive, const LirFn *lf,
     int best_end = -1;
     for (int j = 0; j < nactive; j++) {
         int v = active[j].vreg;
+        if (lir_vreg_precolor(lf, v) >= 0)
+            continue;
         if (lir_is_home_vreg(lf, v))
             continue;
         int e = lv->by_vreg[v].end;
@@ -171,7 +174,11 @@ static int pick_spill_victim(const Active *active, int nactive, const LirFn *lf,
     }
     if (best != REG_NONE)
         return best;
-    return active[nactive - 1].vreg;
+    for (int j = nactive - 1; j >= 0; j--) {
+        if (lir_vreg_precolor(lf, active[j].vreg) < 0)
+            return active[j].vreg;
+    }
+    return REG_NONE;
 }
 
 static int align_frame_size(long raw)
@@ -229,12 +236,20 @@ void regalloc_linear(LirFn *lf, Function *fn, const Liveness *lv,
         const LiveInterval *iv = &lv->by_vreg[v];
         int start = iv->start;
         int end = iv->end;
+        int fixed = lir_vreg_precolor(lf, v);
 
         expire(active, &nactive, reg, &freemask, lv, start);
 
+        if (fixed >= 0) {
+            reg[v] = fixed;
+            freemask &= ~(1u << fixed);
+            active_insert(active, &nactive, v, end);
+            continue;
+        }
+
         int cross_call = interval_spans_call(lf, start, end);
         int r = free_reg(td, lv, freemask, start, end, cross_call);
-        if (r == REG_NONE || nactive >= td->nalloc) {
+        if (r == REG_NONE) {
             int spill_v = pick_spill_victim(active, nactive, lf, lv);
             int steal = 0;
 

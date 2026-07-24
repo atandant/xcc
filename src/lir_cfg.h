@@ -7,6 +7,7 @@
 void lir_cfg_rebuild_preds(LirFn *fn);
 void lir_cfg_verify(const LirFn *fn);
 void lir_cfg_lower(LirFn *fn);
+int lir_cfg_simplify(LirFn *fn);
 void lir_cfg_number_instructions(LirFn *fn);
 
 #endif /* XCC_LIR_CFG_H */
