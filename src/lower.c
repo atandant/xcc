@@ -769,6 +769,8 @@ static int lower_member_addr(LowerCtx *c, Node *n)
 static int lower_addr(LowerCtx *c, Node *n)
 {
     switch (n->kind) {
+    case ND_STRING:
+        return lower_symbol_addr(c, n->string_label);
     case ND_VAR:
         if (n->storage == VAR_STORAGE_GLOBAL) {
             int addr = lower_symbol_addr(c, n->name);
@@ -1569,6 +1571,8 @@ static int lower_expr(LowerCtx *c, Node *n)
         emit(c, (Instr){ .op = LIR_MOVI, .dst = dst, .a = lir_imm(n->val) });
         return dst;
     }
+    case ND_STRING:
+        return lower_symbol_addr(c, n->string_label);
     case ND_VAR: {
         if (n->storage == VAR_STORAGE_GLOBAL) {
             int addr = lower_symbol_addr(c, n->name);
@@ -1673,6 +1677,8 @@ static int lower_expr(LowerCtx *c, Node *n)
     case ND_ADDR: {
         int dst = fresh(c);
         switch (n->operand->kind) {
+        case ND_STRING:
+            return lower_symbol_addr(c, n->operand->string_label);
         case ND_VAR:
             if (n->operand->ty && n->operand->ty->kind == TY_FUNC) {
                 return lower_symbol_addr(c, n->operand->name);

@@ -6,6 +6,7 @@
 %{
 #include <stdlib.h>
 #include <errno.h>
+#include <limits.h>
 #include <string.h>
 
 #include "token.h"
@@ -95,6 +96,99 @@ static int has_long_suffix(const char *text)
     if (n == 0)
         return 0;
     return text[n - 1] == 'L' || text[n - 1] == 'l';
+}
+
+static int hex_value(int c)
+{
+    if (c >= '0' && c <= '9')
+        return c - '0';
+    if (c >= 'a' && c <= 'f')
+        return c - 'a' + 10;
+    return c - 'A' + 10;
+}
+
+static StringToken *scan_string(const char *text, int len, int quote)
+{
+    StringToken *token = arena_alloc(sizeof(*token));
+    unsigned char *data = arena_alloc((size_t)(len > 0 ? len : 1));
+    int out = 0;
+
+    for (int i = quote + 1; i < len - 1; i++) {
+        unsigned long value;
+        int digits;
+        int c = (unsigned char)text[i];
+
+        if (c != '\\') {
+            data[out++] = (unsigned char)c;
+            continue;
+        }
+        i++;
+        c = (unsigned char)text[i];
+        if (c == '\n')
+            continue;
+        if (c == '\r' && i + 1 < len - 1 && text[i + 1] == '\n') {
+            i++;
+            continue;
+        }
+        switch (c) {
+        case '\'': data[out++] = '\''; continue;
+        case '"':  data[out++] = '"';  continue;
+        case '?':  data[out++] = '?';  continue;
+        case '\\': data[out++] = '\\'; continue;
+        case 'a':  data[out++] = '\a'; continue;
+        case 'b':  data[out++] = '\b'; continue;
+        case 'f':  data[out++] = '\f'; continue;
+        case 'n':  data[out++] = '\n'; continue;
+        case 'r':  data[out++] = '\r'; continue;
+        case 't':  data[out++] = '\t'; continue;
+        case 'v':  data[out++] = '\v'; continue;
+        case 'x':
+            if (i + 1 >= len - 1 || !((text[i + 1] >= '0' && text[i + 1] <= '9') ||
+                                      (text[i + 1] >= 'a' && text[i + 1] <= 'f') ||
+                                      (text[i + 1] >= 'A' && text[i + 1] <= 'F'))) {
+                diag_error_at(scan_loc(), "hex escape sequence has no digits");
+                data[out++] = 0;
+                continue;
+            }
+            value = 0;
+            while (i + 1 < len - 1 &&
+                   ((text[i + 1] >= '0' && text[i + 1] <= '9') ||
+                    (text[i + 1] >= 'a' && text[i + 1] <= 'f') ||
+                    (text[i + 1] >= 'A' && text[i + 1] <= 'F'))) {
+                int digit = hex_value((unsigned char)text[++i]);
+                if (value <= (ULONG_MAX - (unsigned long)digit) / 16)
+                    value = value * 16 + (unsigned long)digit;
+                else
+                    value = ULONG_MAX;
+            }
+            if (value > UCHAR_MAX)
+                diag_error_at(scan_loc(), "hex escape sequence out of range");
+            data[out++] = (unsigned char)value;
+            continue;
+        default:
+            if (c >= '0' && c <= '7') {
+                value = 0;
+                digits = 0;
+                do {
+                    value = value * 8 + (unsigned long)(text[i] - '0');
+                    i++;
+                    digits++;
+                } while (digits < 3 && i < len - 1 &&
+                         text[i] >= '0' && text[i] <= '7');
+                i--;
+                if (value > UCHAR_MAX)
+                    diag_error_at(scan_loc(), "octal escape sequence out of range");
+                data[out++] = (unsigned char)value;
+                continue;
+            }
+            diag_error_at(scan_loc(), "unknown escape sequence '\\%c'", c);
+            data[out++] = (unsigned char)c;
+            continue;
+        }
+    }
+    token->data = data;
+    token->len = out;
+    return token;
 }
 
 /* Track every matched byte so multiline comments and future multiline tokens
@@ -187,6 +281,21 @@ static int has_long_suffix(const char *text)
                           yylval.num.is_long = 0;
                           yylval.num.is_hex = 0;
                           yylval.num.is_octal = 0; return NUM; }
+
+L\"([^\\\n\"]|\\(.|\r?\n))*\" {
+                          diag_error_at(scan_loc(),
+                                        "wide string literals are not yet supported");
+                          yylval.string = scan_string(yytext, yyleng, 1);
+                          return STRING;
+                      }
+\"([^\\\n\"]|\\(.|\r?\n))*\" {
+                          yylval.string = scan_string(yytext, yyleng, 0);
+                          return STRING;
+                      }
+L?\"([^\\\n\"]|\\(.|\r?\n))* {
+                          diag_error_at(scan_loc(),
+                                        "unterminated character string literal");
+                      }
 
 [-+*/%=<>(){};,&|^.:?!\[\]]  { return yytext[0]; }
 

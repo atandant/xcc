@@ -9,6 +9,11 @@
 
 typedef struct Node Node;
 
+typedef struct {
+    unsigned char *data;
+    int len;            /* decoded bytes, excluding the trailing null */
+} StringToken;
+
 typedef struct Declarator Declarator;
 typedef struct ParamClause ParamClause;
 typedef enum {
@@ -29,6 +34,7 @@ struct Declarator {
 
 typedef enum {
     ND_NUM,        /* integer literal              */
+    ND_STRING,     /* ordinary character string literal */
     ND_VAR,        /* reference to a local         */
     ND_BINOP,      /* lhs <op> rhs                 */
     ND_NEG,        /* unary minus on operand       */
@@ -96,6 +102,10 @@ struct Node {
     int has_long_suffix; /* ND_NUM: literal had an L/l suffix (C89 3.1.5) */
     int is_hex_literal;  /* ND_NUM: 0x/0X constant (C89 3.1.5 typing) */
     int is_octal_literal; /* ND_NUM: 0-prefixed octal (C89 3.1.5 typing) */
+    unsigned char *string_data; /* ND_STRING: decoded bytes, no final null */
+    int string_len;      /* ND_STRING: decoded byte count             */
+    char *string_label;  /* ND_STRING: private assembler symbol       */
+    Node *string_next;   /* ND_STRING: translation-unit literal list  */
     char *name;        /* ND_VAR, ND_DECL; ND_CALL direct callee name */
     Node *callee;      /* ND_CALL: callee expression (sema)         */
     int call_direct;   /* ND_CALL: 1 → emit direct call by name     */
@@ -187,6 +197,15 @@ struct Function {
 };
 
 typedef struct GlobalObject GlobalObject;
+typedef struct StaticReloc StaticReloc;
+struct StaticReloc {
+    int offset;
+    int width;
+    char *symbol;
+    long addend;
+    StaticReloc *next;
+};
+
 struct GlobalObject {
     char *name;
     SourceLoc loc;
@@ -194,8 +213,9 @@ struct GlobalObject {
     Declarator *decl;
     Type *ty;
     Node *init;
-    long init_value;
-    int has_init_value;
+    unsigned char *init_data;
+    int init_size;
+    StaticReloc *relocs;
     int emit;
 };
 
@@ -243,6 +263,9 @@ struct Enumerator {
 extern TypedefDecl *g_typedef_decls;
 
 Node *node_num(long v, SourceLoc loc);
+Node *node_string(StringToken *token, SourceLoc loc);
+Node *node_string_append(Node *literal, StringToken *token);
+Node *string_literals(void);
 Node *node_var(char *name, SourceLoc loc);
 Node *node_binop(BinOp op, Node *l, Node *r, SourceLoc loc);
 Node *node_neg(Node *o, SourceLoc loc);

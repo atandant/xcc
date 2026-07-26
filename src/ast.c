@@ -6,7 +6,12 @@
 #include "sema_enum.h"
 
 #include <limits.h>
+#include <stdio.h>
 #include <string.h>
+
+static Node *literal_head;
+static Node *literal_tail;
+static int next_literal_id;
 
 static Node *new_node(NodeKind kind, SourceLoc loc)
 {
@@ -21,6 +26,49 @@ Node *node_num(long v, SourceLoc loc)
     Node *n = new_node(ND_NUM, loc);
     n->val = v;
     return n;
+}
+
+Node *node_string(StringToken *token, SourceLoc loc)
+{
+    Node *n = new_node(ND_STRING, loc);
+    char label[32];
+
+    n->string_data = token->data;
+    n->string_len = token->len;
+    snprintf(label, sizeof(label), ".L.str.%d", next_literal_id++);
+    n->string_label = arena_strdup(label);
+    if (literal_tail)
+        literal_tail->string_next = n;
+    else
+        literal_head = n;
+    literal_tail = n;
+    return n;
+}
+
+Node *node_string_append(Node *literal, StringToken *token)
+{
+    int len;
+    unsigned char *data;
+
+    if (literal->string_len >= INT_MAX ||
+        token->len > INT_MAX - 1 - literal->string_len) {
+        diag_error_at(literal->loc, "character string literal is too long");
+        return literal;
+    }
+    len = literal->string_len + token->len;
+    data = arena_alloc((size_t)(len > 0 ? len : 1));
+    if (literal->string_len > 0)
+        memcpy(data, literal->string_data, (size_t)literal->string_len);
+    if (token->len > 0)
+        memcpy(data + literal->string_len, token->data, (size_t)token->len);
+    literal->string_data = data;
+    literal->string_len = len;
+    return literal;
+}
+
+Node *string_literals(void)
+{
+    return literal_head;
 }
 
 Node *node_var(char *name, SourceLoc loc)

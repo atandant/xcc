@@ -224,6 +224,7 @@ int ast_const_fold_expr(Node **np)
             changed |= ast_const_fold_expr(p);
         return changed;
     case ND_NUM:
+    case ND_STRING:
     case ND_VAR:
         return 0;
     default:

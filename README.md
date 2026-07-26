@@ -49,6 +49,7 @@ regalloc → emit → `.s` → gcc) with a typed semantic layer and 696 test che
 | **arrays of pointers** (`int *p[3]`) with brace init (`{0}`, `{&a, …}`) | |
 | casts `(type)expr`, `(void)expr` discard | |
 | `sizeof expr`, `sizeof(type)` (compile-time fold, `unsigned long`) | |
+| ordinary string literals in expressions (escapes, concatenation, embedded NUL) | wide string literals |
 | function calls (prototyped arg checking, void `*` conversions) | |
 | `if` / `else`, `while`, `do ... while`, `for`, blocks and null statements | |
 | `switch` / `case` / `default`, fallthrough, `break`, `continue` | |
@@ -66,8 +67,9 @@ regalloc → emit → `.s` → gcc) with a typed semantic layer and 696 test che
 | **`enum`** (tagged/anonymous, enumerator constants, enum variables as `int`) | |
 | `struct S *` / `union U *` parameters and returns, struct/union by-value param/return | |
 
-**Brace initializer scope (deferred):** file-scope/static aggregate init;
-string literals for `char[]`; nested brace init for pointer-to-array types.
+**Initializer scope (deferred):** file-scope/static aggregate init; string
+literals for `char[]`; static pointer initialization from string literals;
+nested brace init for pointer-to-array types.
 
 **Function pointers (deferred):** arrays of function pointers (`int (*a[3])(int)`);
 brace initializers for fnptrs; nested declarators such as
@@ -152,7 +154,7 @@ committed.
 
 ## Roadmap
 
-- string literals and file-scope/static objects
+- string-literal array/static-pointer initializers and file-scope/static objects
 - remaining nested declarator corner cases
 - preprocessor support
 - multiple translation units and driver behavior

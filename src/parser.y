@@ -31,6 +31,7 @@ ExternalDecl *g_program = NULL;
 %union {
     struct { long val; int is_long; int is_hex; int is_octal; } num;
     char *str;
+    StringToken *string;
     Node *node;
     NodeList *list;
     Param *param;
@@ -47,6 +48,7 @@ ExternalDecl *g_program = NULL;
 
 %token <num> NUM
 %token <str> IDENT TYPEDEF_NAME
+%token <string> STRING
 %token INT CHAR SHORT LONG VOID UNSIGNED SIGNED RETURN IF ELSE WHILE DO FOR SWITCH CASE DEFAULT GOTO BREAK CONTINUE SIZEOF TYPEDEF STRUCT UNION ENUM
 %token EQ NE LE GE ARROW LAND LOR SHL SHR INC DEC
 
@@ -54,7 +56,7 @@ ExternalDecl *g_program = NULL;
              logical_and_expr bitwise_or_expr bitwise_xor_expr bitwise_and_expr
              equality_expr relational_expr shift_expr additive_expr
              multiplicative_expr cast_expr unary_expr postfix_expr primary_expr
-             stmt initializer init_list initializer_opt
+             string_literal stmt initializer init_list initializer_opt
 %type <list> stmt_list arg_clause arg_list
 %type <param> param_list param
 %type <pclause> param_clause
@@ -557,8 +559,14 @@ primary_expr:
                                $$->has_long_suffix = $1.is_long;
                                $$->is_hex_literal = $1.is_hex;
                                $$->is_octal_literal = $1.is_octal; }
+  | string_literal          { $$ = $1; }
   | IDENT                    { $$ = node_var($1, LOC(@1)); }
   | '(' expr ')'             { $$ = $2; }
+  ;
+
+string_literal:
+    STRING                   { $$ = node_string($1, LOC(@1)); }
+  | string_literal STRING    { $$ = node_string_append($1, $2); }
   ;
 
 /* Member names occupy the struct-member namespace (C89 3.1.2.3), so a name

@@ -7,41 +7,60 @@
 #include "liveness.h"
 #include "target.h"
 #include "lir_cfg.h"
+#include "diag.h"
+
+static void emit_string_literals(FILE *out)
+{
+    Node *literal = string_literals();
+
+    if (!literal)
+        return;
+    fprintf(out, "  .section .rodata\n");
+    for (; literal; literal = literal->string_next) {
+        fprintf(out, "%s:\n", literal->string_label);
+        for (int i = 0; i <= literal->string_len; i++) {
+            unsigned value = i == literal->string_len ? 0 : literal->string_data[i];
+            fprintf(out, "  .byte %u\n", value);
+        }
+    }
+}
 
 static void emit_global_object(const GlobalObject *object, FILE *out)
 {
     int size = type_size(object->ty);
     int align = type_align(object->ty);
+    StaticReloc *reloc = object->relocs;
 
-    fprintf(out, "  %s\n", object->has_init_value ? ".data" : ".bss");
+    fprintf(out, "  %s\n", object->init_data ? ".data" : ".bss");
     fprintf(out, "  .globl %s\n", object->name);
     fprintf(out, "  .balign %d\n", align);
     fprintf(out, "%s:\n", object->name);
-    if (!object->has_init_value) {
+    if (!object->init_data) {
         fprintf(out, "  .zero %d\n", size);
         return;
     }
-    switch (size) {
-    case 1:
-        fprintf(out, "  .byte %ld\n", object->init_value);
-        break;
-    case 2:
-        fprintf(out, "  .short %ld\n", object->init_value);
-        break;
-    case 4:
-        fprintf(out, "  .long %ld\n", object->init_value);
-        break;
-    case 8:
-        fprintf(out, "  .quad %ld\n", object->init_value);
-        break;
-    default:
-        fprintf(out, "  .zero %d\n", size);
-        break;
+    for (int offset = 0; offset < size;) {
+        if (reloc && reloc->offset == offset) {
+            if (reloc->width != 8)
+                diag_fatal("internal error: unsupported static relocation width");
+            fprintf(out, "  .quad %s", reloc->symbol);
+            if (reloc->addend > 0)
+                fprintf(out, "+%ld", reloc->addend);
+            else if (reloc->addend < 0)
+                fprintf(out, "%ld", reloc->addend);
+            fputc('\n', out);
+            offset += reloc->width;
+            reloc = reloc->next;
+        } else {
+            fprintf(out, "  .byte %u\n", object->init_data[offset]);
+            offset++;
+        }
     }
 }
 
 void codegen(ExternalDecl *prog, FILE *out, int verify_lir)
 {
+    emit_string_literals(out);
     for (ExternalDecl *external = prog; external; external = external->next) {
         if (external->kind == EXT_OBJECT && external->object->emit)
             emit_global_object(external->object, out);

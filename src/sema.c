@@ -7,6 +7,7 @@
 #include "abi_sysv_amd64.h"
 #include "diag.h"
 #include "intconst.h"
+#include "arena.h"
 
 #include <limits.h>
 #include <string.h>
@@ -492,6 +493,29 @@ static int init_scalar_brace_unwrap(Node **pcursor, InitFlat *flat, SourceLoc lo
 static int init_aggregate(Type *t, Node **pcursor, InitFlat *flat,
                           SourceLoc loc, int *excess);
 
+static int init_char_array_string(Type *t, Node **pcursor, InitFlat *flat,
+                                  SourceLoc loc)
+{
+    Node *string = *pcursor;
+    Type *elem = type_array_elem(t);
+    int count = type_array_count(t);
+    int i;
+
+    if (!string || string->kind != ND_STRING || !type_is_char(elem))
+        return 0;
+    *pcursor = string->next;
+    if (string->string_len > count) {
+        diag_error_at(loc, "character string literal is too long for array");
+        return -1;
+    }
+    for (i = 0; i < count; i++) {
+        long value = i < string->string_len ? string->string_data[i] : 0;
+
+        flat_append(flat, node_num(value, string->loc));
+    }
+    return 1;
+}
+
 static int init_aggregate(Type *t, Node **pcursor, InitFlat *flat,
                           SourceLoc loc, int *excess)
 {
@@ -499,6 +523,10 @@ static int init_aggregate(Type *t, Node **pcursor, InitFlat *flat,
         Type *elem = type_array_elem(t);
         int n = type_array_count(t);
         int i;
+        int string_init = init_char_array_string(t, pcursor, flat, loc);
+
+        if (string_init)
+            return string_init < 0;
 
         for (i = 0; i < n; i++) {
             if (!*pcursor) {
@@ -938,6 +966,12 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
             n->is_hex_literal || n->is_octal_literal);
         n->is_lvalue = 0;
         n->var_decay = 0;
+        return;
+    case ND_STRING:
+        n->ty = type_array(type_char(), n->string_len + 1);
+        n->is_lvalue = ctx != CTX_RVALUE;
+        n->var_decay = 0;
+        n->func_decay = 0;
         return;
     case ND_VAR: {
         int off;
@@ -1484,6 +1518,23 @@ static void resolve_stmt(Node *s)
             diag_error_at(s->loc,
                           "variable '%s' has non-object type '%s'",
                           s->name, type_name(s->ty));
+        /* C89 3.5.7: an ordinary string initializes a character array,
+           including its trailing null when the declared bound has room. */
+        if (type_is_array(s->ty) && type_is_char(type_array_elem(s->ty)) &&
+            s->init && s->init->kind == ND_STRING) {
+            if (type_array_count(s->ty) == 0) {
+                s->ty->count = s->init->string_len + 1;
+                s->ty->size = type_size(type_array_elem(s->ty)) * s->ty->count;
+            }
+            s->init = node_init_list(s->init, s->init->loc);
+        }
+        if (type_is_array(s->ty) && type_is_char(type_array_elem(s->ty)) &&
+            type_array_count(s->ty) == 0 && s->init &&
+            s->init->kind == ND_INIT_LIST && s->init->body &&
+            s->init->body->kind == ND_STRING && !s->init->body->next) {
+            s->ty->count = s->init->body->string_len + 1;
+            s->ty->size = type_size(type_array_elem(s->ty)) * s->ty->count;
+        }
         /* Infer `T a[] = {...}` bound from its brace initializer. */
         if (type_is_array(s->ty) && type_array_count(s->ty) == 0 &&
             s->init && s->init->kind == ND_INIT_LIST)
@@ -1974,14 +2025,265 @@ static void sema_function(Function *fn)
     fn->locals_size = locals_size;
 }
 
+static void static_write_integer(unsigned char *data, int offset, int width,
+                                 unsigned long value)
+{
+    for (int i = 0; i < width; i++)
+        data[offset + i] = (unsigned char)(value >> (i * 8));
+}
+
+static unsigned long static_read_integer(const unsigned char *data, int offset,
+                                         int width)
+{
+    unsigned long value = 0;
+
+    for (int i = 0; i < width; i++)
+        value |= (unsigned long)data[offset + i] << (i * 8);
+    return value;
+}
+
+static void static_add_reloc(GlobalObject *object, int offset, char *symbol,
+                             long addend)
+{
+    StaticReloc *reloc = arena_alloc_zeroed(sizeof(*reloc));
+    StaticReloc **tail = &object->relocs;
+
+    reloc->offset = offset;
+    reloc->width = 8;
+    reloc->symbol = symbol;
+    reloc->addend = addend;
+    while (*tail)
+        tail = &(*tail)->next;
+    *tail = reloc;
+}
+
+static int static_address_expr(Node *n, char **symbol, long *addend);
+
+static int static_lvalue_address(Node *n, char **symbol, long *addend)
+{
+    if (!n)
+        return 0;
+    switch (n->kind) {
+    case ND_STRING:
+        *symbol = n->string_label;
+        *addend = 0;
+        return 1;
+    case ND_VAR:
+        if (n->storage != VAR_STORAGE_GLOBAL &&
+            n->storage != VAR_STORAGE_FUNCTION)
+            return 0;
+        *symbol = n->name;
+        *addend = 0;
+        return 1;
+    case ND_DEREF:
+        return static_address_expr(n->operand, symbol, addend);
+    case ND_MEMBER: {
+        Type *owner = n->lhs ? n->lhs->ty : NULL;
+        Member *member;
+
+        if (!type_is_record(owner) || n->member_index < 0 ||
+            n->member_index >= owner->nmembers ||
+            !static_lvalue_address(n->lhs, symbol, addend))
+            return 0;
+        member = &owner->members[n->member_index];
+        if (member->is_bitfield)
+            return 0;
+        *addend += member->offset;
+        return 1;
+    }
+    default:
+        return 0;
+    }
+}
+
+static int static_scaled_addend(Node *pointer, Node *index, int subtract,
+                                char **symbol, long *addend)
+{
+    long value;
+    int scale;
+
+    if (!static_address_expr(pointer, symbol, addend) ||
+        !ice_eval(index, &value) || !type_is_pointer(pointer->ty))
+        return 0;
+    scale = type_size(type_ptr_elem(pointer->ty));
+    if (scale <= 0)
+        return 0;
+    if (value > 0 && value > LONG_MAX / scale)
+        return 0;
+    if (value < 0 && value < LONG_MIN / scale)
+        return 0;
+    value *= scale;
+    if (subtract) {
+        if (value == LONG_MIN)
+            return 0;
+        value = -value;
+    }
+    if ((value > 0 && *addend > LONG_MAX - value) ||
+        (value < 0 && *addend < LONG_MIN - value))
+        return 0;
+    *addend += value;
+    return 1;
+}
+
+static int static_address_expr(Node *n, char **symbol, long *addend)
+{
+    if (!n)
+        return 0;
+    switch (n->kind) {
+    case ND_STRING:
+        *symbol = n->string_label;
+        *addend = 0;
+        return 1;
+    case ND_VAR:
+        if ((n->storage != VAR_STORAGE_GLOBAL || !n->var_decay) &&
+            (n->storage != VAR_STORAGE_FUNCTION || !n->func_decay))
+            return 0;
+        *symbol = n->name;
+        *addend = 0;
+        return 1;
+    case ND_ADDR:
+        return static_lvalue_address(n->operand, symbol, addend);
+    case ND_CAST:
+        if (!type_is_pointer(n->ty))
+            return 0;
+        return static_address_expr(n->operand, symbol, addend);
+    case ND_BINOP:
+        if (n->op == OP_ADD) {
+            if (static_scaled_addend(n->lhs, n->rhs, 0, symbol, addend))
+                return 1;
+            return static_scaled_addend(n->rhs, n->lhs, 0, symbol, addend);
+        }
+        if (n->op == OP_SUB)
+            return static_scaled_addend(n->lhs, n->rhs, 1, symbol, addend);
+        return 0;
+    default:
+        return 0;
+    }
+}
+
+static int static_initializer_error(GlobalObject *object)
+{
+    diag_error_at(object->loc,
+                  "initializer for file-scope object '%s' is not constant",
+                  object->name);
+    return 0;
+}
+
+static int encode_static_initializer(GlobalObject *object, Type *ty,
+                                     Node **pcursor, int offset)
+{
+    if (type_is_array(ty)) {
+        Type *elem = type_array_elem(ty);
+        int size = type_size(elem);
+
+        for (int i = 0; i < type_array_count(ty); i++)
+            if (!encode_static_initializer(object, elem, pcursor,
+                                           offset + i * size))
+                return 0;
+        return 1;
+    }
+    if (type_is_struct(ty)) {
+        for (int i = 0; i < ty->nmembers; i++) {
+            Member *member = &ty->members[i];
+
+            if (member->is_bitfield && member->bit_width > 0) {
+                Node *value = *pcursor;
+                long constant;
+                unsigned long unit;
+                unsigned long mask;
+
+                if (!value || !ice_eval(value, &constant))
+                    return static_initializer_error(object);
+                *pcursor = value->next;
+                constant = type_convert_const(constant, member->ty);
+                unit = static_read_integer(object->init_data,
+                                           offset + member->offset, 4);
+                mask = member->bit_width == 32
+                    ? 0xffffffffUL
+                    : (1UL << member->bit_width) - 1;
+                unit &= ~(mask << member->bit_offset);
+                unit |= ((unsigned long)constant & mask) << member->bit_offset;
+                static_write_integer(object->init_data,
+                                     offset + member->offset, 4, unit);
+            } else if (!encode_static_initializer(object, member->ty, pcursor,
+                                                  offset + member->offset)) {
+                return 0;
+            }
+        }
+        return 1;
+    }
+    if (type_is_union(ty)) {
+        if (ty->nmembers == 0)
+            return 1;
+        return encode_static_initializer(object, ty->members[0].ty, pcursor,
+                                         offset);
+    }
+    {
+        Node *value = *pcursor;
+        long constant;
+
+        if (!value)
+            return static_initializer_error(object);
+        *pcursor = value->next;
+        if (type_is_pointer(ty)) {
+            char *symbol;
+            long addend;
+
+            if (is_null_ptr_constant(value))
+                return 1;
+            if (!static_address_expr(value, &symbol, &addend))
+                return static_initializer_error(object);
+            static_add_reloc(object, offset, symbol, addend);
+            return 1;
+        }
+        if (!type_is_integer(ty) || !ice_eval(value, &constant))
+            return static_initializer_error(object);
+        constant = type_convert_const(constant, ty);
+        static_write_integer(object->init_data, offset, type_size(ty),
+                             (unsigned long)constant);
+        return 1;
+    }
+}
+
 static void sema_global_object(GlobalObject *object)
 {
+    Node *flat = NULL;
+    Node *cursor;
+
     object->decl_spec = typedef_resolve_spec(object->decl_spec, object->loc);
     object->ty = type_apply_declarator_cb(object->decl_spec, object->decl,
                                           object->loc,
                                           sema_array_bound_eval, NULL);
     object->decl = NULL;
     object->decl_spec = NULL;
+
+    if (type_is_array(object->ty) &&
+        type_is_char(type_array_elem(object->ty)) && object->init &&
+        object->init->kind == ND_STRING) {
+        if (type_array_count(object->ty) == 0) {
+            object->ty->count = object->init->string_len + 1;
+            object->ty->size = object->ty->count;
+        }
+        object->init = node_init_list(object->init, object->init->loc);
+    }
+    if (type_is_array(object->ty) &&
+        type_is_char(type_array_elem(object->ty)) &&
+        type_array_count(object->ty) == 0 && object->init &&
+        object->init->kind == ND_INIT_LIST && object->init->body &&
+        object->init->body->kind == ND_STRING && !object->init->body->next) {
+        object->ty->count = object->init->body->string_len + 1;
+        object->ty->size = object->ty->count;
+    }
+    if (type_is_array(object->ty) && type_array_count(object->ty) == 0 &&
+        object->init && object->init->kind == ND_INIT_LIST) {
+        Node fake = {0};
+
+        fake.name = object->name;
+        fake.loc = object->loc;
+        fake.ty = object->ty;
+        fake.init = object->init;
+        infer_unsized_array(&fake);
+    }
 
     if (!type_is_object(object->ty) || type_is_void(object->ty)) {
         diag_error_at(object->loc, "file-scope '%s' has non-object type '%s'",
@@ -1994,26 +2296,53 @@ static void sema_global_object(GlobalObject *object)
     objecttab_register(object);
     if (!object->init)
         return;
-    if (!type_is_scalar(object->ty) || object->init->kind == ND_INIT_LIST) {
-        diag_error_at(object->loc,
-                      "file-scope initializer for '%s' is not yet supported",
-                      object->name);
-        return;
+
+    if (type_is_aggregate(object->ty)) {
+        if (object->init->kind != ND_INIT_LIST) {
+            diag_error_at(object->loc,
+                          "file-scope aggregate initializer for '%s' must be brace-enclosed",
+                          object->name);
+            return;
+        }
+        flat = flatten_brace_init(object->ty, object->init, object->loc);
+        object->init = flat;
+        resolve_init_list(flat, CTX_RVALUE);
+        check_flat_init_type(object->ty, flat->body, object->loc, NULL);
+        cursor = flat->body;
+    } else {
+        if (object->init->kind == ND_INIT_LIST) {
+            Node *body = object->init->body;
+
+            if (!body) {
+                diag_error_at(object->loc, "empty scalar initializer");
+                return;
+            }
+            if (body->kind == ND_INIT_LIST) {
+                diag_error_at(object->loc,
+                              "too many braces around scalar initializer");
+                return;
+            }
+            if (body->next) {
+                diag_error_at(object->loc,
+                              "excess elements in scalar initializer");
+                return;
+            }
+            body->next = NULL;
+            object->init = body;
+        }
+        resolve_expr_ctx(object->init, CTX_RVALUE);
+        if (!expr_assignable_to(object->ty, object->init)) {
+            diag_incompatible_init(object->loc, object->ty, object->init);
+            return;
+        }
+        warn_value_conversion(object->loc, object->ty, object->init);
+        cursor = object->init;
     }
 
-    resolve_expr_ctx(object->init, CTX_RVALUE);
-    if (!expr_assignable_to(object->ty, object->init)) {
-        diag_incompatible_init(object->loc, object->ty, object->init);
-        return;
-    }
-    warn_value_conversion(object->loc, object->ty, object->init);
-    if (!ice_eval(object->init, &object->init_value)) {
-        diag_error_at(object->loc,
-                      "initializer for file-scope object '%s' is not constant",
-                      object->name);
-        return;
-    }
-    object->has_init_value = 1;
+    object->init_size = type_size(object->ty);
+    object->init_data = arena_alloc_zeroed((size_t)object->init_size);
+    if (!encode_static_initializer(object, object->ty, &cursor, 0))
+        object->init_data = NULL;
 }
 
 void sema(ExternalDecl *prog)
