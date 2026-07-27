@@ -33,7 +33,7 @@ make
 ## Status
 
 The pipeline runs end to end (lex → parse → sema → lower → liveness →
-regalloc → emit → `.s` → gcc) with a typed semantic layer and 696 test checks.
+regalloc → emit → `.s` → gcc) with a typed semantic layer and 807 test checks.
 
 | Supported | Not yet |
 | --- | --- |
@@ -43,10 +43,13 @@ regalloc → emit → `.s` → gcc) with a typed semantic layer and 696 test che
 | N-dimensional arrays, `[]` subscript, `ptr ± int/long`, `ptr - ptr`, param decay | |
 | typed declarations, parameters, returns | |
 | **function pointers** (declarators, typedef, casts, indirect calls) | |
-| **brace initializers** for scalar arrays and structs (partial init zero-fills) | |
+| **brace initializers** for scalar arrays, structs, and unions (partial init zero-fills) | |
 | unsized `T a[] = {…}` / `T a[][N] = {…}` bound inference (flat or nested) | |
 | scalar brace init `int x = {3};`, `int *p = {0};` | |
 | **arrays of pointers** (`int *p[3]`) with brace init (`{0}`, `{&a, …}`) | |
+| file-scope aggregate initialization (byte images, padding, and bit-fields) | |
+| string initialization of local/file-scope `char[]` objects | |
+| file-scope pointer constants (`&object`, member addresses, string literals and addends) | |
 | casts `(type)expr`, `(void)expr` discard | |
 | `sizeof expr`, `sizeof(type)` (compile-time fold, `unsigned long`) | |
 | ordinary string literals in expressions (escapes, concatenation, embedded NUL) | wide string literals |
@@ -67,9 +70,8 @@ regalloc → emit → `.s` → gcc) with a typed semantic layer and 696 test che
 | **`enum`** (tagged/anonymous, enumerator constants, enum variables as `int`) | |
 | `struct S *` / `union U *` parameters and returns, struct/union by-value param/return | |
 
-**Initializer scope (deferred):** file-scope/static aggregate init; string
-literals for `char[]`; static pointer initialization from string literals;
-nested brace init for pointer-to-array types.
+**Storage classes (deferred):** file-scope `extern` and `static`, static
+functions, block-scope `extern`, and block-scope `static`.
 
 **Function pointers (deferred):** arrays of function pointers (`int (*a[3])(int)`);
 brace initializers for fnptrs; nested declarators such as
@@ -154,7 +156,7 @@ committed.
 
 ## Roadmap
 
-- string-literal array/static-pointer initializers and file-scope/static objects
+- storage classes: file-scope `extern` and `static`, then block scope and static functions
 - remaining nested declarator corner cases
 - preprocessor support
 - multiple translation units and driver behavior

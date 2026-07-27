@@ -18,9 +18,13 @@ typedef struct {
     Type *ty;
     FileSymKind kind;
     int defined;
+    int tentative;
     int implicit;
+    int referenced;
+    Linkage linkage;
     GlobalObject *object;
     SourceLoc loc;
+    SourceLoc reference_loc;
 } FuncSym;
 
 /* Clear the table before processing a new translation unit. */
@@ -34,6 +38,8 @@ FuncSym *functab_add(char *name, Type *ty, int defined, int implicit,
 /* Merge a top-level declaration/definition into the table, emitting
  * redefinition / conflicting-type diagnostics per C89. */
 void functab_register(Function *fn);
+void functab_finalize(void);
 void objecttab_register(GlobalObject *object);
+void objecttab_finalize(void);
 
 #endif /* XCC_SEMA_FUNCTAB_H */

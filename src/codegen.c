@@ -32,7 +32,10 @@ static void emit_global_object(const GlobalObject *object, FILE *out)
     StaticReloc *reloc = object->relocs;
 
     fprintf(out, "  %s\n", object->init_data ? ".data" : ".bss");
-    fprintf(out, "  .globl %s\n", object->name);
+    if (object->linkage == LINKAGE_INTERNAL)
+        fprintf(out, "  .local %s\n", object->name);
+    else
+        fprintf(out, "  .globl %s\n", object->name);
     fprintf(out, "  .balign %d\n", align);
     fprintf(out, "%s:\n", object->name);
     if (!object->init_data) {

@@ -989,6 +989,10 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
                 if (fs->kind == FILESYM_FUNCTION) {
                     n->storage = VAR_STORAGE_FUNCTION;
                     n->is_lvalue = 0;
+                    if (!fs->referenced) {
+                        fs->referenced = 1;
+                        fs->reference_loc = n->loc;
+                    }
                 } else {
                     n->storage = VAR_STORAGE_GLOBAL;
                     n->is_lvalue = (ctx != CTX_RVALUE) && type_is_object(fs->ty);
@@ -2285,12 +2289,28 @@ static void sema_global_object(GlobalObject *object)
         infer_unsized_array(&fake);
     }
 
+    if (object->init)
+        object->decl_kind = OBJECT_DEFINITION;
+    else if (object->storage == STORAGE_EXTERN)
+        object->decl_kind = OBJECT_DECLARATION;
+    else
+        object->decl_kind = OBJECT_TENTATIVE;
+
     if (!type_is_object(object->ty) || type_is_void(object->ty)) {
         diag_error_at(object->loc, "file-scope '%s' has non-object type '%s'",
                       object->name, type_name(object->ty));
     } else if (!type_is_complete(object->ty)) {
-        diag_error_at(object->loc, "file-scope object '%s' has incomplete type '%s'",
-                      object->name, type_name(object->ty));
+        int incomplete_external_array =
+            object->decl_kind == OBJECT_TENTATIVE &&
+            object->storage != STORAGE_STATIC && type_is_array(object->ty) &&
+            type_array_count(object->ty) == 0 &&
+            type_is_complete(type_array_elem(object->ty));
+
+        if (object->decl_kind != OBJECT_DECLARATION &&
+            !incomplete_external_array)
+            diag_error_at(object->loc,
+                          "file-scope object '%s' has incomplete type '%s'",
+                          object->name, type_name(object->ty));
     }
 
     objecttab_register(object);
@@ -2366,4 +2386,6 @@ void sema(ExternalDecl *prog)
                 sema_function(fn);
         }
     }
+    functab_finalize();
+    objecttab_finalize();
 }

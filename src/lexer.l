@@ -231,6 +231,8 @@ static StringToken *scan_string(const char *text, int len, int quote)
 "break"             { return BREAK; }
 "continue"          { return CONTINUE; }
 "typedef"           { return TYPEDEF; }
+"extern"            { return EXTERN; }
+"static"            { return STATIC; }
 "struct"            { return STRUCT; }
 "union"             { return UNION; }
 "enum"              { return ENUM; }

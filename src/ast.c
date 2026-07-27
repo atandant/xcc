@@ -13,6 +13,95 @@ static Node *literal_head;
 static Node *literal_tail;
 static int next_literal_id;
 
+DeclSpec *declspec_new(void)
+{
+    return arena_alloc_zeroed(sizeof(DeclSpec));
+}
+
+DeclSpec *declspec_add_storage(DeclSpec *spec, StorageClass storage,
+                               SourceLoc loc)
+{
+    if (!spec)
+        spec = declspec_new();
+    if (spec->storage != STORAGE_NONE)
+        diag_error_at(loc, "multiple storage classes in declaration specifiers");
+    else
+        spec->storage = storage;
+    return spec;
+}
+
+DeclSpec *declspec_add_type(DeclSpec *spec, Type *ty, SourceLoc loc)
+{
+    if (!spec)
+        spec = declspec_new();
+    if (spec->named_type)
+        diag_error_at(loc, "multiple data types in declaration specifiers");
+    else
+        spec->named_type = ty;
+    return spec;
+}
+
+DeclSpec *declspec_add_builtin(DeclSpec *spec, TypeSpecKind kind,
+                               SourceLoc loc)
+{
+    int *count = NULL;
+
+    if (!spec)
+        spec = declspec_new();
+    switch (kind) {
+    case TYPE_SPEC_VOID:     count = &spec->nvoid; break;
+    case TYPE_SPEC_CHAR:     count = &spec->nchar; break;
+    case TYPE_SPEC_SHORT:    count = &spec->nshort; break;
+    case TYPE_SPEC_INT:      count = &spec->nint; break;
+    case TYPE_SPEC_LONG:     count = &spec->nlong; break;
+    case TYPE_SPEC_SIGNED:   count = &spec->nsigned; break;
+    case TYPE_SPEC_UNSIGNED: count = &spec->nunsigned; break;
+    }
+    if (++*count > 1)
+        diag_error_at(loc, "duplicate type specifier in declaration");
+    return spec;
+}
+
+Type *declspec_type(DeclSpec *spec, SourceLoc loc)
+{
+    int builtin;
+
+    if (!spec)
+        return type_int();
+    builtin = spec->nvoid + spec->nchar + spec->nshort + spec->nint +
+              spec->nlong + spec->nsigned + spec->nunsigned;
+    if (spec->named_type) {
+        if (builtin)
+            diag_error_at(loc, "invalid combination of type specifiers");
+        return spec->named_type;
+    }
+    if (spec->nsigned && spec->nunsigned) {
+        diag_error_at(loc, "both signed and unsigned specified");
+        return type_int();
+    }
+    if (spec->nvoid) {
+        if (builtin != 1)
+            diag_error_at(loc, "invalid combination with 'void'");
+        return type_void();
+    }
+    if (spec->nchar) {
+        if (spec->nshort || spec->nint || spec->nlong)
+            diag_error_at(loc, "invalid combination with 'char'");
+        if (spec->nunsigned)
+            return type_unsigned_char();
+        if (spec->nsigned)
+            return type_signed_char();
+        return type_char();
+    }
+    if (spec->nshort && spec->nlong)
+        diag_error_at(loc, "both short and long specified");
+    if (spec->nshort)
+        return spec->nunsigned ? type_unsigned_short() : type_short();
+    if (spec->nlong)
+        return spec->nunsigned ? type_unsigned_long() : type_long();
+    return spec->nunsigned ? type_unsigned_int() : type_int();
+}
+
 static Node *new_node(NodeKind kind, SourceLoc loc)
 {
     Node *n = arena_alloc_zeroed(sizeof(Node));
@@ -557,11 +646,13 @@ ParamClause *param_clause(Param *head, int prototyped)
 }
 
 Function *func_new(char *name, ParamClause *pc, Type *ret_ty,
-                   int is_definition, Node *body, SourceLoc loc)
+                   StorageClass storage, int is_definition, Node *body,
+                   SourceLoc loc)
 {
     Function *f = arena_alloc_zeroed(sizeof(Function));
     f->name = name;
     f->loc = loc;
+    f->storage = storage;
     f->params = pc->head;
     f->nparams = pc->count;
     f->prototyped = pc->prototyped;
@@ -572,8 +663,8 @@ Function *func_new(char *name, ParamClause *pc, Type *ret_ty,
     return f;
 }
 
-Function *func_new_decl(Type *spec, Declarator *decl, int is_definition,
-                        Node *body, SourceLoc loc)
+Function *func_new_decl(Type *spec, Declarator *decl, StorageClass storage,
+                        int is_definition, Node *body, SourceLoc loc)
 {
     ParamClause *pc = NULL;
     Type *ty = type_apply_declarator(spec, decl, loc);
@@ -587,12 +678,12 @@ Function *func_new_decl(Type *spec, Declarator *decl, int is_definition,
                       declarator_name(decl));
         if (!pc)
             pc = param_clause(NULL, 0);
-        return func_new(declarator_name(decl), pc, type_int(),
+        return func_new(declarator_name(decl), pc, type_int(), storage,
                         is_definition, body, loc);
     }
     if (!pc)
         pc = param_clause(NULL, ty->prototyped);
-    return func_new(declarator_name(decl), pc, ty->ret,
+    return func_new(declarator_name(decl), pc, ty->ret, storage,
                     is_definition, body, loc);
 }
 
@@ -630,7 +721,8 @@ ExternalDecl *external_function(Function *fn)
     return external;
 }
 
-ExternalDecl *external_declaration(Type *spec, Declarator *decl, Node *init,
+ExternalDecl *external_declaration(Type *spec, Declarator *decl,
+                                   StorageClass storage, Node *init,
                                    SourceLoc loc)
 {
     Type *ty = type_apply_declarator(spec, decl, loc);
@@ -639,13 +731,15 @@ ExternalDecl *external_declaration(Type *spec, Declarator *decl, Node *init,
         if (init)
             diag_error_at(loc, "function '%s' is initialized like an object",
                           declarator_name(decl));
-        return external_function(func_new_decl(spec, decl, 0, NULL, loc));
+        return external_function(func_new_decl(spec, decl, storage, 0, NULL,
+                                               loc));
     }
 
     ExternalDecl *external = arena_alloc_zeroed(sizeof(*external));
     GlobalObject *object = arena_alloc_zeroed(sizeof(*object));
     object->name = declarator_name(decl);
     object->loc = loc;
+    object->storage = storage;
     object->decl_spec = spec;
     object->decl = decl;
     object->init = init;

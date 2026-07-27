@@ -1,4 +1,4 @@
-int main() {
-    int x = x;
-    return x + 5;
+int main(void) {
+    typedef int unsigned long** x;
+    return 0;
 }

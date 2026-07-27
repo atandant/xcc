@@ -14,6 +14,48 @@ typedef struct {
     int len;            /* decoded bytes, excluding the trailing null */
 } StringToken;
 
+typedef enum {
+    STORAGE_NONE,
+    STORAGE_EXTERN,
+    STORAGE_STATIC,
+    STORAGE_TYPEDEF,
+} StorageClass;
+
+typedef enum {
+    LINKAGE_NONE,
+    LINKAGE_EXTERNAL,
+    LINKAGE_INTERNAL,
+} Linkage;
+
+typedef enum {
+    OBJECT_DECLARATION,
+    OBJECT_TENTATIVE,
+    OBJECT_DEFINITION,
+} ObjectDeclKind;
+
+typedef enum {
+    TYPE_SPEC_VOID,
+    TYPE_SPEC_CHAR,
+    TYPE_SPEC_SHORT,
+    TYPE_SPEC_INT,
+    TYPE_SPEC_LONG,
+    TYPE_SPEC_SIGNED,
+    TYPE_SPEC_UNSIGNED,
+} TypeSpecKind;
+
+typedef struct DeclSpec DeclSpec;
+struct DeclSpec {
+    StorageClass storage;
+    Type *named_type;
+    int nvoid;
+    int nchar;
+    int nshort;
+    int nint;
+    int nlong;
+    int nsigned;
+    int nunsigned;
+};
+
 typedef struct Declarator Declarator;
 typedef struct ParamClause ParamClause;
 typedef enum {
@@ -179,6 +221,8 @@ typedef struct Function Function;
 struct Function {
     char *name;
     SourceLoc loc;
+    StorageClass storage;
+    Linkage linkage;
     Param *params;
     int nparams;
     int prototyped;    /* 0 = bare () unspecified args; 1 = checked  */
@@ -209,6 +253,9 @@ struct StaticReloc {
 struct GlobalObject {
     char *name;
     SourceLoc loc;
+    StorageClass storage;
+    Linkage linkage;
+    ObjectDeclKind decl_kind;
     Type *decl_spec;
     Declarator *decl;
     Type *ty;
@@ -263,6 +310,13 @@ struct Enumerator {
 extern TypedefDecl *g_typedef_decls;
 
 Node *node_num(long v, SourceLoc loc);
+DeclSpec *declspec_new(void);
+DeclSpec *declspec_add_storage(DeclSpec *spec, StorageClass storage,
+                               SourceLoc loc);
+DeclSpec *declspec_add_type(DeclSpec *spec, Type *ty, SourceLoc loc);
+DeclSpec *declspec_add_builtin(DeclSpec *spec, TypeSpecKind kind,
+                               SourceLoc loc);
+Type *declspec_type(DeclSpec *spec, SourceLoc loc);
 Node *node_string(StringToken *token, SourceLoc loc);
 Node *node_string_append(Node *literal, StringToken *token);
 Node *string_literals(void);
@@ -323,13 +377,15 @@ Param *param_append_decl(Param *list, Type *spec_ty, Declarator *decl,
                          char *name);
 ParamClause *param_clause(Param *head, int prototyped);
 Function *func_new(char *name, ParamClause *pc, Type *ret_ty,
-                   int is_definition, Node *body, SourceLoc loc);
-Function *func_new_decl(Type *spec, Declarator *decl, int is_definition,
-                        Node *body, SourceLoc loc);
+                   StorageClass storage, int is_definition, Node *body,
+                   SourceLoc loc);
+Function *func_new_decl(Type *spec, Declarator *decl, StorageClass storage,
+                        int is_definition, Node *body, SourceLoc loc);
 Function *func_rebuild_type(Function *fn);
 Function *func_append(Function *list, Function *f);
 ExternalDecl *external_function(Function *fn);
-ExternalDecl *external_declaration(Type *spec, Declarator *decl, Node *init,
+ExternalDecl *external_declaration(Type *spec, Declarator *decl,
+                                   StorageClass storage, Node *init,
                                    SourceLoc loc);
 ExternalDecl *external_append(ExternalDecl *list, ExternalDecl *external);
 Function *external_functions(ExternalDecl *list);

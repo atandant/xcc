@@ -1101,6 +1101,8 @@ static void emit_instr(EmitCtx *c, Instr *ins)
     case LIR_DIV:
     case LIR_MOD: {
         LirWidth w = ins->w;
+        int divisor = c->td->scratch0;
+
         load_operand(c, ins->a, "%rax", w);
         if (ins->sgn == LIR_SGN_U) {
             if (w == LIR_W4)
@@ -1112,13 +1114,15 @@ static void emit_instr(EmitCtx *c, Instr *ins)
         } else {
             fprintf(c->out, "  cqo\n");
         }
-        load_operand(c, ins->b, "%rdi", w);
+        load_operand(c, ins->b, reg64_name(divisor), w);
         if (w == LIR_W4)
-            fprintf(c->out, "  %s %%edi\n",
-                    ins->sgn == LIR_SGN_U ? "div" : "idiv");
+            fprintf(c->out, "  %s %s\n",
+                    ins->sgn == LIR_SGN_U ? "div" : "idiv",
+                    reg32_name(divisor));
         else
-            fprintf(c->out, "  %sq %%rdi\n",
-                    ins->sgn == LIR_SGN_U ? "div" : "idiv");
+            fprintf(c->out, "  %sq %s\n",
+                    ins->sgn == LIR_SGN_U ? "div" : "idiv",
+                    reg64_name(divisor));
         if (ins->op == LIR_MOD) {
             if (w == LIR_W4)
                 fprintf(c->out, "  movslq %%edx, %%rax\n");
@@ -1384,7 +1388,11 @@ void emit_x86_function(LirFn *lf, Function *fn, AllocResult *alloc,
         .rax_vreg = -1,
     };
 
-    fprintf(out, "  .globl %s\n", fn->name);
+    if (fn->linkage == LINKAGE_INTERNAL)
+        fprintf(out, "  .local %s\n", fn->name);
+    else
+        fprintf(out, "  .globl %s\n", fn->name);
+    fprintf(out, "  .type %s, @function\n", fn->name);
     fprintf(out, "%s:\n", fn->name);
 
     emit_prologue(&ctx);
@@ -1427,4 +1435,5 @@ void emit_x86_function(LirFn *lf, Function *fn, AllocResult *alloc,
         emit_instr(&ctx, &epilogue->instrs[i]);
 
     emit_epilogue(&ctx);
+    fprintf(out, "  .size %s, .-%s\n", fn->name, fn->name);
 }
