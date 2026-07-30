@@ -1,4 +1,7 @@
-int main(void) {
-    typedef int unsigned long** x;
-    return 0;
+static int add(int x, int y) {
+    return x + y;
+}
+
+int main() {
+    add(5,5);;
 }

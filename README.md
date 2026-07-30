@@ -33,7 +33,8 @@ make
 ## Status
 
 The pipeline runs end to end (lex → parse → sema → lower → liveness →
-regalloc → emit → `.s` → gcc) with a typed semantic layer and 807 test checks.
+regalloc → emit → `.s` → gcc) with a typed semantic layer and 856 passing test
+checks.
 
 | Supported | Not yet |
 | --- | --- |
@@ -42,7 +43,7 @@ regalloc → emit → `.s` → gcc) with a typed semantic layer and 807 test che
 | parenthesized declarators (`int (*p)[3]`), casts (`(int (*)[3])`) | |
 | N-dimensional arrays, `[]` subscript, `ptr ± int/long`, `ptr - ptr`, param decay | |
 | typed declarations, parameters, returns | |
-| **function pointers** (declarators, typedef, casts, indirect calls) | |
+| **function pointers** (arrays, nested declarators, typedefs, casts, brace initialization, indirect calls and returns) | |
 | **brace initializers** for scalar arrays, structs, and unions (partial init zero-fills) | |
 | unsized `T a[] = {…}` / `T a[][N] = {…}` bound inference (flat or nested) | |
 | scalar brace init `int x = {3};`, `int *p = {0};` | |
@@ -57,6 +58,7 @@ regalloc → emit → `.s` → gcc) with a typed semantic layer and 807 test che
 | `if` / `else`, `while`, `do ... while`, `for`, blocks and null statements | |
 | `switch` / `case` / `default`, fallthrough, `break`, `continue` | |
 | function-scoped labels and `goto` (forward and backward) | |
+| prefix/postfix `++` and `--` on integer and pointer lvalues | |
 | arithmetic, bitwise, shifts, comparisons, `&&`, `\|\|`, `!`, `?:`, comma | |
 | pointer `==` / `!=` / ordering, truthiness, `p == 0` | |
 | `L`/`l` literal suffixes; `0x` hex literals (C89 typing) | |
@@ -69,14 +71,10 @@ regalloc → emit → `.s` → gcc) with a typed semantic layer and 807 test che
 | **`union`** (tagged, forward-decl, overlap layout), member access, union assign | |
 | **`enum`** (tagged/anonymous, enumerator constants, enum variables as `int`) | |
 | `struct S *` / `union U *` parameters and returns, struct/union by-value param/return | |
+| file-scope `extern`/`static`, tentative definitions, and static functions | block-scope storage classes (`extern`, `static`, `auto`, `register`) |
 
-**Storage classes (deferred):** file-scope `extern` and `static`, static
-functions, block-scope `extern`, and block-scope `static`.
-
-**Function pointers (deferred):** arrays of function pointers (`int (*a[3])(int)`);
-brace initializers for fnptrs; nested declarators such as
-`int (*(*x)(int))(char)` (use typedefs); file-scope definitions whose return
-type is a function pointer without a typedef (e.g. `int (*f(void))(int) { … }`).
+`typedef` is supported at file and block scope. Other block-scope storage
+classes are deferred.
 
 **Struct/union ABI:** passing and returning the compiler's naturally aligned,
 integer/pointer-only records follows the SysV AMD64 INTEGER/MEMORY subset:
@@ -120,7 +118,9 @@ records use sret/stack memory.
                                    algebraic and strength reduction)
                                                    │
                                                    ▼
-                                      liveness ──▶ regalloc (linear scan)
+                                      liveness ──▶ regalloc
+                                                   (range-aware weighted
+                                                    linear scan)
                                                    │
                                                    ▼
                                       emit_x86 ──▶ x86-64 .s ──▶ gcc ──▶ binary
@@ -129,13 +129,16 @@ records use sret/stack memory.
 The parser builds AST nodes and attaches parsed types to declarations. **sema**
 owns type checking. **lower** builds CFG-based LIR with virtual registers;
 mem2reg promotes eligible locals into SSA form before CFG optimizations run.
-**liveness** and **regalloc** then assign registers or spill slots, and
+**liveness** builds segmented live ranges, use/definition positions, and
+loop-weighted spill costs. The range-aware linear-scan allocator reuses
+registers across lifetime holes and assigns registers or spill slots; the
 **emit_x86** prints AT&T assembly. Scalar locals and parameters that are not
 address-taken may live in registers across loops; arrays and address-taken
 locals stay on the stack.
 
 Debug flags: `--xcc-dump-raw-lir` (unoptimized SSA LIR), `--xcc-dump-lir`
-(optimized, phi-lowered LIR), `--xcc-dump-lir-alloc` (live intervals),
+(optimized, phi-lowered LIR), `--xcc-dump-lir-alloc` (liveness, assigned
+locations, and spill/frame metrics),
 `--xcc-verify-lir`, and `--xcc-no-verify-lir`.
 
 Warning flags: `-W<name>`, `-Wno-<name>`, `-Wall`, `-w`, `-Werror` — see
@@ -156,8 +159,8 @@ committed.
 
 ## Roadmap
 
-- storage classes: file-scope `extern` and `static`, then block scope and static functions
-- remaining nested declarator corner cases
+- block-scope storage classes (`extern`, `static`, `auto`, and `register`)
+- function-pointer and nested-declarator conformance edge cases
 - preprocessor support
 - multiple translation units and driver behavior
 - broaden the SysV AMD64 ABI beyond the current integer/pointer record subset

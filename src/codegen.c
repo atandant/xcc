@@ -98,6 +98,8 @@ void codegen(ExternalDecl *prog, FILE *out, int verify_lir)
 
         AllocResult alloc;
         regalloc_linear(lf, fn, &lv, &X86_SYSV, &alloc);
+        if (verify_lir)
+            regalloc_verify(lf, &lv, &X86_SYSV, &alloc);
         emit_x86_function(lf, fn, &alloc, out, &X86_SYSV);
     }
 }

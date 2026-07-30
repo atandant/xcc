@@ -20,6 +20,7 @@
 #include "lir_cfg.h"
 #include "lir_opt.h"
 #include "liveness.h"
+#include "regalloc.h"
 #include "target.h"
 
 extern FILE *yyin;
@@ -40,7 +41,7 @@ static void usage(FILE *f)
         "  --version   show version\n"
         "  --xcc-dump-raw-lir  dump unoptimized SSA LIR (debug)\n"
         "  --xcc-dump-lir  dump optimized, phi-lowered LIR (debug)\n"
-        "  --xcc-dump-lir-alloc  dump LIR live intervals (debug)\n"
+        "  --xcc-dump-lir-alloc  dump LIR liveness and allocation (debug)\n"
         "  --xcc-verify-lir  verify internal LIR (default)\n"
         "  --xcc-no-verify-lir  disable internal LIR verification\n"
         "  -W<name>    enable warning (see --help-warnings)\n"
@@ -241,8 +242,17 @@ int main(int argc, char **argv)
             }
             if (lir_dump_mode == 3) {
                 Liveness lv;
+                AllocResult alloc;
                 liveness_compute(lf, &X86_SYSV, &lv);
+                regalloc_linear(lf, fn, &lv, &X86_SYSV, &alloc);
+                if (verify_lir)
+                    regalloc_verify(lf, &lv, &X86_SYSV, &alloc);
+                /* Splitting materializes fragment vregs and moves, so dump the
+                   final LIR and its recomputed liveness rather than the stale
+                   pre-allocation form. */
+                lir_dump_fn(lf, stdout);
                 liveness_dump(lf, &lv, &X86_SYSV, stdout);
+                regalloc_dump(lf, &alloc, &X86_SYSV, stdout);
             } else {
                 lir_dump_fn(lf, stdout);
             }

@@ -159,6 +159,22 @@ else
     fail=$((fail + 1))
 fi
 
+# Allocation dumps provide stable metrics for tracking allocator changes.
+if $XCC --xcc-dump-lir-alloc "$DIR/regalloc_split_many_params.c" \
+        > "$TMP/alloc" 2> "$TMP/err" &&
+   grep -q '^allocation pressure$' "$TMP/alloc" &&
+   grep -Eq '^  v[0-9]+ fragment-of=v[0-9]+ = (%[a-z0-9]+|stack\(-[0-9]+\))$' "$TMP/alloc" &&
+   grep -Eq '^  v[0-9]+ \[[0-9]+, [0-9]+\] weight=[1-9][0-9]* ranges\([1-9][0-9]*\): \[[0-9]+,[0-9]+\].* positions\([1-9][0-9]*\): .*[0-9]+u@[1-9][0-9]*' "$TMP/alloc" &&
+   grep -Eq '^  metrics live=[0-9]+ registers=[0-9]+ spilled=[0-9]+ spill-slots=[0-9]+ callee-saved=[0-9]+ range-reuses=[1-9][0-9]* splits=[1-9][0-9]* fragments=[1-9][0-9]* split-moves=[1-9][0-9]* outgoing=[0-9]+ frame=[0-9]+$' "$TMP/alloc"; then
+    echo "ok   cli-regalloc-metrics"
+    pass=$((pass + 1))
+else
+    echo "FAIL cli-regalloc-metrics: expected allocation metrics"
+    sed 's/^/      /' "$TMP/err"
+    sed 's/^/      /' "$TMP/alloc"
+    fail=$((fail + 1))
+fi
+
 # Diagnostics must retain a physical source line longer than the old 4096-byte
 # read buffer, without splitting it or reading past the captured text.
 awk 'BEGIN { for (i = 0; i < 5000; i++) printf " "; print "@" }' > "$TMP/long-line.c"

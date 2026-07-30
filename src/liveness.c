@@ -2,6 +2,7 @@
 #include "liveness.h"
 #include "arena.h"
 #include "diag.h"
+#include "lir_dom.h"
 
 #include <assert.h>
 #include <limits.h>
@@ -51,6 +52,38 @@ static void touch_vreg_def(Liveness *lv, int v, int idx)
         lv->by_vreg[v].start = idx;
 }
 
+static void record_vreg_position(Liveness *lv, int v, int idx, unsigned kind)
+{
+    LiveInterval *iv;
+
+    if (v < 0)
+        return;
+    iv = &lv->by_vreg[v];
+    for (int i = iv->npositions - 1; i >= 0; i--) {
+        if (iv->positions[i].position == idx) {
+            iv->positions[i].kind |= kind;
+            return;
+        }
+        if (iv->positions[i].position < idx)
+            break;
+    }
+    if (iv->npositions >= iv->positions_cap) {
+        int new_cap = iv->positions_cap ? iv->positions_cap * 2 : 4;
+        LivePosition *positions =
+            arena_alloc((size_t)new_cap * sizeof(*positions));
+
+        if (iv->positions)
+            memcpy(positions, iv->positions,
+                   (size_t)iv->npositions * sizeof(*positions));
+        iv->positions = positions;
+        iv->positions_cap = new_cap;
+    }
+    iv->positions[iv->npositions].position = idx;
+    iv->positions[iv->npositions].kind = kind;
+    iv->positions[iv->npositions].weight = 0;
+    iv->npositions++;
+}
+
 static void block_phys(Liveness *lv, int phys, int idx)
 {
     if (phys < 0 || phys >= PHYS_COUNT)
@@ -97,6 +130,22 @@ static void operand_phys_touch(Liveness *lv, Operand o, int idx)
         block_phys(lv, o.u.phys, idx);
 }
 
+static void block_incoming_arg_until(Liveness *lv, const TargetDesc *td,
+                                     int phys, int idx)
+{
+    for (int a = 0; a < td->nargs_reg; a++) {
+        if (td->arg_regs[a] != phys)
+            continue;
+        /* The ABI value already occupies this register on function entry.
+           A virtual interval ending before its capture MOV must not be allowed
+           to overwrite it.  Numbering uses even instruction positions, but
+           cover odd clobber/split positions as well. */
+        for (int p = 0; p <= idx; p++)
+            block_phys(lv, phys, p);
+        return;
+    }
+}
+
 static void instr_use_def(Instr *ins, int i, const TargetDesc *td, Liveness *lv,
                           int *uses, int *nu, int *defs, int *nd)
 {
@@ -115,6 +164,8 @@ static void instr_use_def(Instr *ins, int i, const TargetDesc *td, Liveness *lv,
     case LIR_MOV:
         operand_vreg_uses(ins->a, uses, nu);
         operand_phys_touch(lv, ins->a, i);
+        if (ins->a.kind == OPND_PHYS)
+            block_incoming_arg_until(lv, td, ins->a.u.phys, i);
         if (ins->dst >= 0) {
             add_def(defs, nd, ins->dst);
             return;
@@ -246,6 +297,181 @@ static int interval_cmp(const void *a, const void *b)
     return ia->vreg - ib->vreg;
 }
 
+static int position_cmp(const void *a, const void *b)
+{
+    const LivePosition *pa = a;
+    const LivePosition *pb = b;
+
+    return pa->position - pb->position;
+}
+
+static int range_cmp(const void *a, const void *b)
+{
+    const LiveRange *ra = a;
+    const LiveRange *rb = b;
+
+    if (ra->start != rb->start)
+        return ra->start - rb->start;
+    return ra->end - rb->end;
+}
+
+static void add_live_range(LiveInterval *iv, int start, int end)
+{
+    if (start > end)
+        return;
+    if (iv->nranges >= iv->ranges_cap) {
+        int new_cap = iv->ranges_cap ? iv->ranges_cap * 2 : 4;
+        LiveRange *ranges = arena_alloc((size_t)new_cap * sizeof(*ranges));
+
+        if (iv->ranges)
+            memcpy(ranges, iv->ranges,
+                   (size_t)iv->nranges * sizeof(*ranges));
+        iv->ranges = ranges;
+        iv->ranges_cap = new_cap;
+    }
+    iv->ranges[iv->nranges].start = start;
+    iv->ranges[iv->nranges].end = end;
+    iv->nranges++;
+}
+
+static void normalize_live_ranges(LiveInterval *iv)
+{
+    int out = 0;
+
+    if (iv->nranges > 1)
+        qsort(iv->ranges, (size_t)iv->nranges,
+              sizeof(*iv->ranges), range_cmp);
+    for (int i = 0; i < iv->nranges; i++) {
+        LiveRange range = iv->ranges[i];
+
+        if (out > 0 && range.start <= iv->ranges[out - 1].end + 1) {
+            if (iv->ranges[out - 1].end < range.end)
+                iv->ranges[out - 1].end = range.end;
+        } else {
+            iv->ranges[out++] = range;
+        }
+    }
+    iv->nranges = out;
+}
+
+static int block_has_successor(const LirBlock *block, int successor)
+{
+    if (block->term.kind == LIR_TERM_JMP)
+        return block->term.target == successor;
+    if (block->term.kind == LIR_TERM_BR)
+        return block->term.true_target == successor ||
+               block->term.false_target == successor;
+    return 0;
+}
+
+static void compute_loop_depths(const LirFn *lf, Liveness *out)
+{
+    LirDom dom;
+    unsigned char *members;
+    int *stack;
+
+    out->block_loop_depth =
+        arena_alloc_zeroed((size_t)lf->nblocks *
+                           sizeof(*out->block_loop_depth));
+    lir_dom_compute(lf, &dom);
+    members = arena_alloc_zeroed((size_t)lf->nblocks);
+    stack = arena_alloc((size_t)lf->nblocks * sizeof(*stack));
+
+    for (int header = 0; header < lf->nblocks; header++) {
+        int depth = 0;
+        int found = 0;
+
+        memset(members, 0, (size_t)lf->nblocks);
+        for (int latch = 0; latch < lf->nblocks; latch++) {
+            int nstack = 0;
+
+            if (!block_has_successor(&lf->blocks[latch], header) ||
+                !lir_dom_dominates(&dom, header, latch))
+                continue;
+            found = 1;
+            members[header] = 1;
+            if (!members[latch]) {
+                members[latch] = 1;
+                stack[nstack++] = latch;
+            }
+            while (nstack > 0) {
+                int block = stack[--nstack];
+                const LirBlock *bb = &lf->blocks[block];
+
+                if (block == header)
+                    continue;
+                for (int p = 0; p < bb->npreds; p++) {
+                    int pred = bb->preds[p];
+
+                    if (!members[pred]) {
+                        members[pred] = 1;
+                        stack[nstack++] = pred;
+                    }
+                }
+            }
+        }
+        if (!found)
+            continue;
+        for (int b = 0; b < lf->nblocks; b++)
+            depth += members[b] != 0;
+        if (depth == 0)
+            continue;
+        for (int b = 0; b < lf->nblocks; b++)
+            out->block_loop_depth[b] += members[b] != 0;
+    }
+}
+
+static int position_loop_depth(const LirFn *lf, const Liveness *lv,
+                               int position)
+{
+    for (int b = 0; b < lf->nblocks; b++) {
+        const LirBlock *block = &lf->blocks[b];
+
+        if (position >= block->start_position &&
+            position <= block->end_position)
+            return lv->block_loop_depth[b];
+    }
+    return 0;
+}
+
+static unsigned position_weight(int loop_depth)
+{
+    unsigned weight = 1;
+
+    while (loop_depth-- > 0 && weight < 1000)
+        weight *= 10;
+    return weight;
+}
+
+static void compute_spill_weights(const LirFn *lf, Liveness *out)
+{
+    for (int v = 0; v < lf->nvreg; v++) {
+        LiveInterval *iv = &out->by_vreg[v];
+        unsigned weight = 0;
+
+        for (int p = 0; p < iv->npositions; p++) {
+            LivePosition *position = &iv->positions[p];
+            unsigned scale = position_weight(
+                position_loop_depth(lf, out, position->position));
+            unsigned contribution = 0;
+
+            if (position->kind & LIVE_POS_USE)
+                contribution += 4;
+            if (position->kind & LIVE_POS_DEF)
+                contribution += 1;
+            if (contribution > (unsigned)INT_MAX / scale ||
+                weight > (unsigned)INT_MAX - contribution * scale) {
+                position->weight = INT_MAX;
+                weight = INT_MAX;
+                break;
+            }
+            position->weight = contribution * scale;
+            weight += position->weight;
+        }
+        iv->spill_weight = weight;
+    }
+}
+
 void liveness_compute(LirFn *lf, const TargetDesc *td, Liveness *out)
 {
     const int word_bits = (int)(sizeof(unsigned long) * CHAR_BIT);
@@ -260,6 +486,8 @@ void liveness_compute(LirFn *lf, const TargetDesc *td, Liveness *out)
 
     if (lf->nvreg == 0)
         return;
+
+    compute_loop_depths(lf, out);
 
     nwords = (int)(((size_t)lf->nvreg + (size_t)word_bits - 1) /
                    (size_t)word_bits);
@@ -378,22 +606,33 @@ void liveness_compute(LirFn *lf, const TargetDesc *td, Liveness *out)
 
             instr_use_def(ins, ins->position, td, out,
                           uses, &nu, defs, &nd);
-            for (int u = 0; u < nu; u++)
+            for (int u = 0; u < nu; u++) {
                 touch_vreg_use(out, uses[u], ins->position);
+                record_vreg_position(out, uses[u], ins->position, LIVE_POS_USE);
+            }
             if (ins->op == LIR_CALL) {
                 for (int a = 0; a < ins->nargs; a++) {
                     Operand arg = ins->call_args[a];
-                    if (arg.kind == OPND_VREG)
+                    if (arg.kind == OPND_VREG) {
                         touch_vreg_use(out, arg.u.vreg, ins->position);
-                    else if (arg.kind == OPND_MEM) {
+                        record_vreg_position(out, arg.u.vreg, ins->position,
+                                             LIVE_POS_USE);
+                    } else if (arg.kind == OPND_MEM) {
                         touch_vreg_use(out, arg.u.mem.base, ins->position);
-                        if (arg.u.mem.index != LIR_NO_IDX)
+                        record_vreg_position(out, arg.u.mem.base, ins->position,
+                                             LIVE_POS_USE);
+                        if (arg.u.mem.index != LIR_NO_IDX) {
                             touch_vreg_use(out, arg.u.mem.index, ins->position);
+                            record_vreg_position(out, arg.u.mem.index,
+                                                 ins->position, LIVE_POS_USE);
+                        }
                     }
                 }
             }
-            for (int d = 0; d < nd; d++)
+            for (int d = 0; d < nd; d++) {
                 touch_vreg_def(out, defs[d], ins->position);
+                record_vreg_position(out, defs[d], ins->position, LIVE_POS_DEF);
+            }
         }
 
         if (block->term.kind == LIR_TERM_BR ||
@@ -407,8 +646,44 @@ void liveness_compute(LirFn *lf, const TargetDesc *td, Liveness *out)
             term.b = block->term.b;
             instr_use_def(&term, block->term.position, td, out,
                           uses, &nu, defs, &nd);
-            for (int u = 0; u < nu; u++)
+            for (int u = 0; u < nu; u++) {
                 touch_vreg_use(out, uses[u], block->term.position);
+                record_vreg_position(out, uses[u], block->term.position,
+                                     LIVE_POS_USE);
+            }
+        }
+    }
+
+    /* Build block-precise ranges.  The legacy start/end pair remains the
+       enclosing interval until allocation becomes range-aware. */
+    for (int b = 0; b < lf->nblocks; b++) {
+        LirBlock *block = &lf->blocks[b];
+        unsigned long *in = live_in + (size_t)b * (size_t)nwords;
+        unsigned long *out_bits = live_out + (size_t)b * (size_t)nwords;
+
+        for (int v = 0; v < lf->nvreg; v++) {
+            LiveInterval *iv = &out->by_vreg[v];
+            int start = bit_test(in, v) ? block->start_position : INT_MAX;
+            int end = bit_test(out_bits, v) ? block->end_position : -1;
+
+            for (int p = 0; p < iv->npositions; p++) {
+                int position = iv->positions[p].position;
+
+                if (position < block->start_position ||
+                    position > block->end_position)
+                    continue;
+                if (start > position)
+                    start = position;
+                if (end < position)
+                    end = position;
+            }
+            if (start != INT_MAX || end >= 0) {
+                if (start == INT_MAX)
+                    start = end;
+                if (end < 0)
+                    end = start;
+                add_live_range(iv, start, end);
+            }
         }
     }
 
@@ -420,7 +695,12 @@ void liveness_compute(LirFn *lf, const TargetDesc *td, Liveness *out)
             iv->start = 0;
             iv->end = -1;
         }
+        if (iv->npositions > 1)
+            qsort(iv->positions, (size_t)iv->npositions,
+                  sizeof(*iv->positions), position_cmp);
+        normalize_live_ranges(iv);
     }
+    compute_spill_weights(lf, out);
 
     out->nsorted = 0;
     for (int v = 0; v < lf->nvreg; v++) {
@@ -444,7 +724,22 @@ void liveness_dump(LirFn *lf, const Liveness *lv, const TargetDesc *td, FILE *ou
 
     for (int i = 0; i < lv->nsorted; i++) {
         const LiveInterval *iv = &lv->sorted[i];
-        fprintf(out, "  v%d [%d, %d]\n", iv->vreg, iv->start, iv->end);
+        fprintf(out, "  v%d [%d, %d] weight=%u ranges(%d):",
+                iv->vreg, iv->start, iv->end, iv->spill_weight,
+                iv->nranges);
+        for (int r = 0; r < iv->nranges; r++)
+            fprintf(out, " [%d,%d]", iv->ranges[r].start, iv->ranges[r].end);
+        fprintf(out, " positions(%d):", iv->npositions);
+        for (int p = 0; p < iv->npositions; p++) {
+            const LivePosition *pos = &iv->positions[p];
+            fprintf(out, " %d", pos->position);
+            if (pos->kind & LIVE_POS_USE)
+                fputc('u', out);
+            if (pos->kind & LIVE_POS_DEF)
+                fputc('d', out);
+            fprintf(out, "@%u", pos->weight);
+        }
+        fputc('\n', out);
     }
 
     fprintf(out, "  fixed blocks:\n");
