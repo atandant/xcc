@@ -295,13 +295,19 @@ int int_const_eval(Node *expr, IntConstLookupFn lookup,
         if (out_ty)
             *out_ty = type_unsigned_long();
         return 1;
+    case ND_POS:
     case ND_NEG:
+    case ND_BITNOT:
         if (!int_const_eval(expr->operand, lookup, eval_sizeof, ctx,
                             &l, &lty))
             return 0;
         ty = type_int_promote(lty);
         l = type_convert_const(l, ty);
-        if (!int_const_neg_ty(l, ty, out_value))
+        if (expr->kind == ND_POS)
+            *out_value = l;
+        else if (expr->kind == ND_BITNOT)
+            *out_value = type_convert_const(~l, ty);
+        else if (!int_const_neg_ty(l, ty, out_value))
             return 0;
         if (out_ty)
             *out_ty = ty;

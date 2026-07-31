@@ -149,7 +149,9 @@ static void invalidate_assigned_in_expr(Node *n)
         for (Node *a = n->args; a; a = a->next)
             invalidate_assigned_in_expr(a);
         return;
+    case ND_POS:
     case ND_NEG:
+    case ND_BITNOT:
     case ND_NOT:
     case ND_PREINC:
     case ND_PREDEC:
@@ -352,7 +354,9 @@ static int prop_expr(Node **np, int rvalue, int allow_subst)
         for (Node **p = &n->body; *p; p = &(*p)->next)
             changed |= prop_expr(p, 1, allow_subst);
         return changed;
+    case ND_POS:
     case ND_NEG:
+    case ND_BITNOT:
     case ND_NOT:
     case ND_DEREF:
     case ND_CAST:
@@ -393,6 +397,12 @@ static int prop_expr(Node **np, int rvalue, int allow_subst)
         if (n->lhs && n->lhs->kind == ND_DEREF)
             invalidate_all_binds();
         changed |= prop_expr(&n->rhs, 1, allow_subst);
+        if (n->is_compound_assign) {
+            if (n->lhs && n->lhs->kind == ND_VAR &&
+                type_is_integer(n->lhs->ty))
+                bind_clear_offset(n->lhs->offset);
+            return changed;
+        }
         if (allow_subst && n->lhs && n->lhs->kind == ND_VAR &&
             type_is_integer(n->lhs->ty)) {
             if (is_integer_const(n->rhs, &v))

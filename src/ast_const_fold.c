@@ -142,12 +142,22 @@ int ast_const_fold_expr(Node **np)
         }
         return changed;
     }
+    case ND_POS:
     case ND_NEG:
+    case ND_BITNOT:
         changed |= ast_const_fold_expr(&n->operand);
         if (n->operand && n->operand->kind == ND_NUM &&
             type_is_integer(n->ty)) {
             long v;
-            if (int_const_neg_ty(n->operand->val, n->ty, &v)) {
+            int folded = 1;
+
+            if (n->kind == ND_POS)
+                v = type_convert_const(n->operand->val, n->ty);
+            else if (n->kind == ND_BITNOT)
+                v = type_convert_const(~n->operand->val, n->ty);
+            else
+                folded = int_const_neg_ty(n->operand->val, n->ty, &v);
+            if (folded) {
                 replace_expr_preserve_next(np, n, fold_to_num(v, n->ty, n->loc));
                 return 1;
             }

@@ -199,9 +199,23 @@ Node *node_binop(BinOp op, Node *l, Node *r, SourceLoc loc)
     return n;
 }
 
+Node *node_pos(Node *o, SourceLoc loc)
+{
+    Node *n = new_node(ND_POS, loc);
+    n->operand = o;
+    return n;
+}
+
 Node *node_neg(Node *o, SourceLoc loc)
 {
     Node *n = new_node(ND_NEG, loc);
+    n->operand = o;
+    return n;
+}
+
+Node *node_bitnot(Node *o, SourceLoc loc)
+{
+    Node *n = new_node(ND_BITNOT, loc);
     n->operand = o;
     return n;
 }
@@ -315,6 +329,14 @@ Node *node_assign(Node *l, Node *r, SourceLoc loc)
     Node *n = new_node(ND_ASSIGN, loc);
     n->lhs = l;
     n->rhs = r;
+    return n;
+}
+
+Node *node_compound_assign(BinOp op, Node *l, Node *r, SourceLoc loc)
+{
+    Node *n = node_assign(l, r, loc);
+    n->is_compound_assign = 1;
+    n->op = op;
     return n;
 }
 

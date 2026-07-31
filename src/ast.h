@@ -83,7 +83,9 @@ typedef enum {
     ND_STRING,     /* ordinary character string literal */
     ND_VAR,        /* reference to a local         */
     ND_BINOP,      /* lhs <op> rhs                 */
+    ND_POS,        /* unary plus on operand        */
     ND_NEG,        /* unary minus on operand       */
+    ND_BITNOT,     /* bitwise complement operand   */
     ND_PREINC,     /* ++operand (prefix)           */
     ND_PREDEC,     /* --operand (prefix)           */
     ND_POSTINC,    /* operand++ (postfix)          */
@@ -162,10 +164,12 @@ struct Node {
     VarStorage storage;/* ND_VAR: resolved object/function storage   */
     int offset;        /* stack offset from frame pointer (sema)     */
 
-    BinOp op;          /* ND_BINOP                                  */
+    BinOp op;          /* ND_BINOP; compound ND_ASSIGN operation    */
+    int is_compound_assign; /* ND_ASSIGN: lhs op= rhs                */
+    Type *op_ty;       /* ND_ASSIGN: promoted compound operation type */
     Node *lhs, *rhs;   /* ND_BINOP, ND_ASSIGN                       */
 
-    Node *operand;     /* ND_NEG, ND_PRE/POST INC/DEC, ND_RETURN, ND_EXPR_STMT,
+    Node *operand;     /* unary expressions, ND_RETURN, ND_EXPR_STMT,
                         * ND_CAST, ND_CASE constant expression       */
     Type *cast_ty;     /* ND_CAST: parsed target type               */
     StorageClass decl_storage; /* ND_DECL: declared storage class     */
@@ -335,7 +339,9 @@ Node *node_string_append(Node *literal, StringToken *token);
 Node *string_literals(void);
 Node *node_var(char *name, SourceLoc loc);
 Node *node_binop(BinOp op, Node *l, Node *r, SourceLoc loc);
+Node *node_pos(Node *o, SourceLoc loc);
 Node *node_neg(Node *o, SourceLoc loc);
+Node *node_bitnot(Node *o, SourceLoc loc);
 Node *node_preinc(Node *o, SourceLoc loc);
 Node *node_predec(Node *o, SourceLoc loc);
 Node *node_postinc(Node *o, SourceLoc loc);
@@ -351,6 +357,7 @@ Node *node_cast(Type *ty, Node *o, SourceLoc loc);
 Node *node_sizeof_expr(Node *o, SourceLoc loc);
 Node *node_sizeof_type(Type *ty, SourceLoc loc);
 Node *node_assign(Node *l, Node *r, SourceLoc loc);
+Node *node_compound_assign(BinOp op, Node *l, Node *r, SourceLoc loc);
 Node *node_return(Node *o, SourceLoc loc);
 Node *node_expr_stmt(Node *o, SourceLoc loc);
 Node *node_decl(char *name, Type *spec_ty, Declarator *decl,

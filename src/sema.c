@@ -232,7 +232,9 @@ static void check_init_from_self(Node *n, Node *decl)
         check_init_from_self(n->then_expr, decl);
         check_init_from_self(n->else_expr, decl);
         return;
+    case ND_POS:
     case ND_NEG:
+    case ND_BITNOT:
     case ND_NOT:
     case ND_PREINC:
     case ND_PREDEC:
@@ -1177,6 +1179,34 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
             diag_incompatible_assign(n->loc, n->lhs->ty, n->rhs);
         else if (!expr_is_modifiable_lvalue(n->lhs))
             diag_error_at(n->loc, "assignment to const-qualified object");
+        else if (n->is_compound_assign) {
+            Node lhs_value = *n->lhs;
+            Node operation = *n;
+            Node result;
+            int valid = 0;
+
+            lhs_value.next = NULL;
+            lhs_value.is_lvalue = 0;
+            operation.kind = ND_BINOP;
+            operation.lhs = &lhs_value;
+            operation.rhs = n->rhs;
+            if (is_arith_op(n->op))
+                valid = check_arith_binop(&operation);
+            else if (is_bitwise_op(n->op))
+                valid = check_bitwise_binop(&operation);
+            else if (is_shift_op(n->op))
+                valid = check_shift_binop(&operation);
+
+            memset(&result, 0, sizeof(result));
+            result.ty = operation.ty;
+            if (!valid || !expr_assignable_to(n->lhs->ty, &result)) {
+                diag_error_at(n->loc,
+                              "invalid operands to compound assignment");
+            } else {
+                n->rhs = operation.rhs;
+                n->op_ty = operation.ty;
+            }
+        }
         else if (!expr_assignable_to(n->lhs->ty, n->rhs))
             diag_incompatible_assign(n->loc, n->lhs->ty, n->rhs);
         else {
@@ -1300,11 +1330,16 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
         }
         n->is_lvalue = 0;
         return;
+    case ND_POS:
     case ND_NEG:
+    case ND_BITNOT:
         resolve_expr_ctx(n->operand, CTX_RVALUE);
         n->var_decay = 0;
         if (!type_is_integer(n->operand->ty))
-            diag_error_at(n->loc, "invalid operand to unary minus");
+            diag_error_at(n->loc,
+                          n->kind == ND_POS ? "invalid operand to unary plus" :
+                          n->kind == ND_NEG ? "invalid operand to unary minus" :
+                                              "invalid operand to bitwise complement");
         n->ty = type_int_promote(n->operand->ty);
         convert_integer_expr(&n->operand, n->ty);
         n->is_lvalue = 0;
@@ -1905,7 +1940,9 @@ static void sema_scan_call_member_scratch(Node *n, int *maxsz)
         return;
     case ND_RETURN:
     case ND_EXPR_STMT:
+    case ND_POS:
     case ND_NEG:
+    case ND_BITNOT:
     case ND_NOT:
     case ND_PREINC:
     case ND_PREDEC:
@@ -2024,7 +2061,9 @@ static void sema_scan_sret_call_scratch(Node *n, int *maxsz)
             sema_scan_sret_call_scratch(n->operand, maxsz);
         return;
     case ND_EXPR_STMT:
+    case ND_POS:
     case ND_NEG:
+    case ND_BITNOT:
     case ND_NOT:
     case ND_ADDR:
     case ND_DEREF:

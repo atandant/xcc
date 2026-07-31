@@ -153,11 +153,16 @@ static int keyword(const char *text)
 static int punctuator(CppToken token)
 {
     static const struct { const char *text; int token; } puncts[] = {
+        { "<<=", SHL_ASSIGN }, { ">>=", SHR_ASSIGN },
+        { "*=", MUL_ASSIGN }, { "/=", DIV_ASSIGN },
+        { "%=", MOD_ASSIGN }, { "+=", ADD_ASSIGN },
+        { "-=", SUB_ASSIGN }, { "&=", AND_ASSIGN },
+        { "^=", XOR_ASSIGN }, { "|=", OR_ASSIGN },
         { "++", INC }, { "--", DEC }, { "->", ARROW }, { "&&", LAND },
         { "||", LOR }, { "<<", SHL }, { ">>", SHR }, { "==", EQ },
         { "!=", NE }, { "<=", LE }, { ">=", GE },
     };
-    const char *single = "-+*/%=<>(){};,&|^.:?![]";
+    const char *single = "-+*/%=<>(){};,&|^~.:?![]";
 
     if (token.len == 1 && strchr(single, token.text[0]))
         return (unsigned char)token.text[0];

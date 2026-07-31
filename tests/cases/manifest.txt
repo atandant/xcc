@@ -141,6 +141,16 @@ run|cmp_false.c|0||
 run|cmp_precedence.c|1||
 run|comment_line.c|7||
 run|comparison_truth_values.c|6||
+run|compound_add_sub.c|17||
+run|compound_bitfield.c|187||
+run|compound_bitwise.c|11||
+run|compound_expr_value_chain.c|22||
+run|compound_member_base_once.c|16||
+run|compound_mul_div_mod.c|8||
+run|compound_narrow_conversion.c|4||
+run|compound_pointer.c|8||
+run|compound_shift.c|12||
+run|compound_subscript_once.c|24||
 run|continue_first_iter.c|6||
 run|continue_for.c|0||
 run|continue_for_manual_step.c|3||
@@ -201,6 +211,7 @@ xcc-error|error_conflicting_param_count.c|1|conflicting types for 'f'|
 xcc-error|error_conflicting_param_type.c|1|conflicting types for 'f'|
 xcc-error|error_conflicting_return_pointer.c|1|conflicting types for 'f'|
 xcc-error|error_conflicting_return_type.c|1|conflicting types for 'f'|
+xcc-error|error_compound_constraints.c|1|invalid operands to compound assignment|
 xcc-error|error_continue_outside_loop.c|1|continue statement not within loop|
 xcc-error|error_deref_int.c|1|cannot dereference non-pointer type 'int'|
 xcc-error|error_deref_void_pointer.c|1|dereference of void pointer|
@@ -588,7 +599,12 @@ run|u_hex_literal.c|255||
 run|u_index_unsigned.c|77||
 run|u_long_decl.c|17||
 run|u_mixed_promote.c|50||
+run|incdec_lvalue_once.c|24||
+run|unary_bitnot.c|15||
+run|unary_plus.c|12||
+run|unary_plus_bitnot_ice.c|4||
 run|unary_precedence.c|4||
+xcc-error|error_unary_plus_bitnot_pointer.c|1|invalid operand to unary plus|
 run|union_assign.c|55||
 run|union_basic.c|42||
 run|union_byval_param.c|55||

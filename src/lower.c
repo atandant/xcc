@@ -1465,49 +1465,133 @@ static void lower_return_record(LowerCtx *c, Node *n, Type *ret_ty)
     emit(c, (Instr){ .op = LIR_JMP, .label = c->ret_label });
 }
 
-static void lower_store_lvalue(LowerCtx *c, Node *lhs, int val)
+typedef struct {
+    Node *lhs;
+    Member *bitfield;
+    int direct_slot;
+    int offset;
+    int addr;
+    int bitfield_unit;
+} PreparedLvalue;
+
+static PreparedLvalue prepare_lvalue(LowerCtx *c, Node *lhs)
 {
-    if (lhs->kind == ND_VAR) {
-        if (lhs->storage == VAR_STORAGE_GLOBAL) {
-            int addr = lower_symbol_addr(c, node_symbol_name(lhs));
-            emit(c, (Instr){
-                .op = LIR_STORE,
-                .a = lir_mem(addr, 0),
-                .b = lir_vreg(val),
-                .w = store_lir_width(lhs->ty),
-                .aux = store_width_bytes(lhs->ty),
-            });
-        } else {
-            emit_store_slot(c, val, lhs->ty, lhs->offset);
-        }
-        return;
+    PreparedLvalue lv = { .lhs = lhs, .addr = LIR_NO_VREG,
+                          .bitfield_unit = LIR_NO_VREG };
+
+    if (lhs->kind == ND_VAR && lhs->storage == VAR_STORAGE_LOCAL) {
+        lv.direct_slot = 1;
+        lv.offset = lhs->offset;
+        return lv;
     }
     if (lhs->kind == ND_MEMBER) {
         Member *m = member_meta(lhs);
+
         if (m->is_bitfield && m->bit_width > 0) {
-            lower_bitfield_store(c, lhs, m, val);
-            return;
+            int base = lower_object_addr(c, lhs->lhs);
+            int addr = fresh(c);
+
+            emit(c, (Instr){
+                .op = LIR_LEA, .dst = addr, .a = lir_mem(base, m->offset),
+            });
+            lv.bitfield = m;
+            lv.addr = addr;
+            return lv;
         }
-        int addr = lower_member_addr(c, lhs);
+        lv.addr = lower_member_addr(c, lhs);
+        return lv;
+    }
+    if (lhs->kind == ND_VAR) {
+        lv.addr = lower_symbol_addr(c, node_symbol_name(lhs));
+        return lv;
+    }
+    lv.addr = lower_addr(c, lhs);
+    return lv;
+}
+
+static int load_prepared_lvalue(LowerCtx *c, PreparedLvalue *lv)
+{
+    Type *ty = lv->lhs->ty;
+    int raw = fresh(c);
+
+    if (lv->bitfield) {
+        Member *m = lv->bitfield;
+        int shifted;
+        int value;
+        long mask = (1L << m->bit_width) - 1;
+
         emit(c, (Instr){
-            .op = LIR_STORE,
-            .a = lir_mem(addr, 0),
-            .b = lir_vreg(val),
-            .w = store_lir_width(lhs->ty),
-            .aux = store_width_bytes(lhs->ty),
+            .op = LIR_LOAD, .dst = raw, .a = lir_mem(lv->addr, 0),
+            .w = LIR_W4, .sgn = LIR_SGN_Z, .aux = 4,
+        });
+        lv->bitfield_unit = fresh(c);
+        emit(c, (Instr){
+            .op = LIR_CONV, .dst = lv->bitfield_unit,
+            .a = lir_vreg(raw), .conv = CONV_ZEXT32,
+        });
+        shifted = fresh(c);
+        value = fresh(c);
+        emit_binop_imm(c, LIR_SHR, shifted, lv->bitfield_unit, m->bit_offset);
+        emit_binop_imm(c, LIR_AND, value, shifted, mask);
+        if (type_is_signed(m->ty) && !type_is_unsigned(m->ty)) {
+            int sh = 64 - m->bit_width;
+            int left = fresh(c);
+            int signed_value = fresh(c);
+            emit_binop_imm(c, LIR_SHL, left, value, sh);
+            emit_binop_imm(c, LIR_SAR, signed_value, left, sh);
+            return signed_value;
+        }
+        return value;
+    }
+    if (lv->direct_slot)
+        return emit_load_slot(c, raw, ty, lv->offset);
+    emit(c, (Instr){
+        .op = LIR_LOAD, .dst = raw, .a = lir_mem(lv->addr, 0),
+        .w = load_lir_width(ty), .sgn = load_sign(ty),
+        .aux = store_width_bytes(ty),
+    });
+    return widen_loaded_value(c, raw, ty);
+}
+
+static void store_prepared_lvalue(LowerCtx *c, PreparedLvalue *lv, int value)
+{
+    Type *ty = lv->lhs->ty;
+
+    if (lv->bitfield) {
+        Member *m = lv->bitfield;
+        long value_mask = (1L << m->bit_width) - 1;
+        long field_mask = value_mask << m->bit_offset;
+        int cleared = fresh(c);
+        int bits = fresh(c);
+        int shifted = fresh(c);
+        int merged = fresh(c);
+        int truncated = fresh(c);
+
+        emit_binop_imm(c, LIR_AND, cleared, lv->bitfield_unit, ~field_mask);
+        emit_binop_imm(c, LIR_AND, bits, value, value_mask);
+        emit_binop_imm(c, LIR_SHL, shifted, bits, m->bit_offset);
+        emit(c, (Instr){
+            .op = LIR_OR, .dst = merged, .a = lir_vreg(cleared),
+            .b = lir_vreg(shifted), .w = LIR_W8,
+        });
+        emit(c, (Instr){
+            .op = LIR_CONV, .dst = truncated, .a = lir_vreg(merged),
+            .conv = CONV_TRUNC_LO32,
+        });
+        emit(c, (Instr){
+            .op = LIR_STORE, .a = lir_mem(lv->addr, 0),
+            .b = lir_vreg(truncated), .w = LIR_W4, .aux = 4,
         });
         return;
     }
-    {
-        int addr = lower_addr(c, lhs);
-        emit(c, (Instr){
-            .op = LIR_STORE,
-            .a = lir_mem(addr, 0),
-            .b = lir_vreg(val),
-            .w = store_lir_width(lhs->ty),
-            .aux = store_width_bytes(lhs->ty),
-        });
+    if (lv->direct_slot) {
+        emit_store_slot(c, value, ty, lv->offset);
+        return;
     }
+    emit(c, (Instr){
+        .op = LIR_STORE, .a = lir_mem(lv->addr, 0), .b = lir_vreg(value),
+        .w = store_lir_width(ty), .aux = store_width_bytes(ty),
+    });
 }
 
 static int lower_step_value(LowerCtx *c, int old, Type *oty, int is_inc)
@@ -1553,12 +1637,72 @@ static int lower_incdec(LowerCtx *c, Node *n)
     Node *lv = n->operand;
     int is_post = n->kind == ND_POSTINC || n->kind == ND_POSTDEC;
     int is_inc = n->kind == ND_PREINC || n->kind == ND_POSTINC;
-    int old = lower_expr(c, lv);
+    PreparedLvalue prepared = prepare_lvalue(c, lv);
+    int old = load_prepared_lvalue(c, &prepared);
     int updated = lower_step_value(c, old, lv->ty, is_inc);
-    lower_store_lvalue(c, lv, updated);
+    store_prepared_lvalue(c, &prepared, updated);
     if (is_post)
         return widen_loaded_value(c, old, n->ty);
     return widen_loaded_value(c, updated, n->ty);
+}
+
+static int lower_compound_assign(LowerCtx *c, Node *n)
+{
+    PreparedLvalue lv = prepare_lvalue(c, n->lhs);
+    int old = load_prepared_lvalue(c, &lv);
+    int left = convert_value(c, old, n->lhs->ty, n->op_ty);
+    int right = lower_expr(c, n->rhs);
+    int result = fresh(c);
+
+    if (type_is_pointer(n->op_ty)) {
+        int scale = ptr_elem_size(n->op_ty);
+
+        if (scale > 1) {
+            int scaled = fresh(c);
+            emit(c, (Instr){
+                .op = LIR_MUL, .dst = scaled, .a = lir_vreg(right),
+                .b = lir_imm(scale), .w = LIR_W8,
+            });
+            right = scaled;
+        }
+        if (n->op == OP_ADD) {
+            emit(c, (Instr){
+                .op = LIR_LEA, .dst = result,
+                .a = lir_mem_idx(left, right, 1, 0),
+            });
+        } else {
+            emit(c, (Instr){
+                .op = LIR_SUB, .dst = result, .a = lir_vreg(left),
+                .b = lir_vreg(right), .w = LIR_W8,
+            });
+        }
+    } else {
+        LirWidth w = type_int_width(n->op_ty) == 8 ? LIR_W8 : LIR_W4;
+        LirSign sgn = type_is_unsigned(n->op_ty) ? LIR_SGN_U : LIR_SGN_S;
+        LirOp op;
+
+        switch (n->op) {
+        case OP_ADD:    op = LIR_ADD; break;
+        case OP_SUB:    op = LIR_SUB; break;
+        case OP_MUL:    op = LIR_MUL; break;
+        case OP_DIV:    op = LIR_DIV; break;
+        case OP_MOD:    op = LIR_MOD; break;
+        case OP_SHL:    op = LIR_SHL; break;
+        case OP_SHR:    op = sgn == LIR_SGN_U ? LIR_SHR : LIR_SAR; break;
+        case OP_BITAND: op = LIR_AND; break;
+        case OP_BITXOR: op = LIR_XOR; break;
+        case OP_BITOR:  op = LIR_OR; break;
+        default:        assert(0); op = LIR_ADD; break;
+        }
+        emit(c, (Instr){
+            .op = op, .dst = result, .a = lir_vreg(left),
+            .b = lir_vreg(right), .w = w, .sgn = sgn,
+        });
+    }
+
+    result = convert_value(c, result, n->op_ty, n->lhs->ty);
+    store_prepared_lvalue(c, &lv, result);
+    return widen_loaded_value(c, result, n->ty);
 }
 
 static int lower_expr(LowerCtx *c, Node *n)
@@ -1605,11 +1749,22 @@ static int lower_expr(LowerCtx *c, Node *n)
         if (n->func_ty && abi_type_is_record_pass(n->func_ty->ret))
             return lower_call_ex(c, n, CALL_DEST_NONE);
         return lower_call(c, n);
+    case ND_POS:
+        return lower_expr(c, n->operand);
     case ND_NEG: {
         int v = lower_expr(c, n->operand);
         int dst = fresh(c);
         emit(c, (Instr){
             .op = LIR_NEG, .dst = dst, .a = lir_vreg(v), .w = expr_width(n->operand) });
+        return dst;
+    }
+    case ND_BITNOT: {
+        int v = lower_expr(c, n->operand);
+        int dst = fresh(c);
+        emit(c, (Instr){
+            .op = LIR_XOR, .dst = dst, .a = lir_vreg(v), .b = lir_imm(-1),
+            .w = expr_width(n->operand),
+        });
         return dst;
     }
     case ND_PREINC:
@@ -1746,6 +1901,8 @@ static int lower_expr(LowerCtx *c, Node *n)
         return lower_cast_value(c, n);
     }
     case ND_ASSIGN: {
+        if (n->is_compound_assign)
+            return lower_compound_assign(c, n);
         if (type_is_record(n->lhs->ty)) {
             if (n->rhs->kind == ND_CALL &&
                 abi_type_is_record_pass(n->lhs->ty) &&

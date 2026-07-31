@@ -67,7 +67,7 @@ acceptance test suite.
 | `switch` / `case` / `default`, fallthrough, `break`, `continue` | |
 | function-scoped labels and `goto` (forward and backward) | |
 | prefix/postfix `++` and `--` on integer and pointer lvalues | |
-| arithmetic, bitwise, shifts, comparisons, `&&`, `\|\|`, `!`, `?:`, comma | |
+| arithmetic, bitwise, shifts, comparisons, unary `+`/`-`/`~`, compound assignments, `&&`, `\|\|`, `!`, `?:`, comma | |
 | pointer `==` / `!=` / ordering, truthiness, `p == 0` | |
 | `U`/`u` and `L`/`l` integer suffixes (including `UL`/`LU`); `0x` hex literals (C89 typing) | `const` and `volatile` qualifiers |
 | `int`/`long` promotions; `ptr - ptr` → `long` | |

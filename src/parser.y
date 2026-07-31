@@ -93,6 +93,8 @@ static Type *parameter_declspec_type(DeclSpec *spec, SourceLoc loc)
 %token <string> STRING
 %token INT CHAR SHORT LONG VOID UNSIGNED SIGNED CONST RETURN IF ELSE WHILE DO FOR SWITCH CASE DEFAULT GOTO BREAK CONTINUE SIZEOF TYPEDEF EXTERN STATIC AUTO REGISTER STRUCT UNION ENUM
 %token EQ NE LE GE ARROW LAND LOR SHL SHR INC DEC
+%token MUL_ASSIGN DIV_ASSIGN MOD_ASSIGN ADD_ASSIGN SUB_ASSIGN
+%token SHL_ASSIGN SHR_ASSIGN AND_ASSIGN XOR_ASSIGN OR_ASSIGN
 
 %type <node> expr expr_opt arg_expr conditional_expr logical_or_expr
              logical_and_expr bitwise_or_expr bitwise_xor_expr bitwise_and_expr
@@ -606,6 +608,26 @@ arg_expr:
     conditional_expr         { $$ = $1; }
   | unary_expr '=' arg_expr
                              { $$ = node_assign($1, $3, LOC(@2)); }
+  | unary_expr MUL_ASSIGN arg_expr
+                             { $$ = node_compound_assign(OP_MUL, $1, $3, LOC(@2)); }
+  | unary_expr DIV_ASSIGN arg_expr
+                             { $$ = node_compound_assign(OP_DIV, $1, $3, LOC(@2)); }
+  | unary_expr MOD_ASSIGN arg_expr
+                             { $$ = node_compound_assign(OP_MOD, $1, $3, LOC(@2)); }
+  | unary_expr ADD_ASSIGN arg_expr
+                             { $$ = node_compound_assign(OP_ADD, $1, $3, LOC(@2)); }
+  | unary_expr SUB_ASSIGN arg_expr
+                             { $$ = node_compound_assign(OP_SUB, $1, $3, LOC(@2)); }
+  | unary_expr SHL_ASSIGN arg_expr
+                             { $$ = node_compound_assign(OP_SHL, $1, $3, LOC(@2)); }
+  | unary_expr SHR_ASSIGN arg_expr
+                             { $$ = node_compound_assign(OP_SHR, $1, $3, LOC(@2)); }
+  | unary_expr AND_ASSIGN arg_expr
+                             { $$ = node_compound_assign(OP_BITAND, $1, $3, LOC(@2)); }
+  | unary_expr XOR_ASSIGN arg_expr
+                             { $$ = node_compound_assign(OP_BITXOR, $1, $3, LOC(@2)); }
+  | unary_expr OR_ASSIGN arg_expr
+                             { $$ = node_compound_assign(OP_BITOR, $1, $3, LOC(@2)); }
   ;
 
 conditional_expr:
@@ -700,7 +722,9 @@ unary_expr:
     postfix_expr            { $$ = $1; }
   | INC cast_expr           { $$ = node_preinc($2, LOC(@1)); }
   | DEC cast_expr           { $$ = node_predec($2, LOC(@1)); }
+  | '+' cast_expr           { $$ = node_pos($2, LOC(@1)); }
   | '-' cast_expr           { $$ = node_neg($2, LOC(@1)); }
+  | '~' cast_expr           { $$ = node_bitnot($2, LOC(@1)); }
   | '!' cast_expr           { $$ = node_not($2, LOC(@1)); }
   | '&' cast_expr           { $$ = node_addr($2, LOC(@1)); }
   | '*' cast_expr           { $$ = node_deref($2, LOC(@1)); }
