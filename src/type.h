@@ -11,6 +11,7 @@
 typedef enum {
     TY_VOID,
     TY_INT,     /* char, short, int, long; signed and unsigned variants */
+    TY_FLOAT,   /* float and double */
     TY_QUALIFIED, /* immutable qualifier wrapper around another type */
     TY_PTR,
     TY_ARRAY,
@@ -27,6 +28,11 @@ typedef enum {
     IW_INT,
     IW_LONG
 } IntWidth;
+
+typedef enum {
+    FW_FLOAT,
+    FW_DOUBLE
+} FloatWidth;
 
 typedef enum {
     IS_SIGNED,
@@ -55,6 +61,7 @@ struct Type {
     TypeKind kind;
     IntWidth width;    /* TY_INT: char / short / int / long              */
     IntSign sign;      /* TY_INT: signedness                             */
+    FloatWidth float_width; /* TY_FLOAT: float / double                   */
     int size;          /* object size in bytes (0 for void/func)        */
     int align;         /* alignment in bytes                            */
 
@@ -101,6 +108,8 @@ Type *type_unsigned_char(void);
 Type *type_unsigned_short(void);
 Type *type_unsigned_int(void);
 Type *type_unsigned_long(void);
+Type *type_float(void);
+Type *type_double(void);
 
 /* Qualification preserves the identity of the wrapped structural type. */
 Type *type_qualify(Type *ty, unsigned qualifiers);
@@ -135,6 +144,8 @@ int type_is_char(Type *ty);         /* any char width */
 int type_is_long(Type *ty);         /* any long width */
 int type_is_short(Type *ty);        /* any short width */
 int type_is_integer(Type *ty);
+int type_is_floating(Type *ty);
+int type_is_arithmetic(Type *ty);
 int type_is_signed(Type *ty);
 int type_is_unsigned(Type *ty);
 int type_is_pointer(Type *ty);

@@ -70,6 +70,7 @@ static int emit(LowerCtx *c, Instr ins)
         block->term.b = ins.b;
         block->term.w = ins.w;
         block->term.sgn = ins.sgn;
+        block->term.fpw = ins.fpw;
         block->term.cc = ins.cc;
         c->current = fallthrough;
         return 0;
@@ -85,6 +86,12 @@ static int emit(LowerCtx *c, Instr ins)
 static int fresh(LowerCtx *c)
 {
     return lir_new_vreg(c->lf);
+}
+
+static int fresh_type(LowerCtx *c, Type *ty)
+{
+    return lir_new_vreg_class(c->lf,
+        type_is_floating(ty) ? REG_CLASS_XMM : REG_CLASS_GPR);
 }
 
 static int protect_home_before(LowerCtx *c, int v, Node *later)
@@ -225,6 +232,8 @@ static int store_width_bytes(Type *ty)
 {
     TypeScalarInfo si;
 
+    if (type_is_floating(ty))
+        return type_size(ty);
     if (type_scalar_info(ty, &si))
         return si.width;
     return 0;
@@ -234,6 +243,12 @@ static LirWidth store_lir_width(Type *ty)
 {
     int w = store_width_bytes(ty);
     return w == 8 ? LIR_W8 : LIR_W4;
+}
+
+static LirFloatWidth float_width(Type *ty)
+{
+    return type_same(type_unqualified(ty), type_float())
+        ? LIR_FP_F32 : LIR_FP_F64;
 }
 
 static LirSign load_sign(Type *ty)
@@ -299,6 +314,7 @@ static int emit_load_slot(LowerCtx *c, int dst, Type *ty, int offset)
         .a = lir_mem(LIR_FP, offset),
         .w = load_lir_width(ty),
         .sgn = load_sign(ty),
+        .fpw = type_is_floating(ty) ? float_width(ty) : LIR_FP_NONE,
         .aux = bytes,
     });
     return widen_loaded_value(c, dst, ty);
@@ -311,6 +327,7 @@ static void emit_store_slot(LowerCtx *c, int src, Type *ty, int offset)
         .a = lir_mem(LIR_FP, offset),
         .b = lir_vreg(src),
         .w = store_lir_width(ty),
+        .fpw = type_is_floating(ty) ? float_width(ty) : LIR_FP_NONE,
         .aux = store_width_bytes(ty),
     });
 }
@@ -823,8 +840,18 @@ static int lower_addr(LowerCtx *c, Node *n)
 
 static int emit_conv_value(LowerCtx *c, int src, ConvKind k)
 {
-    int dst = fresh(c);
-    emit(c, (Instr){ .op = LIR_CONV, .dst = dst, .a = lir_vreg(src), .conv = k });
+    int to_float = k == CONV_SI32_F32 || k == CONV_SI32_F64 ||
+                   k == CONV_SI64_F32 || k == CONV_SI64_F64 ||
+                   k == CONV_UI32_F32 || k == CONV_UI32_F64 ||
+                   k == CONV_F32_F64 || k == CONV_F64_F32;
+    int dst = lir_new_vreg_class(c->lf,
+        to_float ? REG_CLASS_XMM : REG_CLASS_GPR);
+    LirFloatWidth fpw = (k == CONV_SI32_F32 || k == CONV_SI64_F32 ||
+                         k == CONV_UI32_F32 || k == CONV_F64_F32 ||
+                         k == CONV_F32_SI32 || k == CONV_F32_SI64 ||
+                         k == CONV_F32_UI32) ? LIR_FP_F32 : LIR_FP_F64;
+    emit(c, (Instr){ .op = LIR_CONV, .dst = dst, .a = lir_vreg(src),
+                     .conv = k, .fpw = fpw });
     return dst;
 }
 
@@ -898,6 +925,34 @@ static int convert_value(LowerCtx *c, int v, Type *from, Type *to)
 {
     if (type_is_void(to))
         return v;
+
+    if (type_is_floating(from) || type_is_floating(to)) {
+        if (type_same(from, to))
+            return v;
+        if (type_is_floating(from) && type_is_floating(to))
+            return emit_conv_value(c, v, type_same(to, type_double())
+                ? CONV_F32_F64 : CONV_F64_F32);
+        if (type_is_integer(from) && type_is_floating(to)) {
+            int wide = type_int_width(from) == 8;
+            int f64 = type_same(to, type_double());
+            if (!type_is_signed(from) && !wide)
+                return emit_conv_value(c, v, f64 ? CONV_UI32_F64 : CONV_UI32_F32);
+            return emit_conv_value(c, v,
+                wide ? (f64 ? CONV_SI64_F64 : CONV_SI64_F32)
+                     : (f64 ? CONV_SI32_F64 : CONV_SI32_F32));
+        }
+        if (type_is_floating(from) && type_is_integer(to)) {
+            int wide = type_int_width(to) == 8;
+            if (!type_is_signed(to) && !wide)
+                return emit_conv_value(c, v, type_same(from, type_float())
+                    ? CONV_F32_UI32 : CONV_F64_UI32);
+            return emit_conv_value(c, v,
+                type_same(from, type_float())
+                    ? (wide ? CONV_F32_SI64 : CONV_F32_SI32)
+                    : (wide ? CONV_F64_SI64 : CONV_F64_SI32));
+        }
+        return v;
+    }
 
     TypeScalarInfo di;
     TypeScalarInfo si;
@@ -1039,6 +1094,30 @@ static void lower_binop(LowerCtx *c, int dst, BinOp op, Node *lhs, Node *rhs,
 
     if (is_ptr_int_arith(op, lhs, rhs)) {
         lower_ptr_int_arith(c, dst, op, lhs, rhs);
+        return;
+    }
+
+
+    if (type_is_floating(lhs->ty)) {
+        int vl = lower_expr(c, lhs);
+        int vr = lower_expr(c, rhs);
+        LirFloatWidth fpw = float_width(lhs->ty);
+
+        if (is_cmp(op)) {
+            emit(c, (Instr){
+                .op = LIR_FSETCC, .dst = dst,
+                .a = lir_vreg(vl), .b = lir_vreg(vr),
+                .fpw = fpw, .cc = binop_cc(op),
+            });
+        } else {
+            LirOp fop = op == OP_ADD ? LIR_FADD :
+                         op == OP_SUB ? LIR_FSUB :
+                         op == OP_MUL ? LIR_FMUL : LIR_FDIV;
+            emit(c, (Instr){
+                .op = fop, .dst = dst,
+                .a = lir_vreg(vl), .b = lir_vreg(vr), .fpw = fpw,
+            });
+        }
         return;
     }
 
@@ -1278,8 +1357,10 @@ static int lower_call_ex(LowerCtx *c, Node *n, int result_off)
     Type *ret_ty = n->func_ty ? n->func_ty->ret : type_int();
     AbiRetPlan ret_plan;
     Operand reg_slots[6];
+    Operand sse_slots[8];
     Operand *stack_slots = NULL;
     int nreg = 0;
+    int nsse = 0;
     int nstack = 0;
     int stack_cap = 0;
     int total;
@@ -1325,7 +1406,9 @@ static int lower_call_ex(LowerCtx *c, Node *n, int result_off)
 
         int v = lower_expr(c, a);
 
-        if (nreg < 6)
+        if (type_is_floating(a->ty) && nsse < 8)
+            sse_slots[nsse++] = lir_vreg(v);
+        else if (!type_is_floating(a->ty) && nreg < 6)
             reg_slots[nreg++] = lir_vreg(v);
         else
             append_operand(&stack_slots, &nstack, &stack_cap, lir_vreg(v));
@@ -1336,12 +1419,14 @@ static int lower_call_ex(LowerCtx *c, Node *n, int result_off)
     if (nstack > INT_MAX / 8)
         diag_fatal("call argument area is too large");
 
-    total = nreg + nstack;
+    total = nreg + nsse + nstack;
     args = arena_alloc((size_t)total * sizeof(*args));
     for (i = 0; i < nreg; i++)
         args[i] = reg_slots[i];
+    for (i = 0; i < nsse; i++)
+        args[nreg + i] = sse_slots[i];
     for (i = 0; i < nstack; i++)
-        args[nreg + i] = stack_slots[i];
+        args[nreg + nsse + i] = stack_slots[i];
 
     {
         int call_reg = 0;
@@ -1354,7 +1439,9 @@ static int lower_call_ex(LowerCtx *c, Node *n, int result_off)
             .call_indirect = n->call_direct ? 0 : 1,
             .call_reg = call_reg,
             .nargs = total,
-            .call_nreg = nreg,
+            .call_nreg = nreg + nsse,
+            .call_ngpr = nreg,
+            .call_nsse = nsse,
             .call_args = args,
         });
     }
@@ -1374,9 +1461,11 @@ static int lower_call_ex(LowerCtx *c, Node *n, int result_off)
         return fresh(c);
     }
 
-    int dst = fresh(c);
+    int dst = fresh_type(c, ret_ty);
     emit(c, (Instr){
-        .op = LIR_MOV, .dst = dst, .a = lir_phys(PHYS_RAX) });
+        .op = LIR_MOV, .dst = dst,
+        .a = lir_phys(type_is_floating(ret_ty) ? PHYS_XMM0 : PHYS_RAX),
+        .fpw = type_is_floating(ret_ty) ? float_width(ret_ty) : LIR_FP_NONE });
     return dst;
 }
 
@@ -1512,7 +1601,7 @@ static PreparedLvalue prepare_lvalue(LowerCtx *c, Node *lhs)
 static int load_prepared_lvalue(LowerCtx *c, PreparedLvalue *lv)
 {
     Type *ty = lv->lhs->ty;
-    int raw = fresh(c);
+    int raw = fresh_type(c, ty);
 
     if (lv->bitfield) {
         Member *m = lv->bitfield;
@@ -1548,6 +1637,7 @@ static int load_prepared_lvalue(LowerCtx *c, PreparedLvalue *lv)
     emit(c, (Instr){
         .op = LIR_LOAD, .dst = raw, .a = lir_mem(lv->addr, 0),
         .w = load_lir_width(ty), .sgn = load_sign(ty),
+        .fpw = type_is_floating(ty) ? float_width(ty) : LIR_FP_NONE,
         .aux = store_width_bytes(ty),
     });
     return widen_loaded_value(c, raw, ty);
@@ -1590,7 +1680,9 @@ static void store_prepared_lvalue(LowerCtx *c, PreparedLvalue *lv, int value)
     }
     emit(c, (Instr){
         .op = LIR_STORE, .a = lir_mem(lv->addr, 0), .b = lir_vreg(value),
-        .w = store_lir_width(ty), .aux = store_width_bytes(ty),
+        .w = store_lir_width(ty),
+        .fpw = type_is_floating(ty) ? float_width(ty) : LIR_FP_NONE,
+        .aux = store_width_bytes(ty),
     });
 }
 
@@ -1616,6 +1708,24 @@ static int lower_step_value(LowerCtx *c, int old, Type *oty, int is_inc)
                 .w = LIR_W8,
             });
         }
+        return dst;
+    }
+    if (type_is_floating(oty)) {
+        int one = fresh_type(c, oty);
+        int dst = fresh_type(c, oty);
+        double d = 1.0;
+        float f = 1.0f;
+        unsigned long bits = 0;
+
+        if (type_same(oty, type_float()))
+            memcpy(&bits, &f, sizeof(f));
+        else
+            memcpy(&bits, &d, sizeof(d));
+        emit(c, (Instr){ .op = LIR_FMOVI, .dst = one, .a = lir_imm((long)bits),
+                         .fpw = float_width(oty) });
+        emit(c, (Instr){ .op = is_inc ? LIR_FADD : LIR_FSUB, .dst = dst,
+                         .a = lir_vreg(old), .b = lir_vreg(one),
+                         .fpw = float_width(oty) });
         return dst;
     }
     {
@@ -1652,7 +1762,7 @@ static int lower_compound_assign(LowerCtx *c, Node *n)
     int old = load_prepared_lvalue(c, &lv);
     int left = convert_value(c, old, n->lhs->ty, n->op_ty);
     int right = lower_expr(c, n->rhs);
-    int result = fresh(c);
+    int result = fresh_type(c, n->op_ty);
 
     if (type_is_pointer(n->op_ty)) {
         int scale = ptr_elem_size(n->op_ty);
@@ -1676,6 +1786,13 @@ static int lower_compound_assign(LowerCtx *c, Node *n)
                 .b = lir_vreg(right), .w = LIR_W8,
             });
         }
+    } else if (type_is_floating(n->op_ty)) {
+        LirOp op = n->op == OP_ADD ? LIR_FADD :
+                   n->op == OP_SUB ? LIR_FSUB :
+                   n->op == OP_MUL ? LIR_FMUL : LIR_FDIV;
+        emit(c, (Instr){ .op = op, .dst = result,
+                         .a = lir_vreg(left), .b = lir_vreg(right),
+                         .fpw = float_width(n->op_ty) });
     } else {
         LirWidth w = type_int_width(n->op_ty) == 8 ? LIR_W8 : LIR_W4;
         LirSign sgn = type_is_unsigned(n->op_ty) ? LIR_SGN_U : LIR_SGN_S;
@@ -1722,8 +1839,24 @@ static int lower_expr(LowerCtx *c, Node *n)
 
     switch (n->kind) {
     case ND_NUM: {
-        int dst = fresh(c);
-        emit(c, (Instr){ .op = LIR_MOVI, .dst = dst, .a = lir_imm(n->val) });
+        int dst = fresh_type(c, n->ty);
+        if (n->is_floating_literal) {
+            long bits;
+            if (type_same(n->ty, type_float())) {
+                float value = (float)n->float_val;
+                unsigned int raw;
+                memcpy(&raw, &value, sizeof(raw));
+                bits = (long)raw;
+            } else {
+                unsigned long raw;
+                memcpy(&raw, &n->float_val, sizeof(raw));
+                bits = (long)raw;
+            }
+            emit(c, (Instr){ .op = LIR_FMOVI, .dst = dst,
+                             .a = lir_imm(bits), .fpw = float_width(n->ty) });
+        } else {
+            emit(c, (Instr){ .op = LIR_MOVI, .dst = dst, .a = lir_imm(n->val) });
+        }
         return dst;
     }
     case ND_STRING:
@@ -1731,18 +1864,19 @@ static int lower_expr(LowerCtx *c, Node *n)
     case ND_VAR: {
         if (n->storage == VAR_STORAGE_GLOBAL) {
             int addr = lower_symbol_addr(c, node_symbol_name(n));
-            int dst = fresh(c);
+            int dst = fresh_type(c, n->ty);
             emit(c, (Instr){
                 .op = LIR_LOAD,
                 .dst = dst,
                 .a = lir_mem(addr, 0),
                 .w = load_lir_width(n->ty),
                 .sgn = load_sign(n->ty),
+                .fpw = type_is_floating(n->ty) ? float_width(n->ty) : LIR_FP_NONE,
                 .aux = store_width_bytes(n->ty),
             });
             return widen_loaded_value(c, dst, n->ty);
         }
-        int dst = fresh(c);
+        int dst = fresh_type(c, n->ty);
         return emit_load_slot(c, dst, n->ty, n->offset);
     }
     case ND_CALL:
@@ -1753,14 +1887,16 @@ static int lower_expr(LowerCtx *c, Node *n)
         return lower_expr(c, n->operand);
     case ND_NEG: {
         int v = lower_expr(c, n->operand);
-        int dst = fresh(c);
+        int dst = fresh_type(c, n->ty);
         emit(c, (Instr){
-            .op = LIR_NEG, .dst = dst, .a = lir_vreg(v), .w = expr_width(n->operand) });
+            .op = type_is_floating(n->ty) ? LIR_FNEG : LIR_NEG,
+            .dst = dst, .a = lir_vreg(v), .w = expr_width(n->operand),
+            .fpw = type_is_floating(n->ty) ? float_width(n->ty) : LIR_FP_NONE });
         return dst;
     }
     case ND_BITNOT: {
         int v = lower_expr(c, n->operand);
-        int dst = fresh(c);
+        int dst = fresh_type(c, n->ty);
         emit(c, (Instr){
             .op = LIR_XOR, .dst = dst, .a = lir_vreg(v), .b = lir_imm(-1),
             .w = expr_width(n->operand),
@@ -1774,15 +1910,20 @@ static int lower_expr(LowerCtx *c, Node *n)
         return lower_incdec(c, n);
     case ND_NOT: {
         int v = lower_expr(c, n->operand);
-        int dst = fresh(c);
-        emit(c, (Instr){
-            .op = LIR_SETCC,
-            .dst = dst,
-            .a = lir_vreg(v),
-            .b = lir_imm(0),
-            .w = expr_width(n->operand),
-            .cc = CC_EQ,
-        });
+        int dst = fresh_type(c, n->ty);
+        if (type_is_floating(n->operand->ty)) {
+            int zero = fresh_type(c, n->operand->ty);
+            emit(c, (Instr){ .op = LIR_FMOVI, .dst = zero, .a = lir_imm(0),
+                             .fpw = float_width(n->operand->ty) });
+            emit(c, (Instr){ .op = LIR_FSETCC, .dst = dst,
+                             .a = lir_vreg(v), .b = lir_vreg(zero),
+                             .fpw = float_width(n->operand->ty), .cc = CC_EQ });
+        } else {
+            emit(c, (Instr){
+                .op = LIR_SETCC, .dst = dst, .a = lir_vreg(v),
+                .b = lir_imm(0), .w = expr_width(n->operand), .cc = CC_EQ,
+            });
+        }
         return dst;
     }
     case ND_LOGAND:
@@ -1790,7 +1931,7 @@ static int lower_expr(LowerCtx *c, Node *n)
         int yes = lir_new_label(c->lf);
         int no = lir_new_label(c->lf);
         int merge = lir_new_label(c->lf);
-        int dst = fresh(c);
+        int dst = fresh_type(c, n->ty);
         int one = fresh(c);
         int zero = fresh(c);
         LirBlockId yes_exit;
@@ -1817,7 +1958,7 @@ static int lower_expr(LowerCtx *c, Node *n)
         int yes = lir_new_label(c->lf);
         int no = lir_new_label(c->lf);
         int merge = lir_new_label(c->lf);
-        int dst = fresh(c);
+        int dst = fresh_type(c, n->ty);
         int yes_value;
         int no_value;
         LirBlockId yes_exit;
@@ -1868,7 +2009,7 @@ static int lower_expr(LowerCtx *c, Node *n)
     }
     case ND_DEREF: {
         int addr = lower_addr(c, n);
-        int dst = fresh(c);
+        int dst = fresh_type(c, n->ty);
         int bytes = store_width_bytes(n->ty);
         emit(c, (Instr){
             .op = LIR_LOAD,
@@ -1876,6 +2017,7 @@ static int lower_expr(LowerCtx *c, Node *n)
             .a = lir_mem(addr, 0),
             .w = load_lir_width(n->ty),
             .sgn = load_sign(n->ty),
+            .fpw = type_is_floating(n->ty) ? float_width(n->ty) : LIR_FP_NONE,
             .aux = bytes,
         });
         return widen_loaded_value(c, dst, n->ty);
@@ -1885,7 +2027,7 @@ static int lower_expr(LowerCtx *c, Node *n)
         if (m->is_bitfield && m->bit_width > 0)
             return lower_bitfield_load(c, n, m);
         int addr = lower_member_addr(c, n);
-        int dst = fresh(c);
+        int dst = fresh_type(c, n->ty);
         int bytes = store_width_bytes(n->ty);
         emit(c, (Instr){
             .op = LIR_LOAD,
@@ -1893,6 +2035,7 @@ static int lower_expr(LowerCtx *c, Node *n)
             .a = lir_mem(addr, 0),
             .w = load_lir_width(n->ty),
             .sgn = load_sign(n->ty),
+            .fpw = type_is_floating(n->ty) ? float_width(n->ty) : LIR_FP_NONE,
             .aux = bytes,
         });
         return widen_loaded_value(c, dst, n->ty);
@@ -1937,6 +2080,7 @@ static int lower_expr(LowerCtx *c, Node *n)
                     .a = lir_mem(addr, 0),
                     .b = lir_vreg(val),
                     .w = store_lir_width(n->lhs->ty),
+                    .fpw = type_is_floating(n->lhs->ty) ? float_width(n->lhs->ty) : LIR_FP_NONE,
                     .aux = store_width_bytes(n->lhs->ty),
                 });
             } else {
@@ -1956,6 +2100,7 @@ static int lower_expr(LowerCtx *c, Node *n)
                 .a = lir_mem(addr, 0),
                 .b = lir_vreg(val),
                 .w = store_lir_width(n->lhs->ty),
+                .fpw = type_is_floating(n->lhs->ty) ? float_width(n->lhs->ty) : LIR_FP_NONE,
                 .aux = store_width_bytes(n->lhs->ty),
             });
             return val;
@@ -1966,12 +2111,13 @@ static int lower_expr(LowerCtx *c, Node *n)
             .a = lir_mem(addr, 0),
             .b = lir_vreg(val),
             .w = store_lir_width(n->lhs->ty),
+            .fpw = type_is_floating(n->lhs->ty) ? float_width(n->lhs->ty) : LIR_FP_NONE,
             .aux = store_width_bytes(n->lhs->ty),
         });
         return val;
     }
     case ND_BINOP: {
-        int dst = fresh(c);
+        int dst = fresh_type(c, n->ty);
         lower_binop(c, dst, n->op, n->lhs, n->rhs, n->ty);
         return dst;
     }
@@ -2003,6 +2149,17 @@ static void lower_branch(LowerCtx *c, Node *cond, int true_label,
         return;
     }
     if (cond->kind == ND_BINOP && is_cmp(cond->op)) {
+        if (type_is_floating(cond->lhs->ty)) {
+            int vl = lower_expr(c, cond->lhs);
+            int vr = lower_expr(c, cond->rhs);
+            emit(c, (Instr){
+                .op = LIR_BR, .a = lir_vreg(vl), .b = lir_vreg(vr),
+                .fpw = float_width(cond->lhs->ty), .cc = binop_cc(cond->op),
+                .label = true_label,
+            });
+            emit(c, (Instr){ .op = LIR_JMP, .label = false_label });
+            return;
+        }
         int w = binop_width(cond->lhs, cond->rhs);
         int vl = lower_expr(c, cond->lhs);
         vl = protect_home_before(c, vl, cond->rhs);
@@ -2025,6 +2182,17 @@ static void lower_branch(LowerCtx *c, Node *cond, int true_label,
     }
 
     int v = lower_expr(c, cond);
+    if (type_is_floating(cond->ty)) {
+        int zero = fresh_type(c, cond->ty);
+        emit(c, (Instr){ .op = LIR_FMOVI, .dst = zero, .a = lir_imm(0),
+                         .fpw = float_width(cond->ty) });
+        emit(c, (Instr){
+            .op = LIR_BR, .a = lir_vreg(v), .b = lir_vreg(zero),
+            .fpw = float_width(cond->ty), .cc = CC_NE, .label = true_label,
+        });
+        emit(c, (Instr){ .op = LIR_JMP, .label = false_label });
+        return;
+    }
     emit(c, (Instr){
         .op = LIR_BR,
         .a = lir_vreg(v),
@@ -2050,7 +2218,10 @@ static void lower_stmt(LowerCtx *c, Node *n)
                 .op = LIR_MOV,
                 .dst = LIR_NO_VREG,
                 .a = lir_vreg(v),
-                .b = lir_phys(PHYS_RAX),
+                .b = lir_phys(type_is_floating(c->fn->ret_ty)
+                              ? PHYS_XMM0 : PHYS_RAX),
+                .fpw = type_is_floating(c->fn->ret_ty)
+                     ? float_width(c->fn->ret_ty) : LIR_FP_NONE,
             });
         }
         emit(c, (Instr){ .op = LIR_JMP, .label = c->ret_label });

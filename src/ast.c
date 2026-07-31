@@ -68,6 +68,8 @@ DeclSpec *declspec_add_builtin(DeclSpec *spec, TypeSpecKind kind,
     case TYPE_SPEC_LONG:     count = &spec->nlong; break;
     case TYPE_SPEC_SIGNED:   count = &spec->nsigned; break;
     case TYPE_SPEC_UNSIGNED: count = &spec->nunsigned; break;
+    case TYPE_SPEC_FLOAT:    count = &spec->nfloat; break;
+    case TYPE_SPEC_DOUBLE:   count = &spec->ndouble; break;
     }
     if (++*count > 1)
         diag_error_at(loc, "duplicate type specifier in declaration");
@@ -83,6 +85,7 @@ Type *declspec_type(DeclSpec *spec, SourceLoc loc)
         return type_int();
     builtin = spec->nvoid + spec->nchar + spec->nshort + spec->nint +
               spec->nlong + spec->nsigned + spec->nunsigned;
+    builtin += spec->nfloat + spec->ndouble;
     if (spec->named_type) {
         if (builtin)
             diag_error_at(loc, "invalid combination of type specifiers");
@@ -96,6 +99,21 @@ Type *declspec_type(DeclSpec *spec, SourceLoc loc)
     if (spec->nsigned && spec->nunsigned) {
         diag_error_at(loc, "both signed and unsigned specified");
         return type_int();
+    }
+    if (spec->nfloat || spec->ndouble) {
+        if (spec->nfloat && spec->ndouble)
+            diag_error_at(loc, "both float and double specified");
+        if (spec->nsigned || spec->nunsigned || spec->nshort || spec->nint ||
+            spec->nchar || spec->nvoid)
+            diag_error_at(loc, "invalid integer type specifier with floating type");
+        if (spec->nlong) {
+            if (spec->ndouble)
+                diag_error_at(loc, "long double is not supported");
+            else
+                diag_error_at(loc, "invalid combination with 'float'");
+        }
+        ty = spec->nfloat ? type_float() : type_double();
+        return spec->nconst ? type_qualify(ty, TQ_CONST) : ty;
     }
     if (spec->nvoid) {
         if (builtin != 1)

@@ -158,6 +158,7 @@ static void instr_use_def(Instr *ins, int i, const TargetDesc *td, Liveness *lv,
         return;
 
     case LIR_MOVI:
+    case LIR_FMOVI:
         add_def(defs, nd, ins->dst);
         return;
 
@@ -175,6 +176,7 @@ static void instr_use_def(Instr *ins, int i, const TargetDesc *td, Liveness *lv,
 
     case LIR_LOAD:
     case LIR_NEG:
+    case LIR_FNEG:
     case LIR_CONV:
         operand_vreg_uses(ins->a, uses, nu);
         add_def(defs, nd, ins->dst);
@@ -204,6 +206,11 @@ static void instr_use_def(Instr *ins, int i, const TargetDesc *td, Liveness *lv,
     case LIR_SHR:
     case LIR_SAR:
     case LIR_SETCC:
+    case LIR_FADD:
+    case LIR_FSUB:
+    case LIR_FMUL:
+    case LIR_FDIV:
+    case LIR_FSETCC:
         operand_vreg_uses(ins->a, uses, nu);
         operand_vreg_uses(ins->b, uses, nu);
         add_def(defs, nd, ins->dst);
@@ -236,6 +243,8 @@ static void instr_use_def(Instr *ins, int i, const TargetDesc *td, Liveness *lv,
     case LIR_CALL:
         if (ins->call_indirect)
             add_use(uses, nu, ins->call_reg);
+        for (int a = 0; a < ins->nargs; a++)
+            operand_vreg_uses(ins->call_args[a], uses, nu);
         /* Arguments and an indirect callee are read at i.  The call clobbers
            caller-saved registers immediately afterward, at i + 1. */
         block_caller_saved(lv, td, i + 1);
@@ -483,6 +492,7 @@ void liveness_compute(LirFn *lf, const TargetDesc *td, Liveness *out)
     unsigned long *live_out;
 
     memset(out, 0, sizeof(*out));
+    out->fn = lf;
 
     if (lf->nvreg == 0)
         return;

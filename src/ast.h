@@ -43,6 +43,8 @@ typedef enum {
     TYPE_SPEC_LONG,
     TYPE_SPEC_SIGNED,
     TYPE_SPEC_UNSIGNED,
+    TYPE_SPEC_FLOAT,
+    TYPE_SPEC_DOUBLE,
 } TypeSpecKind;
 
 typedef struct DeclSpec DeclSpec;
@@ -57,6 +59,8 @@ struct DeclSpec {
     int nlong;
     int nsigned;
     int nunsigned;
+    int nfloat;
+    int ndouble;
 };
 
 typedef struct Declarator Declarator;
@@ -79,7 +83,7 @@ struct Declarator {
 };
 
 typedef enum {
-    ND_NUM,        /* integer literal              */
+    ND_NUM,        /* integer or floating literal  */
     ND_STRING,     /* ordinary character string literal */
     ND_VAR,        /* reference to a local         */
     ND_BINOP,      /* lhs <op> rhs                 */
@@ -147,6 +151,9 @@ struct Node {
     int var_decay;     /* ND_VAR: array decay address (sema); legacy alias */
 
     long val;          /* ND_NUM                                    */
+    double float_val;  /* ND_NUM floating payload                   */
+    int is_floating_literal; /* ND_NUM: decimal floating constant    */
+    int is_float_suffix; /* ND_NUM: f/F suffix                       */
     int has_long_suffix; /* ND_NUM: literal had an L/l suffix (C89 3.1.5) */
     int has_unsigned_suffix; /* ND_NUM: literal had a U/u suffix */
     int is_hex_literal;  /* ND_NUM: 0x/0X constant (C89 3.1.5 typing) */
@@ -210,6 +217,7 @@ struct Param {
     StorageClass storage; /* only STORAGE_REGISTER is valid          */
     int offset;        /* stack offset from frame pointer (sema)     */
     int abi_gpr_start; /* first SysV arg-reg slot (0=rdi..5=r9); -1 stack */
+    int abi_sse_start; /* scalar float/double XMM slot; -1 otherwise */
     int abi_ngpr;      /* consecutive GPR slots (0 = stack-only arg)   */
     int abi_stack_bytes; /* bytes on caller stack when abi_ngpr == 0    */
     Param *next;

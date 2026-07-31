@@ -8,10 +8,16 @@
 
 typedef struct TargetDesc TargetDesc;
 
+typedef enum {
+    REG_CLASS_GPR,
+    REG_CLASS_XMM,
+    REG_CLASS_COUNT,
+} RegClass;
+
 struct TargetDesc {
     const char *name;
-    int nalloc;
-    const int *alloc_order;
+    int nalloc[REG_CLASS_COUNT];
+    const int *alloc_order[REG_CLASS_COUNT];
     const char *(*reg_name)(int phys, int width);
     unsigned caller_saved_mask;
     unsigned callee_saved_mask;
@@ -43,6 +49,22 @@ enum {
     PHYS_R13,
     PHYS_R14,
     PHYS_R15,
+    PHYS_XMM0,
+    PHYS_XMM1,
+    PHYS_XMM2,
+    PHYS_XMM3,
+    PHYS_XMM4,
+    PHYS_XMM5,
+    PHYS_XMM6,
+    PHYS_XMM7,
+    PHYS_XMM8,
+    PHYS_XMM9,
+    PHYS_XMM10,
+    PHYS_XMM11,
+    PHYS_XMM12,
+    PHYS_XMM13,
+    PHYS_XMM14,
+    PHYS_XMM15,
     PHYS_COUNT
 };
 

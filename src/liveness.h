@@ -42,6 +42,7 @@ typedef struct {
 } PhysBlocks;
 
 typedef struct {
+    const LirFn *fn;
     LiveInterval *by_vreg;
     LiveInterval *sorted;
     int nsorted;

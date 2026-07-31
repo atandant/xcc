@@ -133,8 +133,10 @@ static int phys_available(const Liveness *lv, const int *assigned, int nv,
 static int free_reg(const TargetDesc *td, const Liveness *lv,
                     const int *assigned, int nv, int current, int cross_call)
 {
-    for (int i = 0; i < td->nalloc; i++) {
-        int r = td->alloc_order[i];
+    RegClass reg_class = lir_vreg_class(lv->fn, current);
+
+    for (int i = 0; i < td->nalloc[reg_class]; i++) {
+        int r = td->alloc_order[reg_class][i];
         if (!reg_ok_for_interval(td, r, cross_call))
             continue;
         if (!phys_available(lv, assigned, nv, current, r, LIR_NO_VREG))
@@ -214,6 +216,8 @@ static int pick_spill_victim(const Active *active, int nactive, const LirFn *lf,
             unsigned weight;
             int end;
 
+            if (lir_vreg_class(lf, v) != lir_vreg_class(lf, current))
+                continue;
             if (lir_vreg_precolor(lf, v) >= 0)
                 continue;
             if (!current_home && lir_is_home_vreg(lf, v))
@@ -352,7 +356,8 @@ static void regalloc_pass(LirFn *lf, Function *fn, const Liveness *lv,
         int cross_call = interval_spans_call(lf, iv);
         int r = REG_NONE;
         int src = move_src[v];
-        if (src != LIR_NO_VREG && reg[src] >= 0) {
+        if (src != LIR_NO_VREG && reg[src] >= 0 &&
+            lir_vreg_class(lf, src) == lir_vreg_class(lf, v)) {
             int preferred = reg[src];
             if (reg_ok_for_interval(td, preferred, cross_call) &&
                 phys_available(lv, reg, nv, v, preferred, src)) {
@@ -616,7 +621,7 @@ static int materialize_spill_fragments(LirFn *lf, const Liveness *lv,
                 int touched = instr_mentions_vreg(&ins, v);
 
                 if (touched && !previous_touched) {
-                    fragment = lir_new_vreg(lf);
+                    fragment = lir_new_vreg_class(lf, lir_vreg_class(lf, v));
                     parents[fragment] = v;
                     (*split_fragments)++;
                     if (instr_uses_vreg(&ins, v)) {
@@ -655,7 +660,7 @@ static int materialize_spill_fragments(LirFn *lf, const Liveness *lv,
             int term_touched = operand_mentions_vreg(block->term.a, v) ||
                                operand_mentions_vreg(block->term.b, v);
             if (term_touched && !previous_touched) {
-                fragment = lir_new_vreg(lf);
+                fragment = lir_new_vreg_class(lf, lir_vreg_class(lf, v));
                 parents[fragment] = v;
                 (*split_fragments)++;
                 append_instr(&new_instrs, &new_ninstr, &new_cap,
@@ -771,6 +776,12 @@ void regalloc_verify(const LirFn *lf, const Liveness *lv,
             continue;
         }
         registers++;
+        {
+            RegClass expected = lir_vreg_class(lf, v);
+            RegClass actual = phys >= PHYS_XMM0 ? REG_CLASS_XMM : REG_CLASS_GPR;
+            if (expected != actual)
+                diag_fatal("register allocation assigned v%d to wrong register class", v);
+        }
         if (lir_vreg_precolor(lf, v) >= 0) {
             if (phys != lir_vreg_precolor(lf, v))
                 diag_fatal("register allocation changed precolored v%d", v);

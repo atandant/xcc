@@ -8,16 +8,19 @@
 
 /* char 1 byte; short 2 bytes; int 4 bytes; long 8 bytes on x86-64 LP64 SysV. */
 
-static Type ty_void          = { TY_VOID, 0, 0,          0, 1, NULL, 0, NULL, NULL, 0, 0 };
-static Type ty_char          = { TY_INT, IW_CHAR,  IS_SIGNED,   1, 1, NULL, 0, NULL, NULL, 0, 0 };
-static Type ty_schar         = { TY_INT, IW_CHAR,  IS_SIGNED,   1, 1, NULL, 0, NULL, NULL, 0, 0 };
-static Type ty_uchar         = { TY_INT, IW_CHAR,  IS_UNSIGNED, 1, 1, NULL, 0, NULL, NULL, 0, 0 };
-static Type ty_short         = { TY_INT, IW_SHORT, IS_SIGNED,   2, 2, NULL, 0, NULL, NULL, 0, 0 };
-static Type ty_ushort        = { TY_INT, IW_SHORT, IS_UNSIGNED, 2, 2, NULL, 0, NULL, NULL, 0, 0 };
-static Type ty_int           = { TY_INT, IW_INT,   IS_SIGNED,   4, 4, NULL, 0, NULL, NULL, 0, 0 };
-static Type ty_uint          = { TY_INT, IW_INT,   IS_UNSIGNED, 4, 4, NULL, 0, NULL, NULL, 0, 0 };
-static Type ty_long          = { TY_INT, IW_LONG,  IS_SIGNED,   8, 8, NULL, 0, NULL, NULL, 0, 0 };
-static Type ty_ulong         = { TY_INT, IW_LONG,  IS_UNSIGNED, 8, 8, NULL, 0, NULL, NULL, 0, 0 };
+#define INT_TYPE(w, s, z) { .kind=TY_INT, .width=(w), .sign=(s), .size=(z), .align=(z) }
+static Type ty_void          = { .kind=TY_VOID, .align=1 };
+static Type ty_char          = INT_TYPE(IW_CHAR, IS_SIGNED, 1);
+static Type ty_schar         = INT_TYPE(IW_CHAR, IS_SIGNED, 1);
+static Type ty_uchar         = INT_TYPE(IW_CHAR, IS_UNSIGNED, 1);
+static Type ty_short         = INT_TYPE(IW_SHORT, IS_SIGNED, 2);
+static Type ty_ushort        = INT_TYPE(IW_SHORT, IS_UNSIGNED, 2);
+static Type ty_int           = INT_TYPE(IW_INT, IS_SIGNED, 4);
+static Type ty_uint          = INT_TYPE(IW_INT, IS_UNSIGNED, 4);
+static Type ty_long          = INT_TYPE(IW_LONG, IS_SIGNED, 8);
+static Type ty_ulong         = INT_TYPE(IW_LONG, IS_UNSIGNED, 8);
+static Type ty_float         = { .kind=TY_FLOAT, .float_width=FW_FLOAT, .size=4, .align=4 };
+static Type ty_double        = { .kind=TY_FLOAT, .float_width=FW_DOUBLE, .size=8, .align=8 };
 
 Type *type_void(void)           { return &ty_void; }
 Type *type_char(void)           { return &ty_char; }
@@ -29,6 +32,8 @@ Type *type_unsigned_char(void)  { return &ty_uchar; }
 Type *type_unsigned_short(void) { return &ty_ushort; }
 Type *type_unsigned_int(void)   { return &ty_uint; }
 Type *type_unsigned_long(void)  { return &ty_ulong; }
+Type *type_float(void)          { return &ty_float; }
+Type *type_double(void)         { return &ty_double; }
 
 Type *type_unqualified(Type *ty)
 {
@@ -169,6 +174,17 @@ int type_is_integer(Type *ty)
 {
     ty = type_unqualified(ty);
     return ty && (ty->kind == TY_INT || ty->kind == TY_ENUM);
+}
+
+int type_is_floating(Type *ty)
+{
+    ty = type_unqualified(ty);
+    return ty && ty->kind == TY_FLOAT;
+}
+
+int type_is_arithmetic(Type *ty)
+{
+    return type_is_integer(ty) || type_is_floating(ty);
 }
 
 int type_is_signed(Type *ty)
@@ -368,7 +384,7 @@ Member *type_struct_member(Type *ty, const char *name, int *out_index)
 
 int type_is_scalar(Type *ty)
 {
-    return type_is_integer(ty) || type_is_pointer(ty);
+    return type_is_arithmetic(ty) || type_is_pointer(ty);
 }
 
 static int type_cast_member_ty_ok(Type *ty)
@@ -482,6 +498,8 @@ int type_same(Type *a, Type *b)
             return a == b;
         }
         return a->width == b->width && a->sign == b->sign;
+    case TY_FLOAT:
+        return a->float_width == b->float_width;
     case TY_PTR:
         return type_same(a->base, b->base);
     case TY_ARRAY:
@@ -503,6 +521,8 @@ int type_same(Type *a, Type *b)
              * only when every parameter is unchanged by the default argument
              * promotions (C89 3.5.4.3). */
             for (int i = 0; i < proto->nparams; i++) {
+                if (type_same(proto->params[i], type_float()))
+                    return 0;
                 /* xcc's enum representation and promotion type are int. */
                 if (type_is_enum(proto->params[i]))
                     continue;
@@ -523,11 +543,6 @@ int type_same(Type *a, Type *b)
         return 0;
     }
     return 0;
-}
-
-static int is_void_ptr(Type *ty)
-{
-    return type_is_pointer(ty) && type_is_void(type_ptr_elem(ty));
 }
 
 static int pointed_types_compatible(Type *a, Type *b)
@@ -570,7 +585,7 @@ int type_assignable(Type *dst, Type *src)
     if (type_is_array(dst) || type_is_array(src))
         return 0;
 
-    if (type_is_integer(dst) && type_is_integer(src))
+    if (type_is_arithmetic(dst) && type_is_arithmetic(src))
         return 1;
 
     if (type_is_pointer(dst) && type_is_pointer(src))
@@ -755,6 +770,12 @@ Type *type_arith_convert(Type *a, Type *b)
     int rank_u;
     int rank_s;
 
+    if (type_is_floating(a) || type_is_floating(b)) {
+        if ((type_is_floating(a) && type_unqualified(a)->float_width == FW_DOUBLE) ||
+            (type_is_floating(b) && type_unqualified(b)->float_width == FW_DOUBLE))
+            return type_double();
+        return type_float();
+    }
     a = type_int_promote(a);
     b = type_int_promote(b);
     if (!a || !b || !type_is_integer(a) || !type_is_integer(b))
@@ -912,6 +933,8 @@ const char *type_name(Type *ty)
         }
         return base;
     }
+    case TY_FLOAT:
+        return ty->float_width == FW_FLOAT ? "float" : "double";
     case TY_PTR: {
         if (ty->base && ty->base->kind == TY_FUNC) {
             Type *fn = ty->base;

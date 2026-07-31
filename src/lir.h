@@ -4,6 +4,7 @@
 
 #include <stdio.h>
 #include "ast.h"
+#include "target.h"
 
 typedef enum {
     LIR_MOVI,
@@ -29,6 +30,13 @@ typedef enum {
     LIR_SAR,
     LIR_NEG,
     LIR_SETCC,
+    LIR_FMOVI,
+    LIR_FADD,
+    LIR_FSUB,
+    LIR_FMUL,
+    LIR_FDIV,
+    LIR_FNEG,
+    LIR_FSETCC,
     LIR_BR,
     LIR_JMP,
     LIR_LABEL,
@@ -50,6 +58,8 @@ typedef enum { LIR_W4, LIR_W8 } LirWidth;
 
 typedef enum { LIR_SGN_Z, LIR_SGN_S, LIR_SGN_U } LirSign;
 
+typedef enum { LIR_FP_NONE, LIR_FP_F32, LIR_FP_F64 } LirFloatWidth;
+
 typedef enum {
     CC_EQ,
     CC_NE,
@@ -67,6 +77,20 @@ typedef enum {
     CONV_ZEXT32,     /* zero-extend low 32 bits to 64 (unsigned widen) */
     CONV_SEXT32_64,
     CONV_TRUNC_LO32,
+    CONV_SI32_F32,
+    CONV_SI32_F64,
+    CONV_SI64_F32,
+    CONV_SI64_F64,
+    CONV_UI32_F32,
+    CONV_UI32_F64,
+    CONV_F32_SI32,
+    CONV_F32_SI64,
+    CONV_F64_SI32,
+    CONV_F64_SI64,
+    CONV_F32_UI32,
+    CONV_F64_UI32,
+    CONV_F32_F64,
+    CONV_F64_F32,
 } ConvKind;
 
 #define LIR_NO_VREG (-1)
@@ -97,6 +121,7 @@ struct Instr {
     Operand b;
     LirWidth w;
     LirSign sgn;
+    LirFloatWidth fpw;
     LirCond cc;
     ConvKind conv;
     int label;
@@ -106,6 +131,8 @@ struct Instr {
     char *sym_name;
     int nargs;
     int call_nreg;
+    int call_ngpr;
+    int call_nsse;
     Operand *call_args;
     int aux; /* LOAD/STORE: byte width; POW2 ops: log2(divisor) */
     int position; /* allocator order, assigned after phi elimination */
@@ -144,6 +171,7 @@ typedef struct {
     Operand b;
     LirWidth w;
     LirSign sgn;
+    LirFloatWidth fpw;
     LirCond cc;
 } LirTerminator;
 
@@ -191,6 +219,7 @@ struct LirFn {
     int cap;
     int nvreg;
     int *vreg_fixed_phys;
+    RegClass *vreg_class;
     int vreg_fixed_cap;
     int label_count;
     int epilogue_label;
@@ -211,6 +240,8 @@ int lir_instruction_defines_vreg(const Instr *ins);
 
 LirFn *lir_fn_new(const char *name);
 int lir_new_vreg(LirFn *fn);
+int lir_new_vreg_class(LirFn *fn, RegClass reg_class);
+RegClass lir_vreg_class(const LirFn *fn, int vreg);
 void lir_precolor_vreg(LirFn *fn, int vreg, int phys);
 int lir_vreg_precolor(const LirFn *fn, int vreg);
 int lir_new_label(LirFn *fn);

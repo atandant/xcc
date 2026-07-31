@@ -61,6 +61,22 @@ static void convert_integer_expr(Node **np, Type *dst)
     *np = cast;
 }
 
+/* Represent every implicit arithmetic conversion explicitly. */
+static void convert_expr(Node **np, Type *dst)
+{
+    Node *old;
+    Node *cast;
+
+    if (!np || !(old = *np) || !dst || !type_is_arithmetic(old->ty) ||
+        !type_is_arithmetic(dst) || type_same(old->ty, dst))
+        return;
+    cast = node_cast(dst, old, old->loc);
+    cast->ty = dst;
+    cast->next = old->next;
+    old->next = NULL;
+    *np = cast;
+}
+
 static int is_arith_op(BinOp op)
 {
     return op == OP_ADD || op == OP_SUB || op == OP_MUL ||
@@ -344,7 +360,7 @@ static int record_cmp_error(Node *lhs, Node *rhs)
 /* Equality operands: both integers, compatible pointers, or pointer vs 0. */
 static int eq_operands_compatible(Node *lhs, Node *rhs)
 {
-    return (type_is_integer(lhs->ty) && type_is_integer(rhs->ty)) ||
+    return (type_is_arithmetic(lhs->ty) && type_is_arithmetic(rhs->ty)) ||
            (type_is_pointer(lhs->ty) && type_is_pointer(rhs->ty) &&
             type_compatible(lhs->ty, rhs->ty)) ||
            is_null_ptr_eq(lhs, rhs);
@@ -354,7 +370,7 @@ static int rel_operands_compatible(Node *lhs, Node *rhs)
 {
     if (type_is_function_pointer(lhs->ty) || type_is_function_pointer(rhs->ty))
         return 0;
-    return (type_is_integer(lhs->ty) && type_is_integer(rhs->ty)) ||
+    return (type_is_arithmetic(lhs->ty) && type_is_arithmetic(rhs->ty)) ||
            (type_is_pointer(lhs->ty) && type_is_pointer(rhs->ty) &&
             type_compatible(lhs->ty, rhs->ty));
 }
@@ -766,7 +782,7 @@ static void sema_scalar_brace_init(Node *decl)
         diag_incompatible_init(val->loc, decl->ty, val);
     else {
         warn_value_conversion(val->loc, decl->ty, val);
-        convert_integer_expr(&decl->init, decl->ty);
+        convert_expr(&decl->init, decl->ty);
     }
 }
 
@@ -797,6 +813,22 @@ static void sema_brace_init(Node *decl)
     check_flat_init_type(decl->ty, flat->body, decl->loc, decl);
 }
 
+static int type_record_contains_floating(Type *ty)
+{
+    ty = type_unqualified(ty);
+    if (type_is_floating(ty))
+        return 1;
+    if (type_is_array(ty))
+        return type_record_contains_floating(type_array_elem(ty));
+    if (!type_is_record(ty) || !type_struct_is_complete(ty))
+        return 0;
+    for (int i = 0; i < ty->nmembers; i++) {
+        if (type_record_contains_floating(ty->members[i].ty))
+            return 1;
+    }
+    return 0;
+}
+
 static void sema_finish_function_types(Function *fn)
 {
     fn->ret_ty = typedef_resolve_type(fn->ret_ty, fn->loc);
@@ -805,6 +837,10 @@ static void sema_finish_function_types(Function *fn)
         diag_error_at(fn->loc,
                       "return type '%s' is incomplete",
                       type_name(fn->ret_ty));
+    else if (type_is_record(fn->ret_ty) &&
+             type_record_contains_floating(fn->ret_ty))
+        diag_error_at(fn->loc,
+                      "returning a struct or union containing floating members is not supported");
 
     for (Param *p = fn->params; p; p = p->next) {
         Type *declared_ty;
@@ -833,6 +869,10 @@ static void sema_finish_function_types(Function *fn)
             diag_error_at(fn->loc,
                           "parameter type '%s' is incomplete",
                           type_name(declared_ty));
+        } else if (type_is_record(declared_ty) &&
+                   type_record_contains_floating(declared_ty)) {
+            diag_error_at(fn->loc,
+                          "passing a struct or union containing floating members by value is not supported");
         }
 
         for (Param *prev = fn->params; prev != p; prev = prev->next) {
@@ -858,10 +898,11 @@ static int check_arith_binop(Node *n)
     Type *l = n->lhs->ty;
     Type *r = n->rhs->ty;
 
-    if (type_is_integer(l) && type_is_integer(r)) {
+    if (type_is_arithmetic(l) && type_is_arithmetic(r) &&
+        (n->op != OP_MOD || (type_is_integer(l) && type_is_integer(r)))) {
         n->ty = type_arith_convert(l, r);
-        convert_integer_expr(&n->lhs, n->ty);
-        convert_integer_expr(&n->rhs, n->ty);
+        convert_expr(&n->lhs, n->ty);
+        convert_expr(&n->rhs, n->ty);
         return 1;
     }
 
@@ -984,7 +1025,9 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
 
     switch (n->kind) {
     case ND_NUM:
-        n->ty = n->is_char_constant ? type_int() :
+        n->ty = n->is_floating_literal
+            ? (n->is_float_suffix ? type_float() : type_double())
+            : n->is_char_constant ? type_int() :
             type_classify_integer_constant(
                 n->val, n->has_long_suffix, n->has_unsigned_suffix,
                 n->is_hex_literal || n->is_octal_literal);
@@ -1154,15 +1197,17 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
                                       callee_name);
                     else {
                         warn_value_conversion(a->loc, fty->params[i], a);
-                        convert_integer_expr(ap, fty->params[i]);
+                        convert_expr(ap, fty->params[i]);
                     }
                 }
             } else {
-                /* C89 3.3.2.2: calls without a prototype apply the default
-                 * argument promotions.  XCC has no floating types yet, so the
-                 * integral promotions are the complete supported subset. */
-                for (Node **ap = &n->args; *ap; ap = &(*ap)->next)
-                    convert_integer_expr(ap, type_int_promote((*ap)->ty));
+                /* C89 default argument promotions: float becomes double and
+                 * narrow integer types undergo integral promotion. */
+                for (Node **ap = &n->args; *ap; ap = &(*ap)->next) {
+                    Type *promoted = type_same((*ap)->ty, type_float())
+                        ? type_double() : type_int_promote((*ap)->ty);
+                    convert_expr(ap, promoted);
+                }
             }
             n->func_ty = fty;
             n->ty = fty->ret;
@@ -1211,7 +1256,7 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
             diag_incompatible_assign(n->loc, n->lhs->ty, n->rhs);
         else {
             warn_value_conversion(n->loc, n->lhs->ty, n->rhs);
-            convert_integer_expr(&n->rhs, n->lhs->ty);
+            convert_expr(&n->rhs, n->lhs->ty);
         }
         n->ty = n->lhs->ty;
         n->is_lvalue = 0;
@@ -1256,11 +1301,11 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
                                   type_name(n->rhs->ty));
                 else
                     diag_error_at(n->loc, "invalid operands to comparison");
-            } else if (type_is_integer(n->lhs->ty) &&
-                       type_is_integer(n->rhs->ty)) {
+            } else if (type_is_arithmetic(n->lhs->ty) &&
+                       type_is_arithmetic(n->rhs->ty)) {
                 Type *common = type_arith_convert(n->lhs->ty, n->rhs->ty);
-                convert_integer_expr(&n->lhs, common);
-                convert_integer_expr(&n->rhs, common);
+                convert_expr(&n->lhs, common);
+                convert_expr(&n->rhs, common);
             }
             n->ty = type_int();
         } else if (is_rel_op(n->op)) {
@@ -1270,11 +1315,11 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
             else if (!rel_operands_compatible(n->lhs, n->rhs))
                 diag_error_at(n->loc,
                               "invalid operands to relational operator");
-            else if (type_is_integer(n->lhs->ty) &&
-                     type_is_integer(n->rhs->ty)) {
+            else if (type_is_arithmetic(n->lhs->ty) &&
+                     type_is_arithmetic(n->rhs->ty)) {
                 Type *common = type_arith_convert(n->lhs->ty, n->rhs->ty);
-                convert_integer_expr(&n->lhs, common);
-                convert_integer_expr(&n->rhs, common);
+                convert_expr(&n->lhs, common);
+                convert_expr(&n->rhs, common);
             }
             n->ty = type_int();
         } else if (n->op == OP_COMMA) {
@@ -1302,12 +1347,12 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
         require_scalar_cond(n->cond);
         resolve_expr_ctx(n->then_expr, CTX_RVALUE);
         resolve_expr_ctx(n->else_expr, CTX_RVALUE);
-        if (type_is_integer(n->then_expr->ty) &&
-            type_is_integer(n->else_expr->ty)) {
+        if (type_is_arithmetic(n->then_expr->ty) &&
+            type_is_arithmetic(n->else_expr->ty)) {
             Type *common = type_arith_convert(n->then_expr->ty,
                                               n->else_expr->ty);
-            convert_integer_expr(&n->then_expr, common);
-            convert_integer_expr(&n->else_expr, common);
+            convert_expr(&n->then_expr, common);
+            convert_expr(&n->else_expr, common);
             n->ty = common;
         } else if (type_same(n->then_expr->ty, n->else_expr->ty)) {
             n->ty = n->then_expr->ty;
@@ -1335,13 +1380,15 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
     case ND_BITNOT:
         resolve_expr_ctx(n->operand, CTX_RVALUE);
         n->var_decay = 0;
-        if (!type_is_integer(n->operand->ty))
+        if ((n->kind == ND_BITNOT && !type_is_integer(n->operand->ty)) ||
+            (n->kind != ND_BITNOT && !type_is_arithmetic(n->operand->ty)))
             diag_error_at(n->loc,
                           n->kind == ND_POS ? "invalid operand to unary plus" :
                           n->kind == ND_NEG ? "invalid operand to unary minus" :
                                               "invalid operand to bitwise complement");
-        n->ty = type_int_promote(n->operand->ty);
-        convert_integer_expr(&n->operand, n->ty);
+        n->ty = type_is_floating(n->operand->ty) ? n->operand->ty
+                                                 : type_int_promote(n->operand->ty);
+        convert_expr(&n->operand, n->ty);
         n->is_lvalue = 0;
         return;
     case ND_PREINC:
@@ -1353,8 +1400,9 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
         if (!expr_is_modifiable_lvalue(n->operand))
             diag_error_at(n->loc,
                           "operand of increment/decrement is not a modifiable lvalue");
-        else if (type_is_integer(n->operand->ty))
-            n->ty = type_int_promote(n->operand->ty);
+        else if (type_is_arithmetic(n->operand->ty))
+            n->ty = type_is_floating(n->operand->ty) ? n->operand->ty
+                                                     : type_int_promote(n->operand->ty);
         else if (type_is_pointer(n->operand->ty))
             n->ty = n->operand->ty;
         else
@@ -1565,8 +1613,8 @@ static void collect_labels(Node *s, Function *fn)
     }
 }
 
-/* A controlling expression (if/while/for condition) must be scalar: an
- * integer or a pointer. A NULL `for` condition is an infinite loop. */
+/* A controlling expression (if/while/for condition) must be scalar. A NULL
+ * `for` condition is an infinite loop. */
 static void require_scalar_cond(Node *cond)
 {
     if (cond && !type_is_scalar(cond->ty))
@@ -1755,7 +1803,7 @@ static void resolve_stmt(Node *s)
                 diag_incompatible_init(s->loc, s->ty, s->init);
             else if (s->init) {
                 warn_value_conversion(s->loc, s->ty, s->init);
-                convert_integer_expr(&s->init, s->ty);
+                convert_expr(&s->init, s->ty);
             }
         }
         return;
@@ -1776,7 +1824,7 @@ static void resolve_stmt(Node *s)
                     note_non_null_int_to_pointer(s->loc);
             } else if (!type_is_void(cur_ret_ty)) {
                 warn_value_conversion(s->loc, cur_ret_ty, s->operand);
-                convert_integer_expr(&s->operand, cur_ret_ty);
+                convert_expr(&s->operand, cur_ret_ty);
             }
         } else if (!type_is_void(cur_ret_ty)) {
             diag_warn(W_RETURN_TYPE, s->loc,
@@ -2152,12 +2200,14 @@ static void sema_function(Function *fn)
         fn->abi_sret_offset = scope_alloc_local(type_ptr(type_void()));
 
     int gpr_slot = fn->abi_ret_sret ? 1 : 0;
+    int sse_slot = 0;
     int stack_off = 0;
 
     for (Param *p = fn->params; p; p = p->next) {
         Type *pty = type_decay(p->ty);
 
         p->abi_stack_bytes = 0;
+        p->abi_sse_start = -1;
         if (abi_type_is_record_pass(pty)) {
             AbiArgPlan ap;
 
@@ -2174,7 +2224,12 @@ static void sema_function(Function *fn)
                 p->abi_ngpr = ap.ngpr;
                 gpr_slot += ap.ngpr;
             }
-        } else if (gpr_slot < 6) {
+        } else if (type_is_floating(pty) && sse_slot < 8) {
+            p->offset = scope_alloc_local(pty);
+            p->abi_gpr_start = -1;
+            p->abi_sse_start = sse_slot++;
+            p->abi_ngpr = 0;
+        } else if (!type_is_floating(pty) && gpr_slot < 6) {
             p->offset = scope_alloc_local(pty);
             p->abi_gpr_start = gpr_slot;
             p->abi_ngpr = 1;
@@ -2372,6 +2427,52 @@ static int static_initializer_error(GlobalObject *object)
     return 0;
 }
 
+static int floating_constant_eval(Node *n, double *out)
+{
+    double a, b;
+    long iv;
+
+    if (!n || !out)
+        return 0;
+    switch (n->kind) {
+    case ND_NUM:
+        if (n->is_floating_literal)
+            *out = n->float_val;
+        else if (ice_eval(n, &iv))
+            *out = (double)iv;
+        else
+            return 0;
+        break;
+    case ND_POS:
+        return floating_constant_eval(n->operand, out);
+    case ND_NEG:
+        if (!floating_constant_eval(n->operand, &a))
+            return 0;
+        *out = -a;
+        break;
+    case ND_CAST:
+        if (!floating_constant_eval(n->operand, &a))
+            return 0;
+        *out = type_is_integer(n->ty) ? (double)(long)a : a;
+        break;
+    case ND_BINOP:
+        if (!floating_constant_eval(n->lhs, &a) ||
+            !floating_constant_eval(n->rhs, &b))
+            return 0;
+        if (n->op == OP_ADD) *out = a + b;
+        else if (n->op == OP_SUB) *out = a - b;
+        else if (n->op == OP_MUL) *out = a * b;
+        else if (n->op == OP_DIV && b != 0.0) *out = a / b;
+        else return 0;
+        break;
+    default:
+        return 0;
+    }
+    if (n->ty && type_same(n->ty, type_float()))
+        *out = (double)(float)*out;
+    return 1;
+}
+
 static int encode_static_initializer(GlobalObject *object, Type *ty,
                                      Node **pcursor, int offset)
 {
@@ -2432,6 +2533,19 @@ static int encode_static_initializer(GlobalObject *object, Type *ty,
         if (!value)
             return static_initializer_error(object);
         *pcursor = value->next;
+        if (type_is_floating(ty)) {
+            double floating;
+
+            if (!floating_constant_eval(value, &floating))
+                return static_initializer_error(object);
+            if (type_same(ty, type_float())) {
+                float narrowed = (float)floating;
+                memcpy(object->init_data + offset, &narrowed, sizeof(narrowed));
+            } else {
+                memcpy(object->init_data + offset, &floating, sizeof(floating));
+            }
+            return 1;
+        }
         if (type_is_pointer(ty)) {
             char *symbol;
             long addend;
@@ -2575,6 +2689,7 @@ static void sema_global_object(GlobalObject *object)
             return;
         }
         warn_value_conversion(object->loc, object->ty, object->init);
+        convert_expr(&object->init, object->ty);
         cursor = object->init;
     }
 

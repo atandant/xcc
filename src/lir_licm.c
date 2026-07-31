@@ -123,6 +123,11 @@ static int safe_to_speculate(const Instr *ins)
     case LIR_SAR:
     case LIR_NEG:
     case LIR_SETCC:
+    case LIR_FADD:
+    case LIR_FSUB:
+    case LIR_FMUL:
+    case LIR_FNEG:
+    case LIR_FSETCC:
     case LIR_CONV:
         return ins->dst != LIR_NO_VREG;
     default:

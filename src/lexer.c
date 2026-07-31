@@ -132,7 +132,8 @@ static int keyword(const char *text)
 {
     static const struct { const char *name; int token; } words[] = {
         { "int", INT }, { "char", CHAR }, { "short", SHORT },
-        { "long", LONG }, { "void", VOID }, { "unsigned", UNSIGNED },
+        { "long", LONG }, { "float", FLOAT }, { "double", DOUBLE },
+        { "void", VOID }, { "unsigned", UNSIGNED },
         { "signed", SIGNED }, { "return", RETURN }, { "if", IF },
         { "else", ELSE }, { "while", WHILE }, { "do", DO },
         { "for", FOR }, { "switch", SWITCH }, { "case", CASE },
@@ -183,6 +184,56 @@ static void number_token(CppToken token)
     char *number;
     unsigned long uv;
     long value;
+
+    /* C89 decimal floating constants contain a decimal point or exponent.
+     * Hexadecimal floating constants are intentionally not recognized. */
+    if (!(token.len >= 2 && token.text[0] == '0' &&
+          (token.text[1] == 'x' || token.text[1] == 'X')) &&
+        (strchr(token.text, '.') || strchr(token.text, 'e') || strchr(token.text, 'E'))) {
+        size_t end = token.len;
+        int fsuffix = 0;
+        int lsuffix = 0;
+        int dot = 0, exp = 0, digits_before = 0, digits_after = 0, exp_digits = 0;
+        char *text;
+        char *parse_end;
+
+        if (end && (token.text[end - 1] == 'f' || token.text[end - 1] == 'F')) {
+            fsuffix = 1; end--;
+        } else if (end && (token.text[end - 1] == 'l' || token.text[end - 1] == 'L')) {
+            lsuffix = 1; end--;
+        }
+        size_t i = 0;
+        while (i < end && token.text[i] >= '0' && token.text[i] <= '9') { digits_before++; i++; }
+        if (i < end && token.text[i] == '.') {
+            dot = 1; i++;
+            while (i < end && token.text[i] >= '0' && token.text[i] <= '9') { digits_after++; i++; }
+        }
+        if (i < end && (token.text[i] == 'e' || token.text[i] == 'E')) {
+            exp = 1; i++;
+            if (i < end && (token.text[i] == '+' || token.text[i] == '-')) i++;
+            while (i < end && token.text[i] >= '0' && token.text[i] <= '9') { exp_digits++; i++; }
+        }
+        if (i != end || (!dot && !exp) || (!digits_before && !digits_after) ||
+            (exp && !exp_digits))
+            diag_error_at(token.loc, "invalid floating constant");
+        if (lsuffix)
+            diag_error_at(token.loc, "long double constants are not supported");
+        text = arena_alloc(end + 1);
+        memcpy(text, token.text, end); text[end] = '\0';
+        errno = 0;
+        yylval.num.float_val = fsuffix ? (double)strtof(text, &parse_end)
+                                       : strtod(text, &parse_end);
+        if (errno == ERANGE)
+            diag_error_at(token.loc, "floating constant out of range");
+        if (parse_end != text + end)
+            diag_error_at(token.loc, "invalid floating constant");
+        yylval.num.val = 0;
+        yylval.num.is_long = yylval.num.is_unsigned = 0;
+        yylval.num.is_hex = yylval.num.is_octal = yylval.num.is_char = 0;
+        yylval.num.is_floating = 1;
+        yylval.num.is_float_suffix = fsuffix;
+        return;
+    }
 
     while (digits > 0 && (token.text[digits - 1] == 'u' ||
                           token.text[digits - 1] == 'U' ||
@@ -245,6 +296,9 @@ static void number_token(CppToken token)
     yylval.num.is_hex = base == 16;
     yylval.num.is_octal = base == 8;
     yylval.num.is_char = 0;
+    yylval.num.float_val = 0.0;
+    yylval.num.is_floating = 0;
+    yylval.num.is_float_suffix = 0;
 }
 
 int yylex(void)
@@ -290,6 +344,9 @@ int yylex(void)
             yylval.num.is_hex = 0;
             yylval.num.is_octal = 0;
             yylval.num.is_char = 1;
+            yylval.num.float_val = 0.0;
+            yylval.num.is_floating = 0;
+            yylval.num.is_float_suffix = 0;
             return NUM;
         }
         if (token.kind == CPP_STRING) {

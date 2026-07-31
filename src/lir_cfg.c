@@ -163,6 +163,9 @@ void lir_cfg_verify(const LirFn *fn)
                 if (phi->inputs[a].value < 0 ||
                     phi->inputs[a].value >= fn->nvreg)
                     malformed(fn, i, "phi input has an invalid value");
+                if (lir_vreg_class(fn, phi->dst) !=
+                    lir_vreg_class(fn, phi->inputs[a].value))
+                    malformed(fn, i, "phi mixes register classes");
                 for (int b = a + 1; b < phi->ninputs; b++) {
                     if (phi->inputs[a].pred == phi->inputs[b].pred)
                         malformed(fn, i, "phi has duplicate predecessor inputs");
@@ -277,7 +280,7 @@ static void lower_phi_copies(LirFn *fn, LirBlockId block_id,
             int tmp;
             while (done[first])
                 first++;
-            tmp = lir_new_vreg(fn);
+            tmp = lir_new_vreg_class(fn, lir_vreg_class(fn, src[first]));
             append_copy(insert, tmp, src[first]);
             for (int i = 0; i < n; i++) {
                 if (!done[i] && src[i] == src[first])

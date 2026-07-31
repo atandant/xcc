@@ -71,6 +71,9 @@ static Type *parameter_declspec_type(DeclSpec *spec, SourceLoc loc)
         int is_hex;
         int is_octal;
         int is_char;
+        double float_val;
+        int is_floating;
+        int is_float_suffix;
     } num;
     char *str;
     StringToken *string;
@@ -91,7 +94,7 @@ static Type *parameter_declspec_type(DeclSpec *spec, SourceLoc loc)
 %token <num> NUM
 %token <str> IDENT TYPEDEF_NAME
 %token <string> STRING
-%token INT CHAR SHORT LONG VOID UNSIGNED SIGNED CONST RETURN IF ELSE WHILE DO FOR SWITCH CASE DEFAULT GOTO BREAK CONTINUE SIZEOF TYPEDEF EXTERN STATIC AUTO REGISTER STRUCT UNION ENUM
+%token INT CHAR SHORT LONG FLOAT DOUBLE VOID UNSIGNED SIGNED CONST RETURN IF ELSE WHILE DO FOR SWITCH CASE DEFAULT GOTO BREAK CONTINUE SIZEOF TYPEDEF EXTERN STATIC AUTO REGISTER STRUCT UNION ENUM
 %token EQ NE LE GE ARROW LAND LOR SHL SHR INC DEC
 %token MUL_ASSIGN DIV_ASSIGN MOD_ASSIGN ADD_ASSIGN SUB_ASSIGN
 %token SHL_ASSIGN SHR_ASSIGN AND_ASSIGN XOR_ASSIGN OR_ASSIGN
@@ -183,6 +186,8 @@ builtin_declaration_specifiers:
   | VOID                { $$ = declspec_add_builtin(NULL, TYPE_SPEC_VOID, LOC(@1)); }
   | SIGNED              { $$ = declspec_add_builtin(NULL, TYPE_SPEC_SIGNED, LOC(@1)); }
   | UNSIGNED            { $$ = declspec_add_builtin(NULL, TYPE_SPEC_UNSIGNED, LOC(@1)); }
+  | FLOAT               { $$ = declspec_add_builtin(NULL, TYPE_SPEC_FLOAT, LOC(@1)); }
+  | DOUBLE              { $$ = declspec_add_builtin(NULL, TYPE_SPEC_DOUBLE, LOC(@1)); }
   | EXTERN              { $$ = declspec_add_storage(NULL, STORAGE_EXTERN, LOC(@1)); }
   | STATIC              { $$ = declspec_add_storage(NULL, STORAGE_STATIC, LOC(@1)); }
   | TYPEDEF             { $$ = declspec_add_storage(NULL, STORAGE_TYPEDEF, LOC(@1)); }
@@ -203,6 +208,10 @@ builtin_declaration_specifiers:
         { $$ = declspec_add_builtin($1, TYPE_SPEC_SIGNED, LOC(@2)); }
   | builtin_declaration_specifiers UNSIGNED
         { $$ = declspec_add_builtin($1, TYPE_SPEC_UNSIGNED, LOC(@2)); }
+  | builtin_declaration_specifiers FLOAT
+        { $$ = declspec_add_builtin($1, TYPE_SPEC_FLOAT, LOC(@2)); }
+  | builtin_declaration_specifiers DOUBLE
+        { $$ = declspec_add_builtin($1, TYPE_SPEC_DOUBLE, LOC(@2)); }
   | builtin_declaration_specifiers EXTERN
         { $$ = declspec_add_storage($1, STORAGE_EXTERN, LOC(@2)); }
   | builtin_declaration_specifiers STATIC
@@ -753,7 +762,10 @@ primary_expr:
                                $$->has_unsigned_suffix = $1.is_unsigned;
                                $$->is_hex_literal = $1.is_hex;
                                $$->is_octal_literal = $1.is_octal;
-                               $$->is_char_constant = $1.is_char; }
+                               $$->is_char_constant = $1.is_char;
+                               $$->float_val = $1.float_val;
+                               $$->is_floating_literal = $1.is_floating;
+                               $$->is_float_suffix = $1.is_float_suffix; }
   | string_literal          { $$ = $1; }
   | IDENT                    { $$ = node_var($1, LOC(@1)); }
   | '(' expr ')'             { $$ = $2; }

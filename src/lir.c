@@ -74,6 +74,13 @@ int lir_instruction_defines_vreg(const Instr *ins)
     case LIR_SAR:
     case LIR_NEG:
     case LIR_SETCC:
+    case LIR_FMOVI:
+    case LIR_FADD:
+    case LIR_FSUB:
+    case LIR_FMUL:
+    case LIR_FDIV:
+    case LIR_FNEG:
+    case LIR_FSETCC:
     case LIR_CONV:
         return ins->dst >= 0;
     default:
@@ -92,6 +99,8 @@ LirFn *lir_fn_new(const char *name)
     fn->vreg_fixed_cap = 64;
     fn->vreg_fixed_phys = arena_alloc((size_t)fn->vreg_fixed_cap *
                                       sizeof(*fn->vreg_fixed_phys));
+    fn->vreg_class = arena_alloc((size_t)fn->vreg_fixed_cap *
+                                 sizeof(*fn->vreg_class));
     for (int i = 0; i < fn->vreg_fixed_cap; i++)
         fn->vreg_fixed_phys[i] = -1;
     fn->homes_cap = 32;
@@ -214,9 +223,7 @@ int lir_max_outgoing(const LirFn *lf)
 
         if (ins->op != LIR_CALL)
             continue;
-        if (ins->nargs <= ins->call_nreg)
-            continue;
-        int out = 8 * (ins->nargs - ins->call_nreg);
+        int out = 8 * ((ins->nargs - ins->call_nreg) + ins->call_nsse);
         if (out > max_out)
             max_out = out;
       }
@@ -226,19 +233,34 @@ int lir_max_outgoing(const LirFn *lf)
 
 int lir_new_vreg(LirFn *fn)
 {
+    return lir_new_vreg_class(fn, REG_CLASS_GPR);
+}
+
+int lir_new_vreg_class(LirFn *fn, RegClass reg_class)
+{
     if (fn->nvreg >= fn->vreg_fixed_cap) {
         int old_cap = fn->vreg_fixed_cap;
         int new_cap = old_cap * 2;
         int *fixed = arena_alloc((size_t)new_cap * sizeof(*fixed));
+        RegClass *classes = arena_alloc((size_t)new_cap * sizeof(*classes));
 
         memcpy(fixed, fn->vreg_fixed_phys, (size_t)old_cap * sizeof(*fixed));
+        memcpy(classes, fn->vreg_class, (size_t)old_cap * sizeof(*classes));
         for (int i = old_cap; i < new_cap; i++)
             fixed[i] = -1;
         fn->vreg_fixed_phys = fixed;
+        fn->vreg_class = classes;
         fn->vreg_fixed_cap = new_cap;
     }
     fn->vreg_fixed_phys[fn->nvreg] = -1;
+    fn->vreg_class[fn->nvreg] = reg_class;
     return fn->nvreg++;
+}
+
+RegClass lir_vreg_class(const LirFn *fn, int vreg)
+{
+    assert(vreg >= 0 && vreg < fn->nvreg);
+    return fn->vreg_class[vreg];
 }
 
 void lir_precolor_vreg(LirFn *fn, int vreg, int phys)
@@ -320,6 +342,13 @@ static const char *op_name(LirOp op)
     case LIR_SAR:   return "sar";
     case LIR_NEG:   return "neg";
     case LIR_SETCC: return "setcc";
+    case LIR_FMOVI: return "fmovi";
+    case LIR_FADD: return "fadd";
+    case LIR_FSUB: return "fsub";
+    case LIR_FMUL: return "fmul";
+    case LIR_FDIV: return "fdiv";
+    case LIR_FNEG: return "fneg";
+    case LIR_FSETCC: return "fsetcc";
     case LIR_BR:    return "br";
     case LIR_JMP:   return "jmp";
     case LIR_LABEL: return "label";
@@ -354,6 +383,20 @@ static const char *conv_name(ConvKind k)
     case CONV_ZEXT32:    return "zext32";
     case CONV_SEXT32_64: return "sext32_64";
     case CONV_TRUNC_LO32: return "trunc_lo32";
+    case CONV_SI32_F32: return "si32_f32";
+    case CONV_SI32_F64: return "si32_f64";
+    case CONV_SI64_F32: return "si64_f32";
+    case CONV_SI64_F64: return "si64_f64";
+    case CONV_UI32_F32: return "ui32_f32";
+    case CONV_UI32_F64: return "ui32_f64";
+    case CONV_F32_SI32: return "f32_si32";
+    case CONV_F32_SI64: return "f32_si64";
+    case CONV_F64_SI32: return "f64_si32";
+    case CONV_F64_SI64: return "f64_si64";
+    case CONV_F32_UI32: return "f32_ui32";
+    case CONV_F64_UI32: return "f64_ui32";
+    case CONV_F32_F64: return "f32_f64";
+    case CONV_F64_F32: return "f64_f32";
     }
     return "?";
 }
@@ -395,11 +438,13 @@ static void dump_instr(FILE *out, Instr *ins, int index)
             fprintf(out, "v%d = ", ins->dst);
         switch (ins->op) {
         case LIR_MOVI:
+        case LIR_FMOVI:
             dump_operand(out, ins->a);
             break;
         case LIR_MOV:
         case LIR_LOAD:
         case LIR_NEG:
+        case LIR_FNEG:
         case LIR_CONV:
             dump_operand(out, ins->a);
             if (ins->op == LIR_LOAD)
@@ -434,6 +479,11 @@ static void dump_instr(FILE *out, Instr *ins, int index)
         case LIR_SHR:
         case LIR_SAR:
         case LIR_SETCC:
+        case LIR_FADD:
+        case LIR_FSUB:
+        case LIR_FMUL:
+        case LIR_FDIV:
+        case LIR_FSETCC:
             dump_operand(out, ins->a);
             if (ins->op == LIR_SDIV_POW2 || ins->op == LIR_SMOD_POW2 ||
                 ins->op == LIR_UDIV_POW2 || ins->op == LIR_UMOD_POW2) {
@@ -444,7 +494,7 @@ static void dump_instr(FILE *out, Instr *ins, int index)
                 dump_operand(out, ins->b);
                 fprintf(out, " %c", ins->w == LIR_W4 ? '4' : '8');
             }
-            if (ins->op == LIR_SETCC)
+            if (ins->op == LIR_SETCC || ins->op == LIR_FSETCC)
                 fprintf(out, " %s", cc_name(ins->cc));
             break;
         case LIR_BR:
