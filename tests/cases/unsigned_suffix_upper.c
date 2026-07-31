@@ -1,3 +1,3 @@
 /* SPDX-License-Identifier: MIT */
-/* expect-error: invalid suffix on integer constant */
+/* expect: 3 */
 int main(void) { return 3U; }

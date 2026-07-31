@@ -19,6 +19,8 @@ typedef enum {
     STORAGE_EXTERN,
     STORAGE_STATIC,
     STORAGE_TYPEDEF,
+    STORAGE_AUTO,
+    STORAGE_REGISTER,
 } StorageClass;
 
 typedef enum {
@@ -142,8 +144,10 @@ struct Node {
 
     long val;          /* ND_NUM                                    */
     int has_long_suffix; /* ND_NUM: literal had an L/l suffix (C89 3.1.5) */
+    int has_unsigned_suffix; /* ND_NUM: literal had a U/u suffix */
     int is_hex_literal;  /* ND_NUM: 0x/0X constant (C89 3.1.5 typing) */
     int is_octal_literal; /* ND_NUM: 0-prefixed octal (C89 3.1.5 typing) */
+    int is_char_constant; /* ND_NUM: ordinary character constant (type int) */
     unsigned char *string_data; /* ND_STRING: decoded bytes, no final null */
     int string_len;      /* ND_STRING: decoded byte count             */
     char *string_label;  /* ND_STRING: private assembler symbol       */
@@ -197,6 +201,7 @@ struct Param {
     Type *ty;          /* parameter type (sema)                     */
     Type *decl_spec;   /* parsed specifier when declarator pending  */
     Declarator *decl;  /* parsed declarator (sema → ty)             */
+    StorageClass storage; /* only STORAGE_REGISTER is valid          */
     int offset;        /* stack offset from frame pointer (sema)     */
     int abi_gpr_start; /* first SysV arg-reg slot (0=rdi..5=r9); -1 stack */
     int abi_ngpr;      /* consecutive GPR slots (0 = stack-only arg)   */

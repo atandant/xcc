@@ -140,7 +140,8 @@ int scope_lookup_loc_here(const char *name, SourceLoc *out_loc)
     return 0;
 }
 
-void scope_bind(char *name, Type *ty, int offset, SourceLoc loc)
+void scope_bind(char *name, Type *ty, int offset, SourceLoc loc,
+                int is_register)
 {
     if (nlocals >= MAX_LOCALS) {
         diag_error_at(loc, "too many local variables in function");
@@ -154,6 +155,7 @@ void scope_bind(char *name, Type *ty, int offset, SourceLoc loc)
     locals[nlocals].symbol_name = NULL;
     locals[nlocals].entity = NULL;
     locals[nlocals].address_taken = 0;
+    locals[nlocals].is_register = is_register;
     nlocals++;
 
     /* Stack-passed parameters have caller-frame offsets and therefore do not
@@ -218,6 +220,14 @@ void scope_mark_address_taken(const char *name)
     }
 }
 
+int scope_is_register(const char *name)
+{
+    ScopeBinding *binding = scope_lookup_binding(name);
+
+    return binding && binding->kind == SCOPE_AUTO_OBJECT &&
+           binding->is_register;
+}
+
 int scope_offset_address_taken(int offset)
 {
     FrameLocal *frame_local = find_frame_local(offset);
@@ -232,10 +242,10 @@ void scope_export_frame_locals(FrameLocal **out, int *out_n)
     *out_n = nframe_locals;
 }
 
-int scope_add_local(char *name, Type *ty, SourceLoc loc)
+int scope_add_local(char *name, Type *ty, SourceLoc loc, int is_register)
 {
     int off = scope_alloc_local(ty);
-    scope_bind(name, ty, off, loc);
+    scope_bind(name, ty, off, loc, is_register);
     return off;
 }
 

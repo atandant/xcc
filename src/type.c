@@ -670,8 +670,14 @@ Type *type_classify_octal_constant(unsigned long v)
 }
 
 Type *type_classify_integer_constant(long v, int has_long_suffix,
+                                     int has_unsigned_suffix,
                                      int is_nondecimal)
 {
+    if (has_unsigned_suffix) {
+        if (has_long_suffix || (unsigned long)v > (unsigned long)UINT_MAX)
+            return type_unsigned_long();
+        return type_unsigned_int();
+    }
     if (has_long_suffix) {
         /* The candidate types for an L-suffixed hexadecimal or octal
          * constant are long, unsigned long.  Decimal L has only long in

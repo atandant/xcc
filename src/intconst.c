@@ -267,9 +267,11 @@ int int_const_eval(Node *expr, IntConstLookupFn lookup,
     case ND_NUM:
         ty = expr->ty;
         if (!ty)
-            ty = type_classify_integer_constant(
-                expr->val, expr->has_long_suffix,
-                expr->is_hex_literal || expr->is_octal_literal);
+            ty = expr->is_char_constant ? type_int() :
+                type_classify_integer_constant(
+                    expr->val, expr->has_long_suffix,
+                    expr->has_unsigned_suffix,
+                    expr->is_hex_literal || expr->is_octal_literal);
         if (!type_is_integer(ty))
             return 0;
         *out_value = type_convert_const(expr->val, ty);

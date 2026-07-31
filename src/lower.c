@@ -1898,7 +1898,9 @@ static void lower_stmt(LowerCtx *c, Node *n)
             (void)lower_expr(c, n->operand);
         return;
     case ND_DECL:
-        if (n->decl_storage != STORAGE_NONE ||
+        if ((n->decl_storage != STORAGE_NONE &&
+             n->decl_storage != STORAGE_AUTO &&
+             n->decl_storage != STORAGE_REGISTER) ||
             (n->ty && n->ty->kind == TY_FUNC))
             return;
         if (n->init && n->init->kind == ND_CALL &&

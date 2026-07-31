@@ -47,12 +47,19 @@ static void scan_advance_location(const char *text, int len)
 }
 
 /* Decode a decimal integer constant, flagging C89 3.1.5 range overflow.
- * strtol stops at any trailing L/l suffix, so the same routine serves both. */
-static long scan_decimal(const char *text)
+ * strtol/strtoul stop at trailing U/u/L/l suffixes. */
+static long scan_decimal(const char *text, int is_unsigned)
 {
+    unsigned long uv;
     long v;
 
     errno = 0;
+    if (is_unsigned) {
+        uv = strtoul(text, NULL, 10);
+        if (errno == ERANGE)
+            diag_error_at(scan_loc(), "integer constant out of range");
+        return (long)uv;
+    }
     v = strtol(text, NULL, 10);
     if (errno == ERANGE)
         diag_error_at(scan_loc(), "integer constant out of range");
@@ -76,6 +83,8 @@ static long scan_octal(const char *text)
     unsigned long v;
 
     for (p = text + 1; *p; p++) {
+        if (*p == 'u' || *p == 'U' || *p == 'l' || *p == 'L')
+            break;
         if (*p < '0' || *p > '7') {
             diag_error_at(scan_loc(), "invalid digit in octal constant");
             break;
@@ -91,11 +100,12 @@ static long scan_octal(const char *text)
 
 static int has_long_suffix(const char *text)
 {
-    size_t n = strlen(text);
+    return strchr(text, 'L') != NULL || strchr(text, 'l') != NULL;
+}
 
-    if (n == 0)
-        return 0;
-    return text[n - 1] == 'L' || text[n - 1] == 'l';
+static int has_unsigned_suffix(const char *text)
+{
+    return strchr(text, 'U') != NULL || strchr(text, 'u') != NULL;
 }
 
 static int hex_value(int c)
@@ -191,6 +201,28 @@ static StringToken *scan_string(const char *text, int len, int quote)
     return token;
 }
 
+/* Multi-character constants use the conventional left-to-right byte packing:
+ * 'ab' is 0x6162.  XCC's target int is 32 bits, so at most four decoded bytes
+ * are representable. */
+static long scan_character(const char *text, int len)
+{
+    StringToken *token = scan_string(text, len, 0);
+    unsigned long value = 0;
+    int i;
+
+    if (token->len == 0) {
+        diag_error_at(scan_loc(), "empty character constant");
+        return 0;
+    }
+    if (token->len > 4) {
+        diag_error_at(scan_loc(), "character constant exceeds 4 bytes");
+        return 0;
+    }
+    for (i = 0; i < token->len; i++)
+        value = (value << 8) | token->data[i];
+    return (long)value;
+}
+
 /* Track every matched byte so multiline comments and future multiline tokens
  * leave the next token with an exact line and column. */
 #define YY_USER_ACTION scan_advance_location(yytext, yyleng);
@@ -233,6 +265,8 @@ static StringToken *scan_string(const char *text, int len, int quote)
 "typedef"           { return TYPEDEF; }
 "extern"            { return EXTERN; }
 "static"            { return STATIC; }
+"auto"              { return AUTO; }
+"register"          { return REGISTER; }
 "struct"            { return STRUCT; }
 "union"             { return UNION; }
 "enum"              { return ENUM; }
@@ -256,33 +290,73 @@ static StringToken *scan_string(const char *text, int len, int quote)
                                   return TYPEDEF_NAME;
                               return IDENT;
                           }
-0[xX][0-9a-fA-F]+([Ll])? { yylval.num.val = scan_hex(yytext);
+0[xX][0-9a-fA-F]+([uU]|[lL]|[uU][lL]|[lL][uU])? {
+                          yylval.num.val = scan_hex(yytext);
                           yylval.num.is_long = has_long_suffix(yytext);
+                          yylval.num.is_unsigned = has_unsigned_suffix(yytext);
                           yylval.num.is_hex = 1;
-                          yylval.num.is_octal = 0; return NUM; }
-0[89][0-9]*([Ll])?  { diag_error_at(scan_loc(), "invalid digit in octal constant");
+                          yylval.num.is_octal = 0;
+                          yylval.num.is_char = 0; return NUM; }
+0[89][0-9]*([uU]|[lL]|[uU][lL]|[lL][uU])? {
+                          diag_error_at(scan_loc(), "invalid digit in octal constant");
                           yylval.num.val = 0;
                           yylval.num.is_long = has_long_suffix(yytext);
+                          yylval.num.is_unsigned = has_unsigned_suffix(yytext);
                           yylval.num.is_hex = 0;
-                          yylval.num.is_octal = 1; return NUM; }
-0[0-7]+([Ll])?      { yylval.num.val = scan_octal(yytext);
+                          yylval.num.is_octal = 1;
+                          yylval.num.is_char = 0; return NUM; }
+0[0-7]+([uU]|[lL]|[uU][lL]|[lL][uU])? {
+                          yylval.num.val = scan_octal(yytext);
+                          yylval.num.is_long = has_long_suffix(yytext);
+                          yylval.num.is_unsigned = has_unsigned_suffix(yytext);
+                          yylval.num.is_hex = 0;
+                          yylval.num.is_octal = 1;
+                          yylval.num.is_char = 0; return NUM; }
+0([uU]|[lL]|[uU][lL]|[lL][uU])? {
+                          yylval.num.val = 0;
+                          yylval.num.is_long = has_long_suffix(yytext);
+                          yylval.num.is_unsigned = has_unsigned_suffix(yytext);
+                          yylval.num.is_hex = 0;
+                          yylval.num.is_octal = 1;
+                          yylval.num.is_char = 0; return NUM; }
+[1-9][0-9]*([uU]|[lL]|[uU][lL]|[lL][uU])? {
+                          yylval.num.is_unsigned = has_unsigned_suffix(yytext);
+                          yylval.num.val = scan_decimal(yytext, yylval.num.is_unsigned);
                           yylval.num.is_long = has_long_suffix(yytext);
                           yylval.num.is_hex = 0;
-                          yylval.num.is_octal = 1; return NUM; }
-0([Ll])?            { yylval.num.val = 0;
-                          yylval.num.is_long = has_long_suffix(yytext);
-                          yylval.num.is_hex = 0;
-                          yylval.num.is_octal = 1; return NUM; }
-[1-9][0-9]*([Ll])?  { yylval.num.val = scan_decimal(yytext);
-                          yylval.num.is_long = has_long_suffix(yytext);
-                          yylval.num.is_hex = 0;
-                          yylval.num.is_octal = 0; return NUM; }
+                          yylval.num.is_octal = 0;
+                          yylval.num.is_char = 0; return NUM; }
 [0-9]+[A-Za-z_]+    { diag_error_at(scan_loc(),
                                     "invalid suffix on integer constant");
-                          yylval.num.val = scan_decimal(yytext);
+                          yylval.num.val = scan_decimal(yytext, 0);
                           yylval.num.is_long = 0;
+                          yylval.num.is_unsigned = 0;
                           yylval.num.is_hex = 0;
-                          yylval.num.is_octal = 0; return NUM; }
+                          yylval.num.is_octal = 0;
+                          yylval.num.is_char = 0; return NUM; }
+
+L\'([^\\\n\']|\\(.|\r?\n))*\' {
+                          diag_error_at(scan_loc(),
+                                        "wide character constants are not yet supported");
+                          yylval.num.val = 0;
+                          yylval.num.is_long = 0;
+                          yylval.num.is_unsigned = 0;
+                          yylval.num.is_hex = 0;
+                          yylval.num.is_octal = 0;
+                          yylval.num.is_char = 1; return NUM;
+                      }
+\'([^\\\n\']|\\(.|\r?\n))*\' {
+                          yylval.num.val = scan_character(yytext, yyleng);
+                          yylval.num.is_long = 0;
+                          yylval.num.is_unsigned = 0;
+                          yylval.num.is_hex = 0;
+                          yylval.num.is_octal = 0;
+                          yylval.num.is_char = 1; return NUM;
+                      }
+L?\'([^\\\n\']|\\(.|\r?\n))* {
+                          diag_error_at(scan_loc(),
+                                        "unterminated character constant");
+                      }
 
 L\"([^\\\n\"]|\\(.|\r?\n))*\" {
                           diag_error_at(scan_loc(),

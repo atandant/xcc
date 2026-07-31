@@ -25,13 +25,22 @@ static Type *declspec_without_storage(DeclSpec *spec, SourceLoc loc,
         diag_error_at(loc, "storage class specified for %s", context);
     return declspec_type(spec, loc);
 }
+
+static Type *parameter_declspec_type(DeclSpec *spec, SourceLoc loc)
+{
+    if (spec->storage != STORAGE_NONE &&
+        spec->storage != STORAGE_REGISTER)
+        diag_error_at(loc, "invalid storage class for parameter");
+    return declspec_type(spec, loc);
+}
 %}
 
 %locations
 %define parse.error verbose
-/* `extern/static/typedef T` is intentionally shifted as a storage class plus
-   typedef-name type rather than reduced as an implicit-int declaration of T. */
-%expect 3
+/* `extern/static/typedef/auto/register T` is intentionally shifted as a
+   storage class plus typedef-name type rather than reduced as an implicit-int
+   declaration of T.  There is one equivalent conflict per storage class. */
+%expect 5
 
 %code requires {
     #include "ast.h"
@@ -40,7 +49,14 @@ static Type *declspec_without_storage(DeclSpec *spec, SourceLoc loc,
 }
 
 %union {
-    struct { long val; int is_long; int is_hex; int is_octal; } num;
+    struct {
+        long val;
+        int is_long;
+        int is_unsigned;
+        int is_hex;
+        int is_octal;
+        int is_char;
+    } num;
     char *str;
     StringToken *string;
     Node *node;
@@ -60,7 +76,7 @@ static Type *declspec_without_storage(DeclSpec *spec, SourceLoc loc,
 %token <num> NUM
 %token <str> IDENT TYPEDEF_NAME
 %token <string> STRING
-%token INT CHAR SHORT LONG VOID UNSIGNED SIGNED RETURN IF ELSE WHILE DO FOR SWITCH CASE DEFAULT GOTO BREAK CONTINUE SIZEOF TYPEDEF EXTERN STATIC STRUCT UNION ENUM
+%token INT CHAR SHORT LONG VOID UNSIGNED SIGNED RETURN IF ELSE WHILE DO FOR SWITCH CASE DEFAULT GOTO BREAK CONTINUE SIZEOF TYPEDEF EXTERN STATIC AUTO REGISTER STRUCT UNION ENUM
 %token EQ NE LE GE ARROW LAND LOR SHL SHR INC DEC
 
 %type <node> expr expr_opt arg_expr conditional_expr logical_or_expr
@@ -153,6 +169,8 @@ builtin_declaration_specifiers:
   | EXTERN              { $$ = declspec_add_storage(NULL, STORAGE_EXTERN, LOC(@1)); }
   | STATIC              { $$ = declspec_add_storage(NULL, STORAGE_STATIC, LOC(@1)); }
   | TYPEDEF             { $$ = declspec_add_storage(NULL, STORAGE_TYPEDEF, LOC(@1)); }
+  | AUTO                { $$ = declspec_add_storage(NULL, STORAGE_AUTO, LOC(@1)); }
+  | REGISTER            { $$ = declspec_add_storage(NULL, STORAGE_REGISTER, LOC(@1)); }
   | builtin_declaration_specifiers INT
         { $$ = declspec_add_builtin($1, TYPE_SPEC_INT, LOC(@2)); }
   | builtin_declaration_specifiers CHAR
@@ -173,6 +191,10 @@ builtin_declaration_specifiers:
         { $$ = declspec_add_storage($1, STORAGE_STATIC, LOC(@2)); }
   | builtin_declaration_specifiers TYPEDEF
         { $$ = declspec_add_storage($1, STORAGE_TYPEDEF, LOC(@2)); }
+  | builtin_declaration_specifiers AUTO
+        { $$ = declspec_add_storage($1, STORAGE_AUTO, LOC(@2)); }
+  | builtin_declaration_specifiers REGISTER
+        { $$ = declspec_add_storage($1, STORAGE_REGISTER, LOC(@2)); }
   ;
 
 /* A typedef name or tagged type is already a complete type specifier; only a
@@ -189,48 +211,80 @@ named_declaration_specifiers:
                            $$ = declspec_add_type($$, typedef_lookup($2), LOC(@2)); }
   | TYPEDEF TYPEDEF_NAME { $$ = declspec_add_storage(NULL, STORAGE_TYPEDEF, LOC(@1));
                            $$ = declspec_add_type($$, typedef_lookup($2), LOC(@2)); }
+  | AUTO TYPEDEF_NAME    { $$ = declspec_add_storage(NULL, STORAGE_AUTO, LOC(@1));
+                           $$ = declspec_add_type($$, typedef_lookup($2), LOC(@2)); }
+  | REGISTER TYPEDEF_NAME { $$ = declspec_add_storage(NULL, STORAGE_REGISTER, LOC(@1));
+                            $$ = declspec_add_type($$, typedef_lookup($2), LOC(@2)); }
   | TYPEDEF_NAME EXTERN  { $$ = declspec_add_type(NULL, typedef_lookup($1), LOC(@1));
                            $$ = declspec_add_storage($$, STORAGE_EXTERN, LOC(@2)); }
   | TYPEDEF_NAME STATIC  { $$ = declspec_add_type(NULL, typedef_lookup($1), LOC(@1));
                            $$ = declspec_add_storage($$, STORAGE_STATIC, LOC(@2)); }
   | TYPEDEF_NAME TYPEDEF { $$ = declspec_add_type(NULL, typedef_lookup($1), LOC(@1));
                            $$ = declspec_add_storage($$, STORAGE_TYPEDEF, LOC(@2)); }
+  | TYPEDEF_NAME AUTO    { $$ = declspec_add_type(NULL, typedef_lookup($1), LOC(@1));
+                           $$ = declspec_add_storage($$, STORAGE_AUTO, LOC(@2)); }
+  | TYPEDEF_NAME REGISTER { $$ = declspec_add_type(NULL, typedef_lookup($1), LOC(@1));
+                            $$ = declspec_add_storage($$, STORAGE_REGISTER, LOC(@2)); }
   | EXTERN struct_specifier { $$ = declspec_add_storage(NULL, STORAGE_EXTERN, LOC(@1));
                               $$ = declspec_add_type($$, $2, LOC(@2)); }
   | STATIC struct_specifier { $$ = declspec_add_storage(NULL, STORAGE_STATIC, LOC(@1));
                               $$ = declspec_add_type($$, $2, LOC(@2)); }
   | TYPEDEF struct_specifier { $$ = declspec_add_storage(NULL, STORAGE_TYPEDEF, LOC(@1));
                                $$ = declspec_add_type($$, $2, LOC(@2)); }
+  | AUTO struct_specifier { $$ = declspec_add_storage(NULL, STORAGE_AUTO, LOC(@1));
+                            $$ = declspec_add_type($$, $2, LOC(@2)); }
+  | REGISTER struct_specifier { $$ = declspec_add_storage(NULL, STORAGE_REGISTER, LOC(@1));
+                                $$ = declspec_add_type($$, $2, LOC(@2)); }
   | struct_specifier EXTERN { $$ = declspec_add_type(NULL, $1, LOC(@1));
                               $$ = declspec_add_storage($$, STORAGE_EXTERN, LOC(@2)); }
   | struct_specifier STATIC { $$ = declspec_add_type(NULL, $1, LOC(@1));
                               $$ = declspec_add_storage($$, STORAGE_STATIC, LOC(@2)); }
   | struct_specifier TYPEDEF { $$ = declspec_add_type(NULL, $1, LOC(@1));
                                $$ = declspec_add_storage($$, STORAGE_TYPEDEF, LOC(@2)); }
+  | struct_specifier AUTO { $$ = declspec_add_type(NULL, $1, LOC(@1));
+                            $$ = declspec_add_storage($$, STORAGE_AUTO, LOC(@2)); }
+  | struct_specifier REGISTER { $$ = declspec_add_type(NULL, $1, LOC(@1));
+                                $$ = declspec_add_storage($$, STORAGE_REGISTER, LOC(@2)); }
   | EXTERN union_specifier { $$ = declspec_add_storage(NULL, STORAGE_EXTERN, LOC(@1));
                              $$ = declspec_add_type($$, $2, LOC(@2)); }
   | STATIC union_specifier { $$ = declspec_add_storage(NULL, STORAGE_STATIC, LOC(@1));
                              $$ = declspec_add_type($$, $2, LOC(@2)); }
   | TYPEDEF union_specifier { $$ = declspec_add_storage(NULL, STORAGE_TYPEDEF, LOC(@1));
                               $$ = declspec_add_type($$, $2, LOC(@2)); }
+  | AUTO union_specifier { $$ = declspec_add_storage(NULL, STORAGE_AUTO, LOC(@1));
+                           $$ = declspec_add_type($$, $2, LOC(@2)); }
+  | REGISTER union_specifier { $$ = declspec_add_storage(NULL, STORAGE_REGISTER, LOC(@1));
+                               $$ = declspec_add_type($$, $2, LOC(@2)); }
   | union_specifier EXTERN { $$ = declspec_add_type(NULL, $1, LOC(@1));
                              $$ = declspec_add_storage($$, STORAGE_EXTERN, LOC(@2)); }
   | union_specifier STATIC { $$ = declspec_add_type(NULL, $1, LOC(@1));
                              $$ = declspec_add_storage($$, STORAGE_STATIC, LOC(@2)); }
   | union_specifier TYPEDEF { $$ = declspec_add_type(NULL, $1, LOC(@1));
                               $$ = declspec_add_storage($$, STORAGE_TYPEDEF, LOC(@2)); }
+  | union_specifier AUTO { $$ = declspec_add_type(NULL, $1, LOC(@1));
+                           $$ = declspec_add_storage($$, STORAGE_AUTO, LOC(@2)); }
+  | union_specifier REGISTER { $$ = declspec_add_type(NULL, $1, LOC(@1));
+                               $$ = declspec_add_storage($$, STORAGE_REGISTER, LOC(@2)); }
   | EXTERN enum_specifier { $$ = declspec_add_storage(NULL, STORAGE_EXTERN, LOC(@1));
                             $$ = declspec_add_type($$, $2, LOC(@2)); }
   | STATIC enum_specifier { $$ = declspec_add_storage(NULL, STORAGE_STATIC, LOC(@1));
                             $$ = declspec_add_type($$, $2, LOC(@2)); }
   | TYPEDEF enum_specifier { $$ = declspec_add_storage(NULL, STORAGE_TYPEDEF, LOC(@1));
                              $$ = declspec_add_type($$, $2, LOC(@2)); }
+  | AUTO enum_specifier { $$ = declspec_add_storage(NULL, STORAGE_AUTO, LOC(@1));
+                          $$ = declspec_add_type($$, $2, LOC(@2)); }
+  | REGISTER enum_specifier { $$ = declspec_add_storage(NULL, STORAGE_REGISTER, LOC(@1));
+                              $$ = declspec_add_type($$, $2, LOC(@2)); }
   | enum_specifier EXTERN { $$ = declspec_add_type(NULL, $1, LOC(@1));
                             $$ = declspec_add_storage($$, STORAGE_EXTERN, LOC(@2)); }
   | enum_specifier STATIC { $$ = declspec_add_type(NULL, $1, LOC(@1));
                             $$ = declspec_add_storage($$, STORAGE_STATIC, LOC(@2)); }
   | enum_specifier TYPEDEF { $$ = declspec_add_type(NULL, $1, LOC(@1));
                              $$ = declspec_add_storage($$, STORAGE_TYPEDEF, LOC(@2)); }
+  | enum_specifier AUTO { $$ = declspec_add_type(NULL, $1, LOC(@1));
+                          $$ = declspec_add_storage($$, STORAGE_AUTO, LOC(@2)); }
+  | enum_specifier REGISTER { $$ = declspec_add_type(NULL, $1, LOC(@1));
+                              $$ = declspec_add_storage($$, STORAGE_REGISTER, LOC(@2)); }
   ;
 
 struct_specifier:
@@ -428,16 +482,18 @@ param_list:
 param:
     declaration_specifiers declarator
         {
-            Type *ty = declspec_without_storage($1, LOC(@1), "parameter");
+            Type *ty = parameter_declspec_type($1, LOC(@1));
             $$ = param_append_decl(NULL, ty, $2, declarator_name($2));
+            $$->storage = $1->storage;
             typedef_hide_name($$->name, LOC(@2));
         }
   | declaration_specifiers abstract_declarator
-        { $$ = param_append_decl(NULL,
-              declspec_without_storage($1, LOC(@1), "parameter"), $2, NULL); }
+        { $$ = param_append_decl(NULL, parameter_declspec_type($1, LOC(@1)),
+                                 $2, NULL);
+          $$->storage = $1->storage; }
   | declaration_specifiers
-        { $$ = param_append(NULL,
-              declspec_without_storage($1, LOC(@1), "parameter"), NULL); }
+        { $$ = param_append(NULL, parameter_declspec_type($1, LOC(@1)), NULL);
+          $$->storage = $1->storage; }
   ;
 
 stmt_list:
@@ -645,8 +701,10 @@ postfix_expr:
 primary_expr:
     NUM                      { $$ = node_num($1.val, LOC(@1));
                                $$->has_long_suffix = $1.is_long;
+                               $$->has_unsigned_suffix = $1.is_unsigned;
                                $$->is_hex_literal = $1.is_hex;
-                               $$->is_octal_literal = $1.is_octal; }
+                               $$->is_octal_literal = $1.is_octal;
+                               $$->is_char_constant = $1.is_char; }
   | string_literal          { $$ = $1; }
   | IDENT                    { $$ = node_var($1, LOC(@1)); }
   | '(' expr ')'             { $$ = $2; }

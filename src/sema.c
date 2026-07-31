@@ -316,6 +316,13 @@ static void mark_member_base_address_taken(Node *n)
     }
 }
 
+static int member_base_is_register(Node *n)
+{
+    while (n && n->kind == ND_MEMBER)
+        n = n->lhs;
+    return n && n->kind == ND_VAR && scope_is_register(n->name);
+}
+
 static Type *member_owner_record(Node *base)
 {
     if (!base || !base->ty)
@@ -966,9 +973,10 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
 
     switch (n->kind) {
     case ND_NUM:
-        n->ty = type_classify_integer_constant(
-            n->val, n->has_long_suffix,
-            n->is_hex_literal || n->is_octal_literal);
+        n->ty = n->is_char_constant ? type_int() :
+            type_classify_integer_constant(
+                n->val, n->has_long_suffix, n->has_unsigned_suffix,
+                n->is_hex_literal || n->is_octal_literal);
         n->is_lvalue = 0;
         n->var_decay = 0;
         return;
@@ -1008,8 +1016,10 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
                 n->kind = ND_NUM;
                 n->val = enum_val;
                 n->has_long_suffix = 0;
+                n->has_unsigned_suffix = 0;
                 n->is_hex_literal = 0;
                 n->is_octal_literal = 0;
+                n->is_char_constant = 0;
                 n->ty = type_int();
                 n->is_lvalue = 0;
             } else {
@@ -1313,14 +1323,23 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
         }
         if (!expr_is_lvalue(n->operand))
             diag_error_at(n->loc, "cannot take address of non-lvalue");
-        else if (n->operand->kind == ND_VAR)
-            scope_mark_address_taken(n->operand->name);
+        else if (n->operand->kind == ND_VAR) {
+            if (scope_is_register(n->operand->name))
+                diag_error_at(n->loc,
+                              "cannot take address of register object '%s'",
+                              n->operand->name);
+            else
+                scope_mark_address_taken(n->operand->name);
+        }
         else if (n->operand->kind == ND_MEMBER) {
             Type *sty = n->operand->lhs->ty;
             Member *m = &sty->members[n->operand->member_index];
 
             if (m->is_bitfield && m->bit_width > 0)
                 diag_error_at(n->loc, "cannot take address of bit-field");
+            else if (member_base_is_register(n->operand))
+                diag_error_at(n->loc,
+                              "cannot take address of member of register object");
             else
                 mark_member_base_address_taken(n->operand->lhs);
         }
@@ -1589,7 +1608,9 @@ static void resolve_stmt(Node *s)
                           s->name);
         typedef_hide_name(s->name, s->loc);
         if (s->ty && s->ty->kind == TY_FUNC) {
-            if (s->decl_storage == STORAGE_STATIC)
+            if (s->decl_storage == STORAGE_STATIC ||
+                s->decl_storage == STORAGE_AUTO ||
+                s->decl_storage == STORAGE_REGISTER)
                 diag_error_at(s->loc,
                               "invalid storage class for block-scope function '%s'",
                               s->name);
@@ -1670,7 +1691,9 @@ static void resolve_stmt(Node *s)
             diag_note_at(prev, "previous declaration of '%s' is here", s->name);
             scope_lookup(s->name, &s->offset, NULL);
         } else {
-            s->offset = scope_add_local(s->name, s->ty, s->loc);
+            s->offset = scope_add_local(
+                s->name, s->ty, s->loc,
+                s->decl_storage == STORAGE_REGISTER);
         }
         /* C89 3.1.2.1: the name is in scope within its own initializer. */
         if (s->init && s->init->kind == ND_INIT_LIST)
@@ -2113,7 +2136,8 @@ static void sema_function(Function *fn)
 
         if (p->name) {
             if (!scope_declared_here(p->name))
-                scope_bind(p->name, pty, p->offset, fn->loc);
+                scope_bind(p->name, pty, p->offset, fn->loc,
+                           p->storage == STORAGE_REGISTER);
         }
     }
 
@@ -2384,6 +2408,13 @@ static void sema_global_object(GlobalObject *object)
         object->decl_spec = NULL;
     }
 
+    if (!object->source_name &&
+        (object->storage == STORAGE_AUTO ||
+         object->storage == STORAGE_REGISTER))
+        diag_error_at(object->loc,
+                      "invalid storage class for file-scope object '%s'",
+                      object->name);
+
     if (type_is_array(object->ty) &&
         type_is_char(type_array_elem(object->ty)) && object->init &&
         object->init->kind == ND_STRING) {
@@ -2524,6 +2555,11 @@ void sema(ExternalDecl *prog)
         } else {
             Function *fn = external->function;
             sema_finish_function_types(fn);
+            if (fn->storage == STORAGE_AUTO ||
+                fn->storage == STORAGE_REGISTER)
+                diag_error_at(fn->loc,
+                              "invalid storage class for function '%s'",
+                              fn->name);
             functab_register(fn);
             if (fn->is_definition)
                 sema_function(fn);

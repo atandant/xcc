@@ -33,8 +33,8 @@ make
 ## Status
 
 The pipeline runs end to end (lex → parse → sema → lower → liveness →
-regalloc → emit → `.s` → gcc) with a typed semantic layer and 856 passing test
-checks.
+regalloc → emit → `.s` → gcc) with a typed semantic layer and an extensive
+acceptance test suite.
 
 | Supported | Not yet |
 | --- | --- |
@@ -53,7 +53,8 @@ checks.
 | file-scope pointer constants (`&object`, member addresses, string literals and addends) | |
 | casts `(type)expr`, `(void)expr` discard | |
 | `sizeof expr`, `sizeof(type)` (compile-time fold, `unsigned long`) | |
-| ordinary string literals in expressions (escapes, concatenation, embedded NUL) | wide string literals |
+| ordinary character constants (escapes and implementation-defined multi-character packing) | wide character and string literals |
+| ordinary string literals in expressions (escapes, concatenation, embedded NUL) | floating types and literals |
 | function calls (prototyped arg checking, void `*` conversions) | |
 | `if` / `else`, `while`, `do ... while`, `for`, blocks and null statements | |
 | `switch` / `case` / `default`, fallthrough, `break`, `continue` | |
@@ -61,7 +62,7 @@ checks.
 | prefix/postfix `++` and `--` on integer and pointer lvalues | |
 | arithmetic, bitwise, shifts, comparisons, `&&`, `\|\|`, `!`, `?:`, comma | |
 | pointer `==` / `!=` / ordering, truthiness, `p == 0` | |
-| `L`/`l` literal suffixes; `0x` hex literals (C89 typing) | |
+| `U`/`u` and `L`/`l` integer suffixes (including `UL`/`LU`); `0x` hex literals (C89 typing) | `const` and `volatile` qualifiers |
 | `int`/`long` promotions; `ptr - ptr` → `long` | |
 | warnings (`implicit` decl, unprototyped calls, `char` overflow, …) | |
 | `-W` / `-Wno-` / `-Wall` / `-Werror` CLI flags (`--help-warnings`) | |
@@ -71,7 +72,8 @@ checks.
 | **`union`** (tagged, forward-decl, overlap layout), member access, union assign | |
 | **`enum`** (tagged/anonymous, enumerator constants, enum variables as `int`) | |
 | `struct S *` / `union U *` parameters and returns, struct/union by-value param/return | |
-| file- and block-scope `extern`/`static`, tentative definitions, static functions and persistent block statics | block-scope `auto` and `register` |
+| file- and block-scope `extern`/`static`, block-scope `auto`/`register`, and `register` parameters | |
+| | variadic functions and old-style function definitions with parameter declaration lists |
 
 `typedef`, `extern`, and `static` are supported at file and block scope.
 
@@ -85,8 +87,9 @@ records use sret/stack memory.
 > width as pointers.
 >
 > Plain `char` loads as an unsigned byte (0–255); use `unsigned char` when you
-> need an unsigned type in expressions. `U`/`u` literal suffixes are not supported
-> (C99); use `0x` constants or casts instead.
+> need an explicitly unsigned type in expressions. Multi-character constants
+> pack up to four decoded bytes from left to right (`'ab' == 0x6162`); this is
+> xcc's implementation-defined C89 behavior.
 >
 > `sizeof` is evaluated at compile time in sema (no runtime codegen). Array
 > operands do not decay; function, `void`, and incomplete types are rejected.
@@ -158,7 +161,9 @@ committed.
 
 ## Roadmap
 
-- block-scope `auto` and `register`
+- `const` and `volatile` type qualifiers
+- floating-point types, literals, operations, and ABI support
+- variadic functions and old-style function definitions with parameter declarations
 - function-pointer and nested-declarator conformance edge cases
 - preprocessor support
 - multiple translation units and driver behavior
