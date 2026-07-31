@@ -7,6 +7,8 @@
 
 typedef struct SourceFile SourceFile;
 
+SourceFile *source_create(const unsigned char *bytes, size_t size,
+                          const char *name);
 SourceFile *source_read(FILE *in, const char *name);
 const char *source_name(const SourceFile *source);
 const unsigned char *source_bytes(const SourceFile *source);

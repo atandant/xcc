@@ -38,8 +38,9 @@ acceptance test suite.
 
 | Supported | Not yet |
 | --- | --- |
-| `char`, `short`, `int`, `long`, `void`, pointers (`*`, `&`, dereference) | preprocessor (`#include`, function-like macros) |
-| object-like `#define`, `#undef`, rescanning, and conditionals; experimental `##` | multiple translation units |
+| `char`, `short`, `int`, `long`, `void`, pointers (`*`, `&`, dereference) | `#line`, `#error`, `#pragma`, and predefined macros |
+| object/function-like `#define`, `#undef`, rescanning, `#`, `##`, and conditionals | multiple translation units |
+| experimental `#include` with quoted/angle operands and `-I` search paths | |
 | signed and unsigned integer types, promotions and usual arithmetic conversions | |
 | parenthesized declarators (`int (*p)[3]`), casts (`(int (*)[3])`) | |
 | N-dimensional arrays, `[]` subscript, `ptr ± int/long`, `ptr - ptr`, param decay | |
@@ -133,10 +134,12 @@ records use sret/stack memory.
 ```
 
 The native preprocessing-token input path is active, including C89 trigraphs,
-line splicing, comment replacement, object-like macros, and conditional
-inclusion. Function-like macros, includes, and other directives remain a work
-in progress. See [`src/cpp/README.md`](src/cpp/README.md) for the detailed
-support matrix.
+line splicing, comment replacement, object-like macros, `#undef`, replacement
+rescanning, and conditional inclusion. Function-like macros, argument prescan,
+stringification, and token pasting are also implemented. Includes and other
+directives remain a work in progress; quoted and angle-bracket includes with
+`-I` search paths are available experimentally. See
+[`src/cpp/README.md`](src/cpp/README.md) for the detailed support matrix.
 
 The parser builds AST nodes and attaches parsed types to declarations. **sema**
 owns type checking. **lower** builds CFG-based LIR with virtual registers;

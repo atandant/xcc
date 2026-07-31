@@ -17,14 +17,14 @@
 | parser-token conversion | implemented |
 | object-like `#define` | implemented |
 | replacement rescanning and token hide sets | implemented |
-| object-like token pasting with `##` | experimental |
+| token pasting with `##` | implemented |
 | `#undef` and null directives | implemented |
-| function-like macros and stringification with `#` | not implemented |
+| function-like macros and stringification with `#` | implemented |
 | `#if`, `#ifdef`, `#ifndef`, `#elif`, `#else`, `#endif` | implemented |
-| `#include` and include search paths | not implemented |
+| `#include` and `-I` include search paths | experimental |
 | `#line`, `#error`, and `#pragma` | not implemented |
 | predefined macros | not implemented |
-| `-D`, `-U`, `-I`, and `-E` | not implemented |
+| `-D`, `-U`, and `-E` | not implemented |
 
 “Implemented” is a supported contract with broad regression coverage.
 “Experimental” means the documented subset is intended to work and is tested,
@@ -51,13 +51,15 @@ performs keyword recognition, literal decoding, integer conversion, and
 parser-dependent typedef-name classification. `src/cpp` must not depend on
 the parser, AST, or semantic state.
 
-Object-like replacement lists are stored as tokens and rescanned at use time.
-Every expanded token carries an immutable hide set, which terminates direct and
-mutual recursion without using an arbitrary depth limit. `##` concatenates
-spellings, requires the result to be exactly one preprocessing token, and then
-rescans it. Function-like argument substitution will build on this mechanism,
-but needs additional hide-set composition rules and must not blindly reuse the
-object-like substitution helper.
+Macro definitions and expansion are owned by a unified engine in
+`src/cpp/macro.c`. Replacement lists are stored as tokens and rescanned at use
+time. Every expanded token carries an immutable hide set, which terminates
+direct and mutual recursion without using an arbitrary depth limit.
+Function-like arguments retain separate raw and lazily prescanned forms:
+ordinary parameters use the prescanned form, while `#` and `##` use raw tokens.
+Stringification normalizes whitespace and escapes literal spellings. `##`
+uses placemarkers for empty arguments, requires each nonempty concatenation to
+form exactly one preprocessing token, and rescans the result.
 
 Conditional groups use an explicit nesting stack. Tokens in inactive groups
 are discarded before macro expansion, while nested conditional directives are
@@ -66,10 +68,17 @@ bounded macro expansion, replace remaining identifiers with zero, and are
 evaluated by a preprocessor-only C89 integer expression parser. The evaluator
 does not depend on the C parser, AST, type system, or semantic state.
 
+Included files are processed by a stack of retained input frames. Each file
+independently undergoes trigraph replacement, line splicing, comment handling,
+and preprocessing-token scanning while sharing the translation unit's macro
+table. Quoted includes search the including file's directory before repeated
+`-I` directories; angle includes search only `-I` directories. Conditional
+groups cannot cross file boundaries, and nesting is limited to 200 files.
+
 All input is retained for the compilation lifetime. Token locations identify
-their source file so future included files do not require a mutable global
-filename. Expanded object-like tokens currently use the invocation location;
-nested macro-expansion notes are intentionally deferred.
+their source file, including nested headers, without a mutable global filename.
+Expanded object-like tokens currently use the invocation location; nested
+macro-expansion notes are intentionally deferred.
 
 ## Translation-phase behavior
 
@@ -90,21 +99,23 @@ They are run by `tests/run-cpp.sh` as part of:
 make test
 ```
 
-The corpus currently includes 50 object-macro-focused cases and 28 conditional
-inclusion cases in addition to the phase-scanner cases. It covers rescanning,
-direct and mutual recursion, definition order, redefinition, `#undef`,
-trigraph and splice interactions, token-paste re-lexing, inactive groups,
-conditional nesting and diagnostics, C89 expression evaluation, and malformed
-input. Source-level tests should continue to cover phase interactions and edge
+The corpus currently includes 50 object-macro-focused cases, 47 function-macro
+cases, 28 conditional-inclusion cases, and 25 include cases in addition to the
+phase-scanner cases. It covers argument collection and lazy prescan,
+rescanning, direct and mutual recursion, hide-set boundaries, stringification,
+placemarkers, token-paste re-lexing, definition order, redefinition, `#undef`,
+trigraph and splice interactions, inactive groups, conditional nesting and
+diagnostics, C89 expression evaluation, nested and macro-expanded includes,
+search order, include guards, recursion limits, and malformed input.
+Source-level tests should continue to cover phase interactions and edge
 conditions, not only happy paths.
 
 ## Next milestone
 
-The next macro milestone is complete C89 function-like replacement: parameter
-parsing, balanced argument collection, argument prescan, stringification,
-parameter-aware token pasting (including empty arguments), and the additional
-hide-set propagation required during argument substitution. Variadic macros
-remain out of scope because they are not C89.
+`#include` remains experimental while its header-name edge cases, file-system
+failures, and real-world nested-header coverage mature. Predefined C89 macros
+and command-line `-D`/`-U` are candidates for the next milestone. Variadic
+macros remain out of scope because they are not C89.
 
 ## Explicit non-goals for now
 

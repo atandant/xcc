@@ -7,8 +7,12 @@
 #include "arena.h"
 #include "diag.h"
 
+#include <errno.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#define CPP_INCLUDE_DEPTH_LIMIT 200
 
 typedef struct {
     unsigned char ch;
@@ -36,7 +40,7 @@ typedef struct Conditional {
     struct Conditional *next;
 } Conditional;
 
-struct Cpp {
+typedef struct CppInput {
     const SourceFile *source;
     LogicalChar *chars;
     size_t len;
@@ -45,11 +49,20 @@ struct Cpp {
     int pending_space;
     int in_comment;
     SourceLoc comment_loc;
+    Conditional *conditional_base;
+    int is_include;
+    struct CppInput *previous;
+} CppInput;
+
+struct Cpp {
+    CppInput *input;
     CppMacros *macros;
     Expansion *expansions;
     Replay *replay;
     Conditional *conditionals;
-    int reported_unterminated;
+    const char **include_dirs;
+    size_t include_dir_count;
+    int include_depth;
 };
 
 static int trigraph(int ch)
@@ -76,7 +89,9 @@ static void append_logical(LogicalChar *out, size_t *len, int ch,
     (*len)++;
 }
 
-Cpp *cpp_create(const SourceFile *source)
+static CppInput *create_input(const SourceFile *source, CppInput *previous,
+                              Conditional *conditional_base, int is_include,
+                              int apply_early_phases)
 {
     const unsigned char *bytes = source_bytes(source);
     size_t size = source_size(source);
@@ -86,13 +101,14 @@ Cpp *cpp_create(const SourceFile *source)
     size_t n2 = 0;
     int line = 1;
     int col = 1;
-    Cpp *cpp;
+    CppInput *input;
 
     for (size_t i = 0; i < size;) {
         int ch = bytes[i];
         int replacement;
 
-        if (ch == '?' && i + 2 < size && bytes[i + 1] == '?' &&
+        if (apply_early_phases && ch == '?' && i + 2 < size &&
+            bytes[i + 1] == '?' &&
             (replacement = trigraph(bytes[i + 2])) != 0) {
             append_logical(phase1, &n1, replacement, source, line, col);
             i += 3;
@@ -120,26 +136,123 @@ Cpp *cpp_create(const SourceFile *source)
     }
 
     for (size_t i = 0; i < n1; i++) {
-        if (phase1[i].ch == '\\' && i + 1 < n1 && phase1[i + 1].ch == '\n') {
+        if (apply_early_phases && phase1[i].ch == '\\' && i + 1 < n1 &&
+            phase1[i + 1].ch == '\n') {
             i++;
             continue;
         }
         phase2[n2++] = phase1[i];
     }
 
-    cpp = arena_alloc_zeroed(sizeof(*cpp));
-    cpp->source = source;
-    cpp->chars = phase2;
-    cpp->len = n2;
-    cpp->starts_line = 1;
+    input = arena_alloc_zeroed(sizeof(*input));
+    input->source = source;
+    input->chars = phase2;
+    input->len = n2;
+    input->starts_line = 1;
+    input->conditional_base = conditional_base;
+    input->is_include = is_include;
+    input->previous = previous;
+    return input;
+}
+
+static void append_command_text(char **text, size_t *len, size_t *cap,
+                                const char *bytes, size_t count)
+{
+    if (*len + count + 1 < *len)
+        diag_fatal("command-line macro definitions are too large");
+    if (*len + count + 1 > *cap) {
+        size_t needed = *len + count + 1;
+        size_t new_cap = *cap ? *cap : 128;
+        char *new_text;
+
+        while (new_cap < needed) {
+            if (new_cap > (size_t)-1 / 2)
+                new_cap = needed;
+            else
+                new_cap *= 2;
+        }
+        new_text = realloc(*text, new_cap);
+        if (!new_text)
+            diag_fatal("out of memory recording command-line macros");
+        *text = new_text;
+        *cap = new_cap;
+    }
+    memcpy(*text + *len, bytes, count);
+    *len += count;
+    (*text)[*len] = '\0';
+}
+
+static SourceFile *create_command_source(const CppAction *actions,
+                                         size_t action_count)
+{
+    char *text = NULL;
+    size_t len = 0;
+    size_t cap = 0;
+
+    for (size_t i = 0; i < action_count; i++) {
+        const char *operand = actions[i].operand;
+        const char *equals;
+
+        if (strchr(operand, '\n') || strchr(operand, '\r')) {
+            diag_error("newline in command-line macro option");
+            append_command_text(&text, &len, &cap, "\n", 1);
+            continue;
+        }
+        if (actions[i].kind == CPP_ACTION_UNDEF) {
+            append_command_text(&text, &len, &cap, "#undef ", 7);
+            append_command_text(&text, &len, &cap, operand, strlen(operand));
+            append_command_text(&text, &len, &cap, "\n", 1);
+            continue;
+        }
+        append_command_text(&text, &len, &cap, "#define ", 8);
+        equals = strchr(operand, '=');
+        if (equals) {
+            append_command_text(&text, &len, &cap, operand,
+                                (size_t)(equals - operand));
+            append_command_text(&text, &len, &cap, " ", 1);
+            append_command_text(&text, &len, &cap, equals + 1,
+                                strlen(equals + 1));
+        } else {
+            append_command_text(&text, &len, &cap, operand, strlen(operand));
+            append_command_text(&text, &len, &cap, " 1", 2);
+        }
+        append_command_text(&text, &len, &cap, "\n", 1);
+    }
+    {
+        SourceFile *source = source_create((const unsigned char *)text, len,
+                                           "<command-line>");
+        free(text);
+        return source;
+    }
+}
+
+Cpp *cpp_create(const SourceFile *source, const CppOptions *options)
+{
+    Cpp *cpp = arena_alloc_zeroed(sizeof(*cpp));
+
+    cpp->input = create_input(source, NULL, NULL, 0, 1);
     cpp->macros = cpp_macros_create();
+    cpp->include_depth = 1;
+    if (options && options->include_dir_count) {
+        size_t bytes = options->include_dir_count * sizeof(*cpp->include_dirs);
+
+        cpp->include_dirs = arena_alloc(bytes);
+        memcpy(cpp->include_dirs, options->include_dirs, bytes);
+        cpp->include_dir_count = options->include_dir_count;
+    }
+    if (options && options->action_count) {
+        SourceFile *commands = create_command_source(options->actions,
+                                                     options->action_count);
+        cpp->input = create_input(commands, cpp->input, NULL, 0, 0);
+    }
     return cpp;
 }
 
 static int peek(const Cpp *cpp, size_t ahead)
 {
-    size_t at = cpp->pos + ahead;
-    return at < cpp->len ? cpp->chars[at].ch : EOF;
+    const CppInput *input = cpp->input;
+    size_t at = input->pos + ahead;
+    return at < input->len ? input->chars[at].ch : EOF;
 }
 
 static int is_ident_start(int ch)
@@ -156,19 +269,20 @@ static int is_ident_continue(int ch)
 static CppToken make_token(Cpp *cpp, CppTokenKind kind, size_t start,
                            size_t end, int starts_line, int leading_space)
 {
+    CppInput *input = cpp->input;
     size_t len = end - start;
     char *text = arena_alloc(len + 1);
     CppToken token = {0};
 
     for (size_t i = 0; i < len; i++)
-        text[i] = (char)cpp->chars[start + i].ch;
+        text[i] = (char)input->chars[start + i].ch;
     text[len] = '\0';
     token.kind = kind;
     token.text = text;
     token.len = len;
-    token.loc = start < cpp->len
-              ? cpp->chars[start].loc
-              : (SourceLoc){ cpp->source, 1, 1 };
+    token.loc = start < input->len
+              ? input->chars[start].loc
+              : (SourceLoc){ input->source, 1, 1 };
     token.leading_space = leading_space;
     token.starts_line = starts_line;
     return token;
@@ -176,37 +290,40 @@ static CppToken make_token(Cpp *cpp, CppTokenKind kind, size_t start,
 
 static CppToken newline_token(Cpp *cpp, size_t at)
 {
+    CppInput *input = cpp->input;
     CppToken token = make_token(cpp, CPP_NEWLINE, at, at + 1,
-                                cpp->starts_line, cpp->pending_space);
-    cpp->pos = at + 1;
-    cpp->starts_line = 1;
-    cpp->pending_space = 0;
+                                input->starts_line, input->pending_space);
+    input->pos = at + 1;
+    input->starts_line = 1;
+    input->pending_space = 0;
     return token;
 }
 
 static CppToken scan_next(Cpp *cpp)
 {
+    CppInput *input = cpp->input;
+
     for (;;) {
         int ch;
         size_t start;
         int starts_line;
         int leading_space;
 
-        if (cpp->in_comment) {
-            while (cpp->pos < cpp->len) {
+        if (input->in_comment) {
+            while (input->pos < input->len) {
                 if (peek(cpp, 0) == '*' && peek(cpp, 1) == '/') {
-                    cpp->pos += 2;
-                    cpp->in_comment = 0;
-                    cpp->pending_space = 1;
+                    input->pos += 2;
+                    input->in_comment = 0;
+                    input->pending_space = 1;
                     break;
                 }
                 if (peek(cpp, 0) == '\n')
-                    return newline_token(cpp, cpp->pos);
-                cpp->pos++;
+                    return newline_token(cpp, input->pos);
+                input->pos++;
             }
-            if (cpp->in_comment) {
-                diag_error_at(cpp->comment_loc, "unterminated comment");
-                cpp->in_comment = 0;
+            if (input->in_comment) {
+                diag_error_at(input->comment_loc, "unterminated comment");
+                input->in_comment = 0;
             }
             continue;
         }
@@ -214,94 +331,95 @@ static CppToken scan_next(Cpp *cpp)
         ch = peek(cpp, 0);
         if (ch == EOF)
             return (CppToken){ .kind = CPP_EOF,
-                .loc = { cpp->source, cpp->len ? cpp->chars[cpp->len - 1].loc.line : 1,
-                         cpp->len ? cpp->chars[cpp->len - 1].loc.col + 1 : 1 },
-                .starts_line = cpp->starts_line,
-                .leading_space = cpp->pending_space };
+                .loc = { input->source,
+                         input->len ? input->chars[input->len - 1].loc.line : 1,
+                         input->len ? input->chars[input->len - 1].loc.col + 1 : 1 },
+                .starts_line = input->starts_line,
+                .leading_space = input->pending_space };
         if (ch == ' ' || ch == '\t' || ch == '\v' || ch == '\f') {
-            cpp->pending_space = 1;
-            cpp->pos++;
+            input->pending_space = 1;
+            input->pos++;
             continue;
         }
         if (ch == '\n')
-            return newline_token(cpp, cpp->pos);
+            return newline_token(cpp, input->pos);
         if (ch == '/' && peek(cpp, 1) == '*') {
-            cpp->comment_loc = cpp->chars[cpp->pos].loc;
-            cpp->pos += 2;
-            cpp->in_comment = 1;
-            cpp->pending_space = 1;
+            input->comment_loc = input->chars[input->pos].loc;
+            input->pos += 2;
+            input->in_comment = 1;
+            input->pending_space = 1;
             continue;
         }
         if (ch == '/' && peek(cpp, 1) == '/') {
-            cpp->pending_space = 1;
-            cpp->pos += 2;
-            while (cpp->pos < cpp->len && peek(cpp, 0) != '\n')
-                cpp->pos++;
+            input->pending_space = 1;
+            input->pos += 2;
+            while (input->pos < input->len && peek(cpp, 0) != '\n')
+                input->pos++;
             continue;
         }
 
-        start = cpp->pos;
-        starts_line = cpp->starts_line;
-        leading_space = cpp->pending_space;
-        cpp->starts_line = 0;
-        cpp->pending_space = 0;
+        start = input->pos;
+        starts_line = input->starts_line;
+        leading_space = input->pending_space;
+        input->starts_line = 0;
+        input->pending_space = 0;
 
         if (is_ident_start(ch)) {
             if (ch == 'L' && (peek(cpp, 1) == '\'' || peek(cpp, 1) == '"')) {
                 ch = peek(cpp, 1);
-                cpp->pos += 2;
-                while (cpp->pos < cpp->len && peek(cpp, 0) != '\n') {
+                input->pos += 2;
+                while (input->pos < input->len && peek(cpp, 0) != '\n') {
                     int c = peek(cpp, 0);
-                    cpp->pos++;
-                    if (c == '\\' && cpp->pos < cpp->len)
-                        cpp->pos++;
+                    input->pos++;
+                    if (c == '\\' && input->pos < input->len)
+                        input->pos++;
                     else if (c == ch)
                         break;
                 }
                 return make_token(cpp, ch == '\'' ? CPP_CHAR : CPP_STRING,
-                                  start, cpp->pos, starts_line, leading_space);
+                                  start, input->pos, starts_line, leading_space);
             }
-            cpp->pos++;
+            input->pos++;
             while (is_ident_continue(peek(cpp, 0)))
-                cpp->pos++;
-            return make_token(cpp, CPP_IDENT, start, cpp->pos,
+                input->pos++;
+            return make_token(cpp, CPP_IDENT, start, input->pos,
                               starts_line, leading_space);
         }
         if ((ch >= '0' && ch <= '9') ||
             (ch == '.' && peek(cpp, 1) >= '0' && peek(cpp, 1) <= '9')) {
             int previous = 0;
-            cpp->pos++;
-            while (cpp->pos < cpp->len) {
+            input->pos++;
+            while (input->pos < input->len) {
                 int c = peek(cpp, 0);
                 if (is_ident_continue(c) || c == '.') {
                     previous = c;
-                    cpp->pos++;
+                    input->pos++;
                     continue;
                 }
                 if ((c == '+' || c == '-') &&
                     (previous == 'e' || previous == 'E' ||
                      previous == 'p' || previous == 'P')) {
                     previous = c;
-                    cpp->pos++;
+                    input->pos++;
                     continue;
                 }
                 break;
             }
-            return make_token(cpp, CPP_NUMBER, start, cpp->pos,
+            return make_token(cpp, CPP_NUMBER, start, input->pos,
                               starts_line, leading_space);
         }
         if (ch == '\'' || ch == '"') {
-            cpp->pos++;
-            while (cpp->pos < cpp->len && peek(cpp, 0) != '\n') {
+            input->pos++;
+            while (input->pos < input->len && peek(cpp, 0) != '\n') {
                 int c = peek(cpp, 0);
-                cpp->pos++;
-                if (c == '\\' && cpp->pos < cpp->len)
-                    cpp->pos++;
+                input->pos++;
+                if (c == '\\' && input->pos < input->len)
+                    input->pos++;
                 else if (c == ch)
                     break;
             }
             return make_token(cpp, ch == '\'' ? CPP_CHAR : CPP_STRING,
-                              start, cpp->pos, starts_line, leading_space);
+                              start, input->pos, starts_line, leading_space);
         }
 
         size_t punct_len = 1;
@@ -319,8 +437,8 @@ static CppToken scan_next(Cpp *cpp)
                 break;
             }
         }
-        cpp->pos += punct_len;
-        return make_token(cpp, CPP_PUNCT, start, cpp->pos,
+        input->pos += punct_len;
+        return make_token(cpp, CPP_PUNCT, start, input->pos,
                           starts_line, leading_space);
     }
 }
@@ -455,6 +573,178 @@ static CppToken *read_directive_line(Cpp *cpp, size_t *out_len)
     }
     *out_len = len;
     return tokens;
+}
+
+static char *copy_text(const char *text, size_t len)
+{
+    char *copy = malloc(len + 1);
+
+    if (!copy)
+        diag_fatal("out of memory processing #include");
+    memcpy(copy, text, len);
+    copy[len] = '\0';
+    return copy;
+}
+
+static int parse_header_operand(const CppToken *tokens, size_t len,
+                                char **out_name, int *out_quoted)
+{
+    if (len == 1 && tokens[0].kind == CPP_STRING && tokens[0].len >= 2 &&
+        tokens[0].text[0] == '"' && tokens[0].text[tokens[0].len - 1] == '"') {
+        if (tokens[0].len == 2)
+            return 0;
+        *out_name = copy_text(tokens[0].text + 1, tokens[0].len - 2);
+        *out_quoted = 1;
+        return 1;
+    }
+    if (len >= 3 && token_is(&tokens[0], "<") &&
+        token_is(&tokens[len - 1], ">")) {
+        size_t name_len = 0;
+        size_t at = 0;
+        char *name;
+
+        for (size_t i = 1; i + 1 < len; i++) {
+            if (tokens[i].leading_space)
+                name_len++;
+            name_len += tokens[i].len;
+        }
+        if (!name_len)
+            return 0;
+        name = malloc(name_len + 1);
+        if (!name)
+            diag_fatal("out of memory processing #include");
+        for (size_t i = 1; i + 1 < len; i++) {
+            if (tokens[i].leading_space)
+                name[at++] = ' ';
+            memcpy(name + at, tokens[i].text, tokens[i].len);
+            at += tokens[i].len;
+        }
+        name[at] = '\0';
+        *out_name = name;
+        *out_quoted = 0;
+        return 1;
+    }
+    return 0;
+}
+
+static char *source_directory(const SourceFile *source)
+{
+    const char *name = source_name(source);
+    const char *slash;
+
+    if (name[0] == '<')
+        return copy_text(".", 1);
+    slash = strrchr(name, '/');
+    if (!slash)
+        return copy_text(".", 1);
+    if (slash == name)
+        return copy_text("/", 1);
+    return copy_text(name, (size_t)(slash - name));
+}
+
+static char *join_path(const char *directory, const char *name)
+{
+    size_t dir_len = strlen(directory);
+    size_t name_len = strlen(name);
+    int separator = dir_len != 0 && directory[dir_len - 1] != '/';
+    char *path = malloc(dir_len + (size_t)separator + name_len + 1);
+
+    if (!path)
+        diag_fatal("out of memory searching for header");
+    memcpy(path, directory, dir_len);
+    if (separator)
+        path[dir_len++] = '/';
+    memcpy(path + dir_len, name, name_len + 1);
+    return path;
+}
+
+static SourceFile *try_header(CppToken operand, const char *path,
+                              int *hard_error)
+{
+    FILE *file = fopen(path, "rb");
+    SourceFile *source;
+
+    if (!file) {
+        if (errno != ENOENT && errno != ENOTDIR) {
+            diag_error_at(operand.loc, "cannot open header '%s': %s",
+                          path, strerror(errno));
+            *hard_error = 1;
+        }
+        return NULL;
+    }
+    source = source_read(file, path);
+    fclose(file);
+    return source;
+}
+
+static SourceFile *find_header(Cpp *cpp, CppToken operand, const char *name,
+                               int quoted)
+{
+    SourceFile *source;
+    int hard_error = 0;
+
+    if (name[0] == '/')
+        return try_header(operand, name, &hard_error);
+    if (quoted) {
+        char *directory = source_directory(cpp->input->source);
+        char *path = join_path(directory, name);
+
+        source = try_header(operand, path, &hard_error);
+        free(path);
+        free(directory);
+        if (source || hard_error)
+            return source;
+    }
+    for (size_t i = 0; i < cpp->include_dir_count; i++) {
+        char *path = join_path(cpp->include_dirs[i], name);
+
+        source = try_header(operand, path, &hard_error);
+        free(path);
+        if (source || hard_error)
+            return source;
+    }
+    if (!hard_error)
+        diag_error_at(operand.loc, "header '%s' not found", name);
+    return NULL;
+}
+
+static void handle_include(Cpp *cpp, CppToken directive)
+{
+    size_t len;
+    size_t expanded_len = 0;
+    CppToken *tokens = read_directive_line(cpp, &len);
+    CppToken *expanded = NULL;
+    CppToken operand = len ? tokens[0] : directive;
+    char *name = NULL;
+    int quoted = 0;
+    SourceFile *source;
+
+    if (!parse_header_operand(tokens, len, &name, &quoted)) {
+        expanded = cpp_macros_expand_tokens(cpp->macros, tokens, len,
+                                            &expanded_len);
+        if (!parse_header_operand(expanded, expanded_len, &name, &quoted)) {
+            diag_error_at(operand.loc, "invalid #include operand");
+            free(expanded);
+            free(tokens);
+            return;
+        }
+    }
+    if (cpp->include_depth >= CPP_INCLUDE_DEPTH_LIMIT) {
+        diag_error_at(operand.loc, "maximum include depth of %d exceeded",
+                      CPP_INCLUDE_DEPTH_LIMIT);
+        free(name);
+        free(expanded);
+        free(tokens);
+        return;
+    }
+    source = find_header(cpp, operand, name, quoted);
+    if (source) {
+        cpp->input = create_input(source, cpp->input, cpp->conditionals, 1, 1);
+        cpp->include_depth++;
+    }
+    free(name);
+    free(expanded);
+    free(tokens);
 }
 
 static int cpp_active(const Cpp *cpp)
@@ -595,7 +885,7 @@ static void handle_elif(Cpp *cpp, CppToken directive)
     Conditional *conditional = cpp->conditionals;
     int selected = 0;
 
-    if (!conditional) {
+    if (!conditional || conditional == cpp->input->conditional_base) {
         diag_error_at(directive.loc, "#elif without matching #if");
         free(tokens);
         return;
@@ -631,7 +921,7 @@ static void handle_else(Cpp *cpp, CppToken directive)
 
     reject_extra_tokens(directive, tokens, len);
     free(tokens);
-    if (!conditional) {
+    if (!conditional || conditional == cpp->input->conditional_base) {
         diag_error_at(directive.loc, "#else without matching #if");
         return;
     }
@@ -653,7 +943,8 @@ static void handle_endif(Cpp *cpp, CppToken directive)
 
     reject_extra_tokens(directive, tokens, len);
     free(tokens);
-    if (!cpp->conditionals) {
+    if (!cpp->conditionals ||
+        cpp->conditionals == cpp->input->conditional_base) {
         diag_error_at(directive.loc, "#endif without matching #if");
         return;
     }
@@ -707,6 +998,10 @@ static void handle_directive(Cpp *cpp, SourceLoc hash_loc)
     }
     if (token_is(&directive, "undef")) {
         undef_macro(cpp, directive.loc);
+        return;
+    }
+    if (token_is(&directive, "include")) {
+        handle_include(cpp, directive);
         return;
     }
     diag_error_at(hash_loc, "preprocessing directives are not yet supported");
@@ -774,13 +1069,23 @@ CppToken cpp_next(Cpp *cpp)
             handle_directive(cpp, token.loc);
             continue;
         }
-        if (input.from_source && token.kind == CPP_EOF && cpp->conditionals &&
-            !cpp->reported_unterminated) {
-            for (Conditional *conditional = cpp->conditionals; conditional;
-                 conditional = conditional->next)
-                diag_error_at(conditional->opening_loc,
-                              "unterminated conditional directive");
-            cpp->reported_unterminated = 1;
+        if (input.from_source && token.kind == CPP_EOF) {
+            Conditional *base = cpp->input->conditional_base;
+
+            if (cpp->conditionals != base) {
+                for (Conditional *conditional = cpp->conditionals;
+                     conditional != base; conditional = conditional->next)
+                    diag_error_at(conditional->opening_loc,
+                                  "unterminated conditional directive");
+                cpp->conditionals = base;
+            }
+            if (cpp->input->previous) {
+                int was_include = cpp->input->is_include;
+                cpp->input = cpp->input->previous;
+                if (was_include)
+                    cpp->include_depth--;
+                continue;
+            }
         }
         if (input.from_source && !cpp_active(cpp) && token.kind != CPP_EOF)
             continue;

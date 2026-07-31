@@ -599,10 +599,12 @@ static CppToken *substitute(CppMacros *macros, Macro *macro,
         token.starts_line = 0;
         if (token_is(&token, "#")) {
             parameter = parameter_index(macro, &macro->replacement[++i]);
+            CppToken stringified = stringify_argument(
+                &arguments[parameter], invocation.loc, base_hide);
+            stringified.leading_space = token.leading_space;
             append_substitute(&substituted, &substituted_len,
                               &substituted_cap,
-                (SubstituteToken){ stringify_argument(
-                    &arguments[parameter], invocation.loc, base_hide), 0 });
+                              (SubstituteToken){ stringified, 0 });
             continue;
         }
         parameter = parameter_index(macro, &token);
@@ -627,6 +629,8 @@ static CppToken *substitute(CppMacros *macros, Macro *macro,
             }
             for (size_t j = 0; j < argument_len; j++) {
                 CppToken argument_token = argument_tokens[j];
+                if (j == 0)
+                    argument_token.leading_space = token.leading_space;
                 argument_token.hide = hide_union(argument_token.hide, base_hide);
                 argument_token.loc = invocation.loc;
                 append_substitute(&substituted, &substituted_len,

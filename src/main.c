@@ -32,6 +32,9 @@ static void usage(FILE *f)
         "usage: xcc [file] [-o out] [options]\n"
         "  file        C source file, or - / omitted for stdin\n"
         "  -o out      output assembly file, or - / omitted for stdout\n"
+        "  -I dir      add dir to the header search path\n"
+        "  -D name[=value]  define a preprocessing macro\n"
+        "  -U name     undefine a preprocessing macro\n"
         "  --help      show this help\n"
         "  --help-warnings  list warnings and -W flags\n"
         "  --version   show version\n"
@@ -56,6 +59,24 @@ static void unknown_warn_flag(const char *arg)
     fputc('\n', stderr);
 }
 
+static void append_cpp_action(CppAction **actions, size_t *count, size_t *cap,
+                              CppActionKind kind, const char *operand)
+{
+    if (*count == *cap) {
+        size_t new_cap = *cap ? *cap * 2 : 4;
+        CppAction *new_actions = realloc(*actions,
+                                         new_cap * sizeof(*new_actions));
+
+        if (!new_actions)
+            diag_fatal("out of memory recording command-line macros");
+        *actions = new_actions;
+        *cap = new_cap;
+    }
+    (*actions)[*count].kind = kind;
+    (*actions)[*count].operand = operand;
+    (*count)++;
+}
+
 int main(int argc, char **argv)
 {
     const char *inpath = NULL;
@@ -64,6 +85,12 @@ int main(int argc, char **argv)
     int verify_lir = 1;
     FILE *in = stdin;
     SourceFile *source;
+    const char **include_dirs = NULL;
+    size_t include_dir_count = 0;
+    size_t include_dir_cap = 0;
+    CppAction *actions = NULL;
+    size_t action_count = 0;
+    size_t action_cap = 0;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--help") == 0) {
@@ -102,6 +129,45 @@ int main(int argc, char **argv)
                 return 1;
             }
             outpath = argv[++i];
+        } else if (strncmp(argv[i], "-I", 2) == 0) {
+            const char *dir = argv[i] + 2;
+
+            if (!*dir) {
+                if (i + 1 >= argc) {
+                    diag_error("-I requires an argument");
+                    free(include_dirs);
+                    return 1;
+                }
+                dir = argv[++i];
+            }
+            if (include_dir_count == include_dir_cap) {
+                size_t new_cap = include_dir_cap ? include_dir_cap * 2 : 4;
+                const char **new_dirs = realloc(include_dirs,
+                    new_cap * sizeof(*new_dirs));
+
+                if (!new_dirs)
+                    diag_fatal("out of memory recording include paths");
+                include_dirs = new_dirs;
+                include_dir_cap = new_cap;
+            }
+            include_dirs[include_dir_count++] = dir;
+        } else if (strncmp(argv[i], "-D", 2) == 0 ||
+                   strncmp(argv[i], "-U", 2) == 0) {
+            CppActionKind kind = argv[i][1] == 'D'
+                               ? CPP_ACTION_DEFINE : CPP_ACTION_UNDEF;
+            const char *operand = argv[i] + 2;
+
+            if (!*operand) {
+                if (i + 1 >= argc) {
+                    diag_error("-%c requires an argument", argv[i][1]);
+                    free(actions);
+                    free(include_dirs);
+                    return 1;
+                }
+                operand = argv[++i];
+            }
+            append_cpp_action(&actions, &action_count, &action_cap,
+                              kind, operand);
         } else if (argv[i][0] == '-' && argv[i][1] != '\0' &&
                    strcmp(argv[i], "-") != 0) {
             diag_error("unknown option '%s'", argv[i]);
@@ -126,7 +192,17 @@ int main(int argc, char **argv)
                          ? inpath : "<stdin>");
     if (in != stdin)
         fclose(in);
-    lexer_set_source(source);
+    {
+        CppOptions cpp_options = {
+            .include_dirs = include_dirs,
+            .include_dir_count = include_dir_count,
+            .actions = actions,
+            .action_count = action_count,
+        };
+        lexer_set_source(source, &cpp_options);
+    }
+    free(actions);
+    free(include_dirs);
 
     typedef_reset();
     struct_tag_reset();

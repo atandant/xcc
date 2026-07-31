@@ -33,40 +33,31 @@ static void append_byte(unsigned char **buf, size_t *len, size_t *cap, int ch)
     (*buf)[(*len)++] = (unsigned char)ch;
 }
 
-SourceFile *source_read(FILE *in, const char *name)
+SourceFile *source_create(const unsigned char *bytes, size_t size,
+                          const char *name)
 {
     SourceFile *source = arena_alloc_zeroed(sizeof(*source));
-    unsigned char *tmp = NULL;
-    size_t len = 0;
-    size_t cap = 0;
     size_t start = 0;
-    int ch;
     int nlines = 0;
     int line = 0;
 
-    while ((ch = fgetc(in)) != EOF)
-        append_byte(&tmp, &len, &cap, ch);
-    if (ferror(in))
-        diag_fatal("error reading source");
-
     source->name = arena_strdup(name);
-    source->bytes = arena_alloc(len + 1);
-    if (len)
-        memcpy(source->bytes, tmp, len);
-    source->bytes[len] = '\0';
-    source->size = len;
-    free(tmp);
+    source->bytes = arena_alloc(size + 1);
+    if (size)
+        memcpy(source->bytes, bytes, size);
+    source->bytes[size] = '\0';
+    source->size = size;
 
-    for (size_t i = 0; i < len; i++)
+    for (size_t i = 0; i < size; i++)
         if (source->bytes[i] == '\n')
             nlines++;
-    if (len == 0 || source->bytes[len - 1] != '\n')
+    if (size == 0 || source->bytes[size - 1] != '\n')
         nlines++;
     source->lines = arena_alloc((size_t)nlines * sizeof(*source->lines));
     source->nlines = nlines;
 
-    for (size_t i = 0; i <= len && line < nlines; i++) {
-        if (i != len && source->bytes[i] != '\n')
+    for (size_t i = 0; i <= size && line < nlines; i++) {
+        if (i != size && source->bytes[i] != '\n')
             continue;
         size_t end = i;
         size_t line_len;
@@ -82,6 +73,23 @@ SourceFile *source_read(FILE *in, const char *name)
         source->lines[line++] = text;
         start = i + 1;
     }
+    return source;
+}
+
+SourceFile *source_read(FILE *in, const char *name)
+{
+    unsigned char *tmp = NULL;
+    size_t len = 0;
+    size_t cap = 0;
+    SourceFile *source;
+    int ch;
+
+    while ((ch = fgetc(in)) != EOF)
+        append_byte(&tmp, &len, &cap, ch);
+    if (ferror(in))
+        diag_fatal("error reading source");
+    source = source_create(tmp, len, name);
+    free(tmp);
     return source;
 }
 

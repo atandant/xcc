@@ -1,0 +1,4 @@
+#ifndef XCC_TEST_GUARDED_H
+#define XCC_TEST_GUARDED_H
+#define GUARDED_VALUE 12
+#endif

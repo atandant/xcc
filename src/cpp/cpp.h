@@ -31,7 +31,24 @@ typedef struct {
 
 typedef struct Cpp Cpp;
 
-Cpp *cpp_create(const SourceFile *source);
+typedef enum {
+    CPP_ACTION_DEFINE,
+    CPP_ACTION_UNDEF
+} CppActionKind;
+
+typedef struct {
+    CppActionKind kind;
+    const char *operand;
+} CppAction;
+
+typedef struct {
+    const char **include_dirs;
+    size_t include_dir_count;
+    const CppAction *actions;
+    size_t action_count;
+} CppOptions;
+
+Cpp *cpp_create(const SourceFile *source, const CppOptions *options);
 CppToken cpp_next(Cpp *cpp);
 
 #endif /* XCC_CPP_H */

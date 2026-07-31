@@ -15,9 +15,9 @@
 
 static Cpp *lexer_cpp;
 
-void lexer_set_source(const SourceFile *source)
+void lexer_set_source(const SourceFile *source, const CppOptions *options)
 {
-    lexer_cpp = cpp_create(source);
+    lexer_cpp = cpp_create(source, options);
 }
 
 static void set_location(CppToken token)
