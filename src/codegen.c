@@ -107,4 +107,5 @@ void codegen(ExternalDecl *prog, FILE *out, int verify_lir)
             regalloc_verify(lf, &lv, &X86_SYSV, &alloc);
         emit_x86_function(lf, fn, &alloc, out, &X86_SYSV);
     }
+    fprintf(out, "  .section .note.GNU-stack,\"\",@progbits\n");
 }

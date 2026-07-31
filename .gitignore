@@ -4,6 +4,10 @@
 # the compiler binary
 /xcc
 
+# fetched third-party integration sources and outputs
+/repos/jsmn/
+/repos/build/
+
 # editor / OS noise
 *.o
 *.d

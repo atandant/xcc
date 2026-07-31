@@ -46,6 +46,7 @@ acceptance test suite.
 | marker-free preprocessing-only output with `-E` | |
 | C89 predefined macros, `__XCC__`, and command-line `-D`/`-U` | |
 | experimental `#include` with quoted/angle operands and `-I` search paths | |
+| C89 `<stddef.h>` implementation header (use `-Iinclude`) | |
 | signed and unsigned integer types, promotions and usual arithmetic conversions | |
 | parenthesized declarators (`int (*p)[3]`), casts (`(int (*)[3])`) | |
 | N-dimensional arrays, `[]` subscript, `ptr ± int/long`, `ptr - ptr`, param decay | |
@@ -69,7 +70,8 @@ acceptance test suite.
 | prefix/postfix `++` and `--` on integer and pointer lvalues | |
 | arithmetic, bitwise, shifts, comparisons, unary `+`/`-`/`~`, compound assignments, `&&`, `\|\|`, `!`, `?:`, comma | |
 | pointer `==` / `!=` / ordering, truthiness, `p == 0` | |
-| `U`/`u` and `L`/`l` integer suffixes (including `UL`/`LU`); `0x` hex literals (C89 typing) | `const` and `volatile` qualifiers |
+| `U`/`u` and `L`/`l` integer suffixes (including `UL`/`LU`); `0x` hex literals (C89 typing) | `volatile` qualifier |
+| `const` qualification, including pointer levels and assignment constraints | |
 | `int`/`long` promotions; `ptr - ptr` → `long` | |
 | warnings (`implicit` decl, unprototyped calls, `char` overflow, …) | |
 | `-W` / `-Wno-` / `-Wall` / `-Werror` CLI flags (`--help-warnings`) | |
@@ -181,9 +183,13 @@ make clean
 
 The generated parser source is produced into `build/` and is not committed.
 
+The [`repos/`](repos/) checks document reproducible builds of selected
+third-party C89 code. For example, `./repos/build_jsmn.sh` fetches, compiles,
+links, and runs [jsmn](https://github.com/zserge/jsmn) in all supported modes.
+
 ## Roadmap
 
-- `const` and `volatile` type qualifiers
+- `volatile` type qualifier
 - floating-point types, literals, operations, and ABI support
 - variadic functions and old-style function definitions with parameter declarations
 - function-pointer and nested-declarator conformance edge cases

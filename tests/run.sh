@@ -159,6 +159,17 @@ else
     fail=$((fail + 1))
 fi
 
+# Every generated object should opt out of an executable process stack.
+if $XCC "$DIR/ret_const.c" -o "$TMP/out.s" 2> "$TMP/err" &&
+   grep -q '^  \.section \.note\.GNU-stack,"",@progbits$' "$TMP/out.s"; then
+    echo "ok   assembly-non-executable-stack"
+    pass=$((pass + 1))
+else
+    echo "FAIL assembly-non-executable-stack: expected GNU stack note"
+    sed 's/^/      /' "$TMP/err"
+    fail=$((fail + 1))
+fi
+
 # Allocation dumps provide stable metrics for tracking allocator changes.
 if $XCC --xcc-dump-lir-alloc "$DIR/regalloc_split_many_params.c" \
         > "$TMP/alloc" 2> "$TMP/err" &&
