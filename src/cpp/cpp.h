@@ -17,6 +17,8 @@ typedef enum {
     CPP_PUNCT
 } CppTokenKind;
 
+typedef struct CppHide CppHide;
+
 typedef struct {
     CppTokenKind kind;
     const char *text;
@@ -24,6 +26,7 @@ typedef struct {
     SourceLoc loc;
     int leading_space;
     int starts_line;
+    CppHide *hide;
 } CppToken;
 
 typedef struct Cpp Cpp;

@@ -38,8 +38,9 @@ acceptance test suite.
 
 | Supported | Not yet |
 | --- | --- |
-| `char`, `short`, `int`, `long`, `void`, pointers (`*`, `&`, dereference) | preprocessor (`#include`, `#define`) |
-| signed and unsigned integer types, promotions and usual arithmetic conversions | multiple translation units |
+| `char`, `short`, `int`, `long`, `void`, pointers (`*`, `&`, dereference) | preprocessor (`#include`, function-like macros) |
+| object-like `#define`, `#undef`, rescanning, and conditionals; experimental `##` | multiple translation units |
+| signed and unsigned integer types, promotions and usual arithmetic conversions | |
 | parenthesized declarators (`int (*p)[3]`), casts (`(int (*)[3])`) | |
 | N-dimensional arrays, `[]` subscript, `ptr ± int/long`, `ptr - ptr`, param decay | |
 | typed declarations, parameters, returns | |
@@ -132,9 +133,10 @@ records use sret/stack memory.
 ```
 
 The native preprocessing-token input path is active, including C89 trigraphs,
-line splicing, and comment replacement; directives, macros, and includes are
-still a work in progress. See [`src/cpp/README.md`](src/cpp/README.md) for the
-detailed support matrix.
+line splicing, comment replacement, object-like macros, and conditional
+inclusion. Function-like macros, includes, and other directives remain a work
+in progress. See [`src/cpp/README.md`](src/cpp/README.md) for the detailed
+support matrix.
 
 The parser builds AST nodes and attaches parsed types to declarations. **sema**
 owns type checking. **lower** builds CFG-based LIR with virtual registers;
@@ -172,7 +174,7 @@ The generated parser source is produced into `build/` and is not committed.
 - floating-point types, literals, operations, and ABI support
 - variadic functions and old-style function definitions with parameter declarations
 - function-pointer and nested-declarator conformance edge cases
-- preprocessor support
+- complete C89 preprocessor support
 - multiple translation units and driver behavior
 - broaden the SysV AMD64 ABI beyond the current integer/pointer record subset
 - compile increasingly substantial C89 programs and libraries

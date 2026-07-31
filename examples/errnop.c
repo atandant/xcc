@@ -31,7 +31,7 @@ int errnop_demo(int *pool, void *cursor, int seed)
     int n;
     int *head;
     char *tag;
-    int **meta;
+    int **meta
     int *tail;
 
     n = seed;

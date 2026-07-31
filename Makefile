@@ -8,7 +8,8 @@ BUILD = build
 BIN   = xcc
 
 # Hand-written sources
-SRCS = src/main.c src/arena.c src/source.c src/cpp/cpp.c src/lexer.c \
+SRCS = src/main.c src/arena.c src/source.c src/cpp/cpp.c src/cpp/macro.c \
+       src/cpp/expr.c src/lexer.c \
        src/ast.c src/type.c src/diag.c src/sema.c \
        src/sema_scope.c src/sema_functab.c src/sema_typedef.c src/sema_struct.c \
        src/sema_enum.c src/abi_sysv_amd64.c \

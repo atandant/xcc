@@ -252,11 +252,6 @@ int yylex(void)
             return 0;
         if (token.kind == CPP_NEWLINE)
             continue;
-        if (token.kind == CPP_PUNCT && token.starts_line &&
-            strcmp(token.text, "#") == 0) {
-            diag_error_at(token.loc, "preprocessing directives are not yet supported");
-            continue;
-        }
         if (token.kind == CPP_IDENT) {
             kind = keyword(token.text);
             if (kind)
