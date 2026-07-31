@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include "codegen.h"
+#include "sema.h"
 #include "lower.h"
 #include "lir_opt.h"
 #include "regalloc.h"
@@ -32,7 +33,7 @@ static void emit_global_object(const GlobalObject *object, FILE *out)
     StaticReloc *reloc = object->relocs;
 
     fprintf(out, "  %s\n", object->init_data ? ".data" : ".bss");
-    if (object->linkage == LINKAGE_INTERNAL)
+    if (object->linkage != LINKAGE_EXTERNAL)
         fprintf(out, "  .local %s\n", object->name);
     else
         fprintf(out, "  .globl %s\n", object->name);
@@ -68,6 +69,10 @@ void codegen(ExternalDecl *prog, FILE *out, int verify_lir)
         if (external->kind == EXT_OBJECT && external->object->emit)
             emit_global_object(external->object, out);
     }
+    for (GlobalObject *object = sema_block_static_objects(); object;
+         object = object->next_static)
+        if (object->emit)
+            emit_global_object(object, out);
 
     fprintf(out, "  .text\n");
     for (ExternalDecl *external = prog; external; external = external->next) {

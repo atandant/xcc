@@ -149,6 +149,7 @@ struct Node {
     char *string_label;  /* ND_STRING: private assembler symbol       */
     Node *string_next;   /* ND_STRING: translation-unit literal list  */
     char *name;        /* ND_VAR, ND_DECL; ND_CALL direct callee name */
+    char *symbol_name; /* ND_VAR: assembler name when different       */
     Node *callee;      /* ND_CALL: callee expression (sema)         */
     int call_direct;   /* ND_CALL: 1 → emit direct call by name     */
     int func_decay;    /* ND_VAR: 1 → function/array address escape  */
@@ -161,6 +162,7 @@ struct Node {
     Node *operand;     /* ND_NEG, ND_PRE/POST INC/DEC, ND_RETURN, ND_EXPR_STMT,
                         * ND_CAST, ND_CASE constant expression       */
     Type *cast_ty;     /* ND_CAST: parsed target type               */
+    StorageClass decl_storage; /* ND_DECL: declared storage class     */
     Type *decl_spec;   /* ND_DECL: base specifier before declarator */
     Declarator *decl;  /* ND_DECL: parsed declarator (sema → ty)    */
     Node *init;        /* ND_DECL initializer, ND_FOR init (NULL ok)*/
@@ -252,6 +254,7 @@ struct StaticReloc {
 
 struct GlobalObject {
     char *name;
+    char *source_name;
     SourceLoc loc;
     StorageClass storage;
     Linkage linkage;
@@ -264,6 +267,7 @@ struct GlobalObject {
     int init_size;
     StaticReloc *relocs;
     int emit;
+    GlobalObject *next_static;
 };
 
 typedef enum {
@@ -340,8 +344,8 @@ Node *node_sizeof_type(Type *ty, SourceLoc loc);
 Node *node_assign(Node *l, Node *r, SourceLoc loc);
 Node *node_return(Node *o, SourceLoc loc);
 Node *node_expr_stmt(Node *o, SourceLoc loc);
-Node *node_decl(char *name, Type *spec_ty, Declarator *decl, Node *init,
-                SourceLoc loc);
+Node *node_decl(char *name, Type *spec_ty, Declarator *decl,
+                StorageClass storage, Node *init, SourceLoc loc);
 Node *node_init_list(Node *items, SourceLoc loc);
 Node *init_list_append(Node *head, Node *item);
 Node *node_call(Node *callee, NodeList *args, SourceLoc loc);

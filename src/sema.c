@@ -10,6 +10,7 @@
 #include "arena.h"
 
 #include <limits.h>
+#include <stdio.h>
 #include <string.h>
 
 /* UNDEFER: -Wnarrowing for unsigned-to-signed assignment with out-of-range constants. */
@@ -18,6 +19,9 @@
 /* return-statement context for the function being resolved */
 static Type *cur_ret_ty;
 static const char *cur_fname;
+static GlobalObject *block_static_objects;
+static GlobalObject *block_static_tail;
+static int next_block_static_id;
 
 /* ---- resolution ---- */
 
@@ -31,6 +35,7 @@ typedef enum {
 static void resolve_expr_ctx(Node *n, ExprCtx ctx);
 static void require_scalar_cond(Node *cond);
 static long sizeof_value(Type *ty, SourceLoc loc);
+static void sema_static_initializer(GlobalObject *object);
 
 /* Make an implicit integer conversion explicit in the typed AST.  Keeping the
  * conversion in the tree gives constant folding and runtime lowering the same
@@ -974,20 +979,21 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
         n->func_decay = 0;
         return;
     case ND_VAR: {
-        int off;
-        Type *decl_ty;
+        ScopeBinding *binding;
         long enum_val;
 
         n->var_decay = 0;
         n->func_decay = 0;
         n->storage = VAR_STORAGE_NONE;
-        if (!scope_lookup(n->name, &off, &decl_ty)) {
+        binding = scope_lookup_binding(n->name);
+        if (!binding) {
             FuncSym *fs = filesym_find(n->name);
 
             if (fs) {
                 n->ty = fs->ty;
                 if (fs->kind == FILESYM_FUNCTION) {
                     n->storage = VAR_STORAGE_FUNCTION;
+                    n->symbol_name = fs->name;
                     n->is_lvalue = 0;
                     if (!fs->referenced) {
                         fs->referenced = 1;
@@ -995,6 +1001,7 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
                     }
                 } else {
                     n->storage = VAR_STORAGE_GLOBAL;
+                    n->symbol_name = fs->name;
                     n->is_lvalue = (ctx != CTX_RVALUE) && type_is_object(fs->ty);
                 }
             } else if (enum_const_lookup(n->name, &enum_val)) {
@@ -1011,17 +1018,29 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
                 n->ty = type_int();
                 n->is_lvalue = 0;
             }
-        } else {
-            n->offset = off;
-            n->ty = decl_ty;
+        } else if (binding->kind == SCOPE_AUTO_OBJECT) {
+            n->offset = binding->offset;
+            n->ty = binding->ty;
             n->storage = VAR_STORAGE_LOCAL;
-            /* Array decay (rvalue context) is applied by resolve_expr_ctx. */
-            n->is_lvalue = (ctx != CTX_RVALUE) && type_is_object(decl_ty);
+            n->is_lvalue = (ctx != CTX_RVALUE) && type_is_object(binding->ty);
+        } else if (binding->kind == SCOPE_FUNCTION) {
+            n->ty = binding->ty;
+            n->storage = VAR_STORAGE_FUNCTION;
+            n->symbol_name = binding->symbol_name;
+            n->is_lvalue = 0;
+            if (binding->entity && !binding->entity->referenced) {
+                binding->entity->referenced = 1;
+                binding->entity->reference_loc = n->loc;
+            }
+        } else {
+            n->ty = binding->ty;
+            n->storage = VAR_STORAGE_GLOBAL;
+            n->symbol_name = binding->symbol_name;
+            n->is_lvalue = (ctx != CTX_RVALUE) && type_is_object(binding->ty);
         }
         return;
     }
     case ND_CALL: {
-        int off;
         FuncSym *s = NULL;
         Type *fty = NULL;
 
@@ -1038,15 +1057,20 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
             return;
         }
         if (n->callee->kind == ND_VAR) {
-            if (!scope_lookup(n->callee->name, &off, NULL) &&
+            if (!scope_lookup_binding(n->callee->name) &&
                 !filesym_find(n->callee->name)) {
-                FuncSym *imp = functab_add(n->callee->name,
-                                           type_func(type_int(), NULL, 0, 0),
-                                           0, 1, n->loc);
-                if (imp)
+                Type *implicit_ty = type_func(type_int(), NULL, 0, 0);
+                FuncSym *imp = entity_declare(n->callee->name, implicit_ty,
+                                              FILESYM_FUNCTION,
+                                              LINKAGE_EXTERNAL, n->loc);
+                if (imp && imp->kind == FILESYM_FUNCTION) {
+                    imp->implicit = 1;
+                    scope_bind_linked(n->callee->name, imp->ty,
+                                      SCOPE_FUNCTION, imp, n->loc);
                     diag_warn(W_IMPLICIT_FUNCTION_DECLARATION, n->loc,
                               "implicit declaration of function '%s'",
                               n->callee->name);
+                }
             }
         }
         resolve_expr_ctx(n->callee, CTX_RVALUE);
@@ -1054,27 +1078,18 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
             resolve_expr_ctx(a, CTX_RVALUE);
 
         if (n->callee->kind == ND_VAR) {
-            Type *decl_ty = NULL;
-
-            if (scope_lookup(n->callee->name, &off, &decl_ty)) {
-                if (type_is_function_pointer(decl_ty))
-                    fty = decl_ty->base;
-                else
-                    diag_error_at(n->loc, "called object '%s' is not a function",
-                                  n->callee->name);
+            if (n->callee->storage == VAR_STORAGE_FUNCTION) {
+                fty = type_is_function_pointer(n->callee->ty)
+                    ? n->callee->ty->base : n->callee->ty;
+                s = entity_find(n->callee->name);
+                n->call_direct = 1;
+                n->name = n->callee->symbol_name
+                    ? n->callee->symbol_name : n->callee->name;
+            } else if (type_is_function_pointer(n->callee->ty)) {
+                fty = n->callee->ty->base;
             } else {
-                s = filesym_find(n->callee->name);
-                if (s && s->kind == FILESYM_FUNCTION) {
-                    fty = s->ty;
-                    n->call_direct = 1;
-                    n->name = s->name;
-                } else if (s && type_is_function_pointer(s->ty)) {
-                    fty = s->ty->base;
-                    s = NULL;
-                } else {
-                    diag_error_at(n->loc, "called object '%s' is not a function",
-                                  n->callee->name);
-                }
+                diag_error_at(n->loc, "called object '%s' is not a function",
+                              n->callee->name);
             }
         } else if (type_is_function_pointer(n->callee->ty)) {
             fty = n->callee->ty->base;
@@ -1497,6 +1512,66 @@ static void resolve_stmt_list(Node *body)
         resolve_stmt(s);
 }
 
+static Linkage block_extern_linkage(const char *name)
+{
+    ScopeBinding *binding = scope_lookup_binding(name);
+    FuncSym *file_symbol;
+
+    if (binding)
+        return binding->entity ? binding->entity->linkage : LINKAGE_EXTERNAL;
+    file_symbol = filesym_find(name);
+    return file_symbol ? file_symbol->linkage : LINKAGE_EXTERNAL;
+}
+
+static FuncSym *declare_block_linked(Node *decl, FileSymKind kind)
+{
+    ScopeBinding *here = scope_lookup_binding_here(decl->name);
+    Linkage linkage = block_extern_linkage(decl->name);
+    FuncSym *entity;
+
+    if (here && (!here->entity ||
+        (kind == FILESYM_FUNCTION && here->kind != SCOPE_FUNCTION) ||
+        (kind == FILESYM_OBJECT && here->kind != SCOPE_LINKED_OBJECT))) {
+        diag_error_at(decl->loc, "redeclaration of '%s'", decl->name);
+        diag_note_at(here->loc, "previous declaration of '%s' is here",
+                     decl->name);
+        return NULL;
+    }
+
+    entity = entity_declare(decl->name, decl->ty, kind, linkage, decl->loc);
+    if (here && entity)
+        here->ty = entity->ty;
+    else if (entity)
+        scope_bind_linked(decl->name, entity->ty,
+                          kind == FILESYM_FUNCTION
+                              ? SCOPE_FUNCTION : SCOPE_LINKED_OBJECT,
+                          entity, decl->loc);
+    return entity;
+}
+
+static GlobalObject *new_block_static(Node *decl)
+{
+    char label[64];
+    GlobalObject *object = arena_alloc_zeroed(sizeof(*object));
+
+    snprintf(label, sizeof(label), ".L.xcc.static.%d", next_block_static_id++);
+    object->name = arena_strdup(label);
+    object->source_name = decl->name;
+    object->loc = decl->loc;
+    object->storage = STORAGE_STATIC;
+    object->linkage = LINKAGE_NONE;
+    object->decl_kind = OBJECT_DEFINITION;
+    object->ty = decl->ty;
+    object->init = decl->init;
+    object->emit = 1;
+    if (block_static_tail)
+        block_static_tail->next_static = object;
+    else
+        block_static_objects = object;
+    block_static_tail = object;
+    return object;
+}
+
 static void resolve_stmt(Node *s)
 {
     switch (s->kind) {
@@ -1509,10 +1584,51 @@ static void resolve_stmt(Node *s)
             s->decl = NULL;
             s->decl_spec = NULL;
         }
-        if (typedef_declared_here(s->name))
+        if (typedef_lookup(s->name) && typedef_declared_here(s->name))
             diag_error_at(s->loc, "redeclared '%s' as different kind of symbol",
                           s->name);
         typedef_hide_name(s->name, s->loc);
+        if (s->ty && s->ty->kind == TY_FUNC) {
+            if (s->decl_storage == STORAGE_STATIC)
+                diag_error_at(s->loc,
+                              "invalid storage class for block-scope function '%s'",
+                              s->name);
+            if (s->init)
+                diag_error_at(s->loc, "function '%s' is initialized like an object",
+                              s->name);
+            if (s->decl_storage != STORAGE_STATIC)
+                (void)declare_block_linked(s, FILESYM_FUNCTION);
+            return;
+        }
+        if (s->decl_storage == STORAGE_EXTERN) {
+            if (s->init)
+                diag_error_at(s->loc,
+                              "block-scope extern object '%s' cannot have an initializer",
+                              s->name);
+            if (!type_is_object(s->ty) || type_is_void(s->ty))
+                diag_error_at(s->loc, "extern object '%s' has non-object type '%s'",
+                              s->name, type_name(s->ty));
+            (void)declare_block_linked(s, FILESYM_OBJECT);
+            return;
+        }
+        if (s->decl_storage == STORAGE_STATIC) {
+            ScopeBinding *here = scope_lookup_binding_here(s->name);
+            GlobalObject *object;
+
+            if (here) {
+                diag_error_at(s->loc, "redeclaration of '%s'", s->name);
+                diag_note_at(here->loc, "previous declaration of '%s' is here",
+                             s->name);
+                return;
+            }
+            object = new_block_static(s);
+            scope_bind_static(s->name, s->ty, object->name, s->loc);
+            s->symbol_name = object->name;
+            sema_static_initializer(object);
+            s->ty = object->ty;
+            s->init = NULL;
+            return;
+        }
         if (type_is_record(s->ty) && !type_struct_is_complete(s->ty))
             diag_error_at(s->loc,
                           "variable '%s' has incomplete type '%s'",
@@ -2076,7 +2192,7 @@ static int static_lvalue_address(Node *n, char **symbol, long *addend)
         if (n->storage != VAR_STORAGE_GLOBAL &&
             n->storage != VAR_STORAGE_FUNCTION)
             return 0;
-        *symbol = n->name;
+        *symbol = n->symbol_name ? n->symbol_name : n->name;
         *addend = 0;
         return 1;
     case ND_DEREF:
@@ -2142,7 +2258,7 @@ static int static_address_expr(Node *n, char **symbol, long *addend)
         if ((n->storage != VAR_STORAGE_GLOBAL || !n->var_decay) &&
             (n->storage != VAR_STORAGE_FUNCTION || !n->func_decay))
             return 0;
-        *symbol = n->name;
+        *symbol = n->symbol_name ? n->symbol_name : n->name;
         *addend = 0;
         return 1;
     case ND_ADDR:
@@ -2167,9 +2283,14 @@ static int static_address_expr(Node *n, char **symbol, long *addend)
 
 static int static_initializer_error(GlobalObject *object)
 {
-    diag_error_at(object->loc,
-                  "initializer for file-scope object '%s' is not constant",
-                  object->name);
+    if (object->source_name)
+        diag_error_at(object->loc,
+                      "initializer for block-scope static object '%s' is not constant",
+                      object->source_name);
+    else
+        diag_error_at(object->loc,
+                      "initializer for file-scope object '%s' is not constant",
+                      object->name);
     return 0;
 }
 
@@ -2254,12 +2375,14 @@ static void sema_global_object(GlobalObject *object)
     Node *flat = NULL;
     Node *cursor;
 
-    object->decl_spec = typedef_resolve_spec(object->decl_spec, object->loc);
-    object->ty = type_apply_declarator_cb(object->decl_spec, object->decl,
-                                          object->loc,
-                                          sema_array_bound_eval, NULL);
-    object->decl = NULL;
-    object->decl_spec = NULL;
+    if (object->decl) {
+        object->decl_spec = typedef_resolve_spec(object->decl_spec, object->loc);
+        object->ty = type_apply_declarator_cb(object->decl_spec, object->decl,
+                                              object->loc,
+                                              sema_array_bound_eval, NULL);
+        object->decl = NULL;
+        object->decl_spec = NULL;
+    }
 
     if (type_is_array(object->ty) &&
         type_is_char(type_array_elem(object->ty)) && object->init &&
@@ -2289,7 +2412,9 @@ static void sema_global_object(GlobalObject *object)
         infer_unsized_array(&fake);
     }
 
-    if (object->init)
+    if (object->source_name)
+        object->decl_kind = OBJECT_DEFINITION;
+    else if (object->init)
         object->decl_kind = OBJECT_DEFINITION;
     else if (object->storage == STORAGE_EXTERN)
         object->decl_kind = OBJECT_DECLARATION;
@@ -2297,8 +2422,10 @@ static void sema_global_object(GlobalObject *object)
         object->decl_kind = OBJECT_TENTATIVE;
 
     if (!type_is_object(object->ty) || type_is_void(object->ty)) {
-        diag_error_at(object->loc, "file-scope '%s' has non-object type '%s'",
-                      object->name, type_name(object->ty));
+        diag_error_at(object->loc, "%s object '%s' has non-object type '%s'",
+                      object->source_name ? "block-scope static" : "file-scope",
+                      object->source_name ? object->source_name : object->name,
+                      type_name(object->ty));
     } else if (!type_is_complete(object->ty)) {
         int incomplete_external_array =
             object->decl_kind == OBJECT_TENTATIVE &&
@@ -2309,11 +2436,14 @@ static void sema_global_object(GlobalObject *object)
         if (object->decl_kind != OBJECT_DECLARATION &&
             !incomplete_external_array)
             diag_error_at(object->loc,
-                          "file-scope object '%s' has incomplete type '%s'",
-                          object->name, type_name(object->ty));
+                          "%s object '%s' has incomplete type '%s'",
+                          object->source_name ? "block-scope static" : "file-scope",
+                          object->source_name ? object->source_name : object->name,
+                          type_name(object->ty));
     }
 
-    objecttab_register(object);
+    if (!object->source_name)
+        objecttab_register(object);
     if (!object->init)
         return;
 
@@ -2365,10 +2495,23 @@ static void sema_global_object(GlobalObject *object)
         object->init_data = NULL;
 }
 
+static void sema_static_initializer(GlobalObject *object)
+{
+    sema_global_object(object);
+}
+
+GlobalObject *sema_block_static_objects(void)
+{
+    return block_static_objects;
+}
+
 void sema(ExternalDecl *prog)
 {
     functab_reset();
     typedef_reset();
+    block_static_objects = NULL;
+    block_static_tail = NULL;
+    next_block_static_id = 0;
 
     for (TypedefDecl *td = g_typedef_decls; td; td = td->next)
         typedef_declare(td->spec, td->decl, td->loc);

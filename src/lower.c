@@ -364,6 +364,11 @@ static int lower_symbol_addr(LowerCtx *c, const char *name)
     return dst;
 }
 
+static char *node_symbol_name(const Node *n)
+{
+    return n->symbol_name ? n->symbol_name : n->name;
+}
+
 static int ptr_elem_size(Type *ptr_ty)
 {
     Type *elem = type_ptr_elem(ptr_ty);
@@ -469,7 +474,7 @@ static int lower_object_addr(LowerCtx *c, Node *n)
     switch (n->kind) {
     case ND_VAR: {
         if (n->storage == VAR_STORAGE_GLOBAL)
-            return lower_symbol_addr(c, n->name);
+            return lower_symbol_addr(c, node_symbol_name(n));
         int dst = fresh(c);
         emit(c, (Instr){
             .op = LIR_LEA,
@@ -773,7 +778,7 @@ static int lower_addr(LowerCtx *c, Node *n)
         return lower_symbol_addr(c, n->string_label);
     case ND_VAR:
         if (n->storage == VAR_STORAGE_GLOBAL) {
-            int addr = lower_symbol_addr(c, n->name);
+            int addr = lower_symbol_addr(c, node_symbol_name(n));
             if (n->var_decay)
                 return addr;
             int dst = fresh(c);
@@ -1458,7 +1463,7 @@ static void lower_store_lvalue(LowerCtx *c, Node *lhs, int val)
 {
     if (lhs->kind == ND_VAR) {
         if (lhs->storage == VAR_STORAGE_GLOBAL) {
-            int addr = lower_symbol_addr(c, lhs->name);
+            int addr = lower_symbol_addr(c, node_symbol_name(lhs));
             emit(c, (Instr){
                 .op = LIR_STORE,
                 .a = lir_mem(addr, 0),
@@ -1558,7 +1563,7 @@ static int lower_expr(LowerCtx *c, Node *n)
         emit(c, (Instr){
             .op = LIR_LEA_SYM,
             .dst = dst,
-            .sym_name = n->name,
+            .sym_name = node_symbol_name(n),
         });
         return dst;
     }
@@ -1575,7 +1580,7 @@ static int lower_expr(LowerCtx *c, Node *n)
         return lower_symbol_addr(c, n->string_label);
     case ND_VAR: {
         if (n->storage == VAR_STORAGE_GLOBAL) {
-            int addr = lower_symbol_addr(c, n->name);
+            int addr = lower_symbol_addr(c, node_symbol_name(n));
             int dst = fresh(c);
             emit(c, (Instr){
                 .op = LIR_LOAD,
@@ -1681,10 +1686,10 @@ static int lower_expr(LowerCtx *c, Node *n)
             return lower_symbol_addr(c, n->operand->string_label);
         case ND_VAR:
             if (n->operand->ty && n->operand->ty->kind == TY_FUNC) {
-                return lower_symbol_addr(c, n->operand->name);
+                return lower_symbol_addr(c, node_symbol_name(n->operand));
             }
             if (n->operand->storage == VAR_STORAGE_GLOBAL)
-                return lower_symbol_addr(c, n->operand->name);
+                return lower_symbol_addr(c, node_symbol_name(n->operand));
             emit(c, (Instr){
                 .op = LIR_LEA,
                 .dst = dst,
@@ -1763,7 +1768,7 @@ static int lower_expr(LowerCtx *c, Node *n)
         int val = lower_expr(c, n->rhs);
         if (n->lhs->kind == ND_VAR) {
             if (n->lhs->storage == VAR_STORAGE_GLOBAL) {
-                int addr = lower_symbol_addr(c, n->lhs->name);
+                int addr = lower_symbol_addr(c, node_symbol_name(n->lhs));
                 emit(c, (Instr){
                     .op = LIR_STORE,
                     .a = lir_mem(addr, 0),
@@ -1893,6 +1898,9 @@ static void lower_stmt(LowerCtx *c, Node *n)
             (void)lower_expr(c, n->operand);
         return;
     case ND_DECL:
+        if (n->decl_storage != STORAGE_NONE ||
+            (n->ty && n->ty->kind == TY_FUNC))
+            return;
         if (n->init && n->init->kind == ND_CALL &&
             abi_type_is_record_pass(n->ty)) {
             (void)lower_call_ex(c, n->init, n->offset);

@@ -309,13 +309,14 @@ Node *node_expr_stmt(Node *o, SourceLoc loc)
     return n;
 }
 
-Node *node_decl(char *name, Type *spec_ty, Declarator *decl, Node *init,
-                SourceLoc loc)
+Node *node_decl(char *name, Type *spec_ty, Declarator *decl,
+                StorageClass storage, Node *init, SourceLoc loc)
 {
     Node *n = new_node(ND_DECL, loc);
     n->name = name;
     n->decl_spec = spec_ty;
     n->decl = decl;
+    n->decl_storage = storage;
     n->init = init;
     return n;
 }

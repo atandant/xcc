@@ -71,10 +71,9 @@ checks.
 | **`union`** (tagged, forward-decl, overlap layout), member access, union assign | |
 | **`enum`** (tagged/anonymous, enumerator constants, enum variables as `int`) | |
 | `struct S *` / `union U *` parameters and returns, struct/union by-value param/return | |
-| file-scope `extern`/`static`, tentative definitions, and static functions | block-scope storage classes (`extern`, `static`, `auto`, `register`) |
+| file- and block-scope `extern`/`static`, tentative definitions, static functions and persistent block statics | block-scope `auto` and `register` |
 
-`typedef` is supported at file and block scope. Other block-scope storage
-classes are deferred.
+`typedef`, `extern`, and `static` are supported at file and block scope.
 
 **Struct/union ABI:** passing and returning the compiler's naturally aligned,
 integer/pointer-only records follows the SysV AMD64 INTEGER/MEMORY subset:
@@ -159,7 +158,7 @@ committed.
 
 ## Roadmap
 
-- block-scope storage classes (`extern`, `static`, `auto`, and `register`)
+- block-scope `auto` and `register`
 - function-pointer and nested-declarator conformance edge cases
 - preprocessor support
 - multiple translation units and driver behavior

@@ -1,3 +1,4 @@
 /* SPDX-License-Identifier: MIT */
-/* expect-error: block-scope storage classes are not yet supported */
+/* A block static has static storage duration but no linkage. */
+/* expect: 3 */
 int main(void) { static int x = 3; return x; }

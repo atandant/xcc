@@ -4,9 +4,29 @@
 
 #include "ast.h"
 
-/* Per-function local environment: a stack of nested scopes holding named
- * objects, plus the downward-growing frame-pointer offsets assigned to them.
- * sema owns this state for the function currently being resolved. */
+typedef struct FuncSym FuncSym;
+
+typedef enum {
+    SCOPE_AUTO_OBJECT,
+    SCOPE_STATIC_OBJECT,
+    SCOPE_LINKED_OBJECT,
+    SCOPE_FUNCTION,
+} ScopeBindingKind;
+
+typedef struct {
+    char *name;
+    Type *ty;
+    SourceLoc loc;
+    ScopeBindingKind kind;
+    int offset;
+    char *symbol_name;
+    FuncSym *entity;
+    int address_taken;
+} ScopeBinding;
+
+/* Per-function lexical environment: a stack of nested scopes holding
+ * automatic/static objects and linked object/function bindings. Stack frame
+ * offsets remain meaningful only for automatic objects. */
 
 /* Begin a fresh function frame (clears all scopes, locals, and offsets). */
 void scope_reset(void);
@@ -16,6 +36,8 @@ void leave_scope(void);
 
 /* Resolve a name against every enclosing scope (innermost first). */
 int scope_lookup(const char *name, int *out_offset, Type **out_ty);
+ScopeBinding *scope_lookup_binding(const char *name);
+ScopeBinding *scope_lookup_binding_here(const char *name);
 
 /* Was `name` already declared in the innermost scope? */
 int scope_declared_here(const char *name);
@@ -28,6 +50,9 @@ int scope_alloc_local(Type *ty);
 
 /* Bind a name to an already-allocated offset (used for register params). */
 void scope_bind(char *name, Type *ty, int offset, SourceLoc loc);
+void scope_bind_static(char *name, Type *ty, char *symbol_name, SourceLoc loc);
+void scope_bind_linked(char *name, Type *ty, ScopeBindingKind kind,
+                       FuncSym *entity, SourceLoc loc);
 
 /* Allocate a slot and bind `name` to it in one step; returns the offset. */
 int scope_add_local(char *name, Type *ty, SourceLoc loc);

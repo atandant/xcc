@@ -463,10 +463,8 @@ stmt:
                 typedef_declare(ty, $2, LOC(@1));
                 $$ = node_typedef(ty, $2, LOC(@1));
             } else {
-                if ($1->storage != STORAGE_NONE)
-                    diag_error_at(LOC(@1),
-                                  "block-scope storage classes are not yet supported");
-                $$ = node_decl(declarator_name($2), ty, $2, $4, LOC(@1));
+                $$ = node_decl(declarator_name($2), ty, $2,
+                               $1->storage, $4, LOC(@1));
             }
         }
   | IF '(' expr ')' stmt %prec IFX

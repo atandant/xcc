@@ -14,12 +14,18 @@ void functab_reset(void)
     nfuncs = 0;
 }
 
-FuncSym *filesym_find(const char *name)
+FuncSym *entity_find(const char *name)
 {
     for (int i = 0; i < nfuncs; i++)
         if (strcmp(funcs[i].name, name) == 0)
             return &funcs[i];
     return NULL;
+}
+
+FuncSym *filesym_find(const char *name)
+{
+    FuncSym *symbol = entity_find(name);
+    return symbol && symbol->file_visible ? symbol : NULL;
 }
 
 FuncSym *functab_find(const char *name)
@@ -47,6 +53,51 @@ FuncSym *functab_add(char *name, Type *ty, int defined, int implicit,
     s->object = NULL;
     s->loc = loc;
     s->reference_loc = loc;
+    s->file_visible = 1;
+    return s;
+}
+
+FuncSym *entity_declare(char *name, Type *ty, FileSymKind kind,
+                        Linkage linkage, SourceLoc loc)
+{
+    FuncSym *s = entity_find(name);
+
+    if (!s) {
+        if (nfuncs >= MAX_FUNCS) {
+            diag_error_at(loc, "too many linked symbols in translation unit");
+            return NULL;
+        }
+        s = &funcs[nfuncs++];
+        *s = (FuncSym){
+            .name = name,
+            .ty = ty,
+            .kind = kind,
+            .linkage = linkage,
+            .loc = loc,
+            .reference_loc = loc,
+        };
+        return s;
+    }
+    if (s->kind != kind) {
+        diag_error_at(loc, "redeclared '%s' as different kind of symbol", name);
+        diag_note_at(s->loc, "previous declaration of '%s' is here", name);
+        return s;
+    }
+    if (s->linkage != linkage) {
+        diag_error_at(loc, "conflicting linkage for '%s'", name);
+        diag_note_at(s->loc, "previous declaration of '%s' is here", name);
+        return s;
+    }
+    if (!type_same(s->ty, ty)) {
+        diag_error_at(loc, "conflicting types for '%s'", name);
+        diag_note_at(s->loc, "previous declaration of '%s' is here", name);
+        return s;
+    }
+    if (kind == FILESYM_FUNCTION && ty->prototyped && !s->ty->prototyped)
+        s->ty = ty;
+    if (kind == FILESYM_OBJECT && !type_is_complete(s->ty) &&
+        type_is_complete(ty))
+        s->ty = ty;
     return s;
 }
 
@@ -58,7 +109,7 @@ FuncSym *functab_add(char *name, Type *ty, int defined, int implicit,
  * compared), while two prototypes must agree on parameter types and count. */
 void functab_register(Function *fn)
 {
-    FuncSym *s = filesym_find(fn->name);
+    FuncSym *s = entity_find(fn->name);
     Linkage linkage;
 
     if (fn->storage == STORAGE_STATIC)
@@ -68,6 +119,8 @@ void functab_register(Function *fn)
     else
         linkage = LINKAGE_EXTERNAL;
     fn->linkage = linkage;
+    if (s)
+        s->file_visible = 1;
 
     if (!s) {
         s = functab_add(fn->name, fn->ty, fn->is_definition, 0, fn->loc);
@@ -132,7 +185,7 @@ void functab_finalize(void)
 
 void objecttab_register(GlobalObject *object)
 {
-    FuncSym *s = filesym_find(object->name);
+    FuncSym *s = entity_find(object->name);
     Linkage linkage;
 
     object->emit = 0;
@@ -142,6 +195,8 @@ void objecttab_register(GlobalObject *object)
         linkage = object->storage == STORAGE_STATIC
             ? LINKAGE_INTERNAL : LINKAGE_EXTERNAL;
     object->linkage = linkage;
+    if (s)
+        s->file_visible = 1;
 
     if (!s) {
         if (nfuncs >= MAX_FUNCS) {
@@ -161,6 +216,7 @@ void objecttab_register(GlobalObject *object)
         s->object = object->decl_kind == OBJECT_DECLARATION ? NULL : object;
         s->loc = object->loc;
         s->reference_loc = object->loc;
+        s->file_visible = 1;
         object->emit = object->decl_kind != OBJECT_DECLARATION;
         return;
     }
