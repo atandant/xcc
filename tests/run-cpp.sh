@@ -16,6 +16,7 @@ for src in "$DIR"/*.c; do
     expected=$(sed -n 's@^/[*] expect: \([0-9][0-9]*\) [*]/$@\1@p' "$src" | sed -n '1p')
     expected_err=$(sed -n 's@^/[*] expect-error: \(.*\) [*]/$@\1@p' "$src" | sed -n '1p')
     cpp_flags=$(sed -n 's@^/[*] cpp-flags: \(.*\) [*]/$@\1@p' "$src" | sed -n '1p')
+    source_date_epoch=$(sed -n 's@^/[*] source-date-epoch: \([0-9][0-9]*\) [*]/$@\1@p' "$src" | sed -n '1p')
     set -f
     set -- $cpp_flags
     set +f
@@ -26,7 +27,8 @@ for src in "$DIR"/*.c; do
         continue
     fi
     if [ -n "$expected" ]; then
-        if ! $XCC "$@" "$src" -o "$TMP/out.s" 2> "$TMP/err"; then
+        if ! SOURCE_DATE_EPOCH=$source_date_epoch \
+             $XCC "$@" "$src" -o "$TMP/out.s" 2> "$TMP/err"; then
             echo "FAIL cpp/$file (xcc error)"
             sed 's/^/      /' "$TMP/err"
             fail=$((fail + 1))
@@ -48,7 +50,8 @@ for src in "$DIR"/*.c; do
             fail=$((fail + 1))
         fi
     elif [ -n "$expected_err" ]; then
-        if $XCC "$@" "$src" -o "$TMP/out.s" 2> "$TMP/err"; then
+        if SOURCE_DATE_EPOCH=$source_date_epoch \
+           $XCC "$@" "$src" -o "$TMP/out.s" 2> "$TMP/err"; then
             echo "FAIL cpp/$file: expected xcc error, got success"
             fail=$((fail + 1))
         elif grep ': error: ' "$TMP/err" | sed 's/^.*: error: //' |

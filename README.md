@@ -38,8 +38,10 @@ acceptance test suite.
 
 | Supported | Not yet |
 | --- | --- |
-| `char`, `short`, `int`, `long`, `void`, pointers (`*`, `&`, dereference) | `#line`, `#error`, `#pragma`, and predefined macros |
+| `char`, `short`, `int`, `long`, `void`, pointers (`*`, `&`, dereference) | `#line` and `#pragma` |
 | object/function-like `#define`, `#undef`, rescanning, `#`, `##`, and conditionals | multiple translation units |
+| `#error` diagnostics | |
+| C89 predefined macros, `__XCC__`, and command-line `-D`/`-U` | |
 | experimental `#include` with quoted/angle operands and `-I` search paths | |
 | signed and unsigned integer types, promotions and usual arithmetic conversions | |
 | parenthesized declarators (`int (*p)[3]`), casts (`(int (*)[3])`) | |
@@ -136,9 +138,10 @@ records use sret/stack memory.
 The native preprocessing-token input path is active, including C89 trigraphs,
 line splicing, comment replacement, object-like macros, `#undef`, replacement
 rescanning, and conditional inclusion. Function-like macros, argument prescan,
-stringification, and token pasting are also implemented. Includes and other
-directives remain a work in progress; quoted and angle-bracket includes with
-`-I` search paths are available experimentally. See
+stringification, token pasting, the C89 predefined macros, `__XCC__`, and
+command-line `-D`/`-U` are also implemented. Includes and other directives
+remain a work in progress; quoted and angle-bracket includes with `-I` search
+paths are available experimentally. See
 [`src/cpp/README.md`](src/cpp/README.md) for the detailed support matrix.
 
 The parser builds AST nodes and attaches parsed types to declarations. **sema**

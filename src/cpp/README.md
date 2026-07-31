@@ -22,8 +22,9 @@
 | function-like macros and stringification with `#` | implemented |
 | `#if`, `#ifdef`, `#ifndef`, `#elif`, `#else`, `#endif` | implemented |
 | `#include` and `-I` include search paths | experimental |
-| `#line`, `#error`, and `#pragma` | not implemented |
-| predefined macros | not implemented |
+| `#error` | implemented |
+| `#line` and `#pragma` | not implemented |
+| `__LINE__`, `__FILE__`, `__DATE__`, `__TIME__`, `__STDC__`, `__XCC__` | implemented |
 | `-D` and `-U` command-line macro actions | implemented |
 | `-E` preprocessing-only output | not implemented |
 
@@ -61,6 +62,17 @@ ordinary parameters use the prescanned form, while `#` and `##` use raw tokens.
 Stringification normalizes whitespace and escapes literal spellings. `##`
 uses placemarkers for empty arguments, requires each nonempty concatenation to
 form exactly one preprocessing token, and rescans the result.
+
+The C89 predefined macros and xcc's `__XCC__` identification macro live in the
+same macro table as source and command-line definitions. `__LINE__` and
+`__FILE__` are expanded from each invocation location; `__DATE__` and
+`__TIME__` are fixed when preprocessing begins and honor `SOURCE_DATE_EPOCH`
+for reproducible builds. Builtins are installed before ordered `-D`/`-U`
+actions, so `-U` can suppress one before source processing.
+
+An active `#error` always emits a diagnostic containing its unexpanded
+preprocessing-token sequence. Like other non-conditional directives, an
+`#error` in an inactive conditional group is discarded.
 
 Conditional groups use an explicit nesting stack. Tokens in inactive groups
 are discarded before macro expansion, while nested conditional directives are
@@ -114,9 +126,8 @@ conditions, not only happy paths.
 ## Next milestone
 
 `#include` remains experimental while its header-name edge cases, file-system
-failures, and real-world nested-header coverage mature. Predefined C89 macros
-are a candidate for the next milestone. Variadic macros remain out of scope
-because they are not C89.
+failures, and real-world nested-header coverage mature. Variadic macros remain
+out of scope because they are not C89.
 
 ## Explicit non-goals for now
 

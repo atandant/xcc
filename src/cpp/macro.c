@@ -4,10 +4,19 @@
 #include "arena.h"
 #include "diag.h"
 
+#include <errno.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 typedef struct Macro Macro;
+
+typedef enum {
+    BUILTIN_NONE,
+    BUILTIN_LINE,
+    BUILTIN_FILE
+} BuiltinKind;
 
 struct CppHide {
     Macro *macro;
@@ -16,6 +25,7 @@ struct CppHide {
 
 struct Macro {
     const char *name;
+    BuiltinKind builtin;
     int function_like;
     const char **parameters;
     size_t parameter_count;
@@ -124,9 +134,87 @@ static Macro *find_macro(CppMacros *macros, const char *name)
     return macro && macro->defined ? macro : NULL;
 }
 
+static void install_builtin(CppMacros *macros, const char *name,
+                            BuiltinKind builtin, CppTokenKind replacement_kind,
+                            const char *replacement, SourceLoc definition_loc)
+{
+    Macro *macro = arena_alloc_zeroed(sizeof(*macro));
+
+    macro->name = arena_strdup(name);
+    macro->builtin = builtin;
+    macro->definition_loc = definition_loc;
+    macro->defined = 1;
+    if (replacement) {
+        macro->replacement = arena_alloc(sizeof(*macro->replacement));
+        macro->replacement[0] = (CppToken){
+            .kind = replacement_kind,
+            .text = arena_strdup(replacement),
+            .len = strlen(replacement),
+            .loc = definition_loc,
+        };
+        macro->replacement_len = 1;
+    }
+    macro->next = macros->head;
+    macros->head = macro;
+}
+
 CppMacros *cpp_macros_create(void)
 {
-    return arena_alloc_zeroed(sizeof(CppMacros));
+    static const char *const months[] = {
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    };
+    CppMacros *macros = arena_alloc_zeroed(sizeof(*macros));
+    SourceFile *source = source_create(NULL, 0, "<built-in>");
+    SourceLoc loc = { source, 1, 1 };
+    time_t now = time(NULL);
+    const char *epoch = getenv("SOURCE_DATE_EPOCH");
+    int reproducible = 0;
+    struct tm *local;
+    char date[14] = "\"Jan  1 1970\"";
+    char clock[11] = "\"00:00:00\"";
+
+    if (epoch && *epoch && *epoch != '-') {
+        char *end;
+        unsigned long long value;
+        time_t converted;
+
+        errno = 0;
+        value = strtoull(epoch, &end, 10);
+        converted = (time_t)value;
+        if (!errno && *end == '\0' && (unsigned long long)converted == value) {
+            now = converted;
+            reproducible = 1;
+        }
+    }
+    local = reproducible ? gmtime(&now) : localtime(&now);
+    if (local && local->tm_mon >= 0 && local->tm_mon < 12 &&
+        local->tm_mday >= 1 && local->tm_mday <= 31 &&
+        local->tm_year >= -1900 && local->tm_year <= 8099) {
+        int year = local->tm_year + 1900;
+
+        memcpy(date + 1, months[local->tm_mon], 3);
+        date[5] = local->tm_mday < 10 ? ' ' :
+                  (char)('0' + local->tm_mday / 10);
+        date[6] = (char)('0' + local->tm_mday % 10);
+        date[8] = (char)('0' + year / 1000);
+        date[9] = (char)('0' + year / 100 % 10);
+        date[10] = (char)('0' + year / 10 % 10);
+        date[11] = (char)('0' + year % 10);
+        clock[1] = (char)('0' + local->tm_hour / 10);
+        clock[2] = (char)('0' + local->tm_hour % 10);
+        clock[4] = (char)('0' + local->tm_min / 10);
+        clock[5] = (char)('0' + local->tm_min % 10);
+        clock[7] = (char)('0' + local->tm_sec / 10);
+        clock[8] = (char)('0' + local->tm_sec % 10);
+    }
+    install_builtin(macros, "__XCC__", BUILTIN_NONE, CPP_NUMBER, "1", loc);
+    install_builtin(macros, "__STDC__", BUILTIN_NONE, CPP_NUMBER, "1", loc);
+    install_builtin(macros, "__DATE__", BUILTIN_NONE, CPP_STRING, date, loc);
+    install_builtin(macros, "__TIME__", BUILTIN_NONE, CPP_STRING, clock, loc);
+    install_builtin(macros, "__LINE__", BUILTIN_LINE, CPP_EOF, NULL, loc);
+    install_builtin(macros, "__FILE__", BUILTIN_FILE, CPP_EOF, NULL, loc);
+    return macros;
 }
 
 int cpp_macros_defined(CppMacros *macros, const char *name)
@@ -273,6 +361,7 @@ void cpp_macros_define(CppMacros *macros, CppToken name, int function_like,
         macros->head = macro;
     }
     macro->function_like = function_like;
+    macro->builtin = BUILTIN_NONE;
     macro->parameter_count = parameter_count;
     macro->parameters = arena_alloc((parameter_count ? parameter_count : 1) *
                                     sizeof(*macro->parameters));
@@ -718,6 +807,62 @@ static CppToken *object_replacement(Macro *macro, CppToken invocation,
     return tokens;
 }
 
+static char *quote_filename(const char *name, size_t *out_len)
+{
+    size_t needed = 3;
+    size_t at = 0;
+    char *text;
+
+    for (size_t i = 0; name[i]; i++) {
+        unsigned char ch = (unsigned char)name[i];
+        needed += ch == '\\' || ch == '"' ? 2 : (ch < 32 || ch > 126 ? 4 : 1);
+    }
+    text = arena_alloc(needed);
+    text[at++] = '"';
+    for (size_t i = 0; name[i]; i++) {
+        unsigned char ch = (unsigned char)name[i];
+
+        if (ch == '\\' || ch == '"') {
+            text[at++] = '\\';
+            text[at++] = (char)ch;
+        } else if (ch < 32 || ch > 126) {
+            text[at++] = '\\';
+            text[at++] = (char)('0' + ((ch >> 6) & 7));
+            text[at++] = (char)('0' + ((ch >> 3) & 7));
+            text[at++] = (char)('0' + (ch & 7));
+        } else {
+            text[at++] = (char)ch;
+        }
+    }
+    text[at++] = '"';
+    text[at] = '\0';
+    *out_len = at;
+    return text;
+}
+
+static CppToken *builtin_replacement(Macro *macro, CppToken invocation,
+                                     size_t *out_len)
+{
+    CppToken *tokens = arena_alloc(sizeof(*tokens));
+    CppToken token = invocation;
+
+    token.kind = macro->builtin == BUILTIN_LINE ? CPP_NUMBER : CPP_STRING;
+    token.hide = hide_add(invocation.hide, macro);
+    if (macro->builtin == BUILTIN_LINE) {
+        char text[32];
+
+        snprintf(text, sizeof(text), "%d", invocation.loc.line);
+        token.text = arena_strdup(text);
+        token.len = strlen(text);
+    } else {
+        token.text = quote_filename(source_name(invocation.loc.file),
+                                    &token.len);
+    }
+    tokens[0] = token;
+    *out_len = 1;
+    return tokens;
+}
+
 int cpp_macros_expand(CppMacros *macros, CppMacroStream *stream,
                       CppStreamToken invocation)
 {
@@ -729,6 +874,12 @@ int cpp_macros_expand(CppMacros *macros, CppMacroStream *stream,
         !(macro = find_macro(macros, invocation.token.text)) ||
         hide_contains(invocation.token.hide, macro))
         return 0;
+    if (macro->builtin != BUILTIN_NONE) {
+        replacement = builtin_replacement(macro, invocation.token,
+                                          &replacement_len);
+        stream->push(stream->ctx, replacement, replacement_len);
+        return 1;
+    }
     if (!macro->function_like) {
         replacement = object_replacement(macro, invocation.token,
                                          &replacement_len);

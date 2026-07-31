@@ -951,6 +951,40 @@ static void handle_endif(Cpp *cpp, CppToken directive)
     cpp->conditionals = cpp->conditionals->next;
 }
 
+static void handle_error(Cpp *cpp, CppToken directive)
+{
+    size_t len;
+    CppToken *tokens = read_directive_line(cpp, &len);
+    size_t message_len = 6;
+    size_t at = 0;
+    char *message;
+
+    for (size_t i = 0; i < len; i++) {
+        if (i > 0 && tokens[i].leading_space)
+            message_len++;
+        message_len += tokens[i].len;
+    }
+    if (len)
+        message_len++;
+    message = malloc(message_len + 1);
+    if (!message)
+        diag_fatal("out of memory processing #error directive");
+    memcpy(message + at, "#error", 6);
+    at += 6;
+    if (len)
+        message[at++] = ' ';
+    for (size_t i = 0; i < len; i++) {
+        if (i > 0 && tokens[i].leading_space)
+            message[at++] = ' ';
+        memcpy(message + at, tokens[i].text, tokens[i].len);
+        at += tokens[i].len;
+    }
+    message[at] = '\0';
+    diag_error_at(directive.loc, "%s", message);
+    free(message);
+    free(tokens);
+}
+
 static void handle_directive(Cpp *cpp, SourceLoc hash_loc)
 {
     CppToken directive = scan_next(cpp);
@@ -1002,6 +1036,10 @@ static void handle_directive(Cpp *cpp, SourceLoc hash_loc)
     }
     if (token_is(&directive, "include")) {
         handle_include(cpp, directive);
+        return;
+    }
+    if (token_is(&directive, "error")) {
+        handle_error(cpp, directive);
         return;
     }
     diag_error_at(hash_loc, "preprocessing directives are not yet supported");
