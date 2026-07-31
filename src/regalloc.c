@@ -16,35 +16,52 @@ typedef struct {
 typedef struct {
     int off;
     int last_end;
+    int size;
+    int align;
 } SpillSlot;
 
-static int spill_offset(const Function *fn, int slot)
+static long align_up(long value, int align)
 {
-    long bytes = (long)fn->locals_size + 8L * slot;
+    return (value + align - 1) & -(long)align;
+}
 
-    if (slot <= 0 || bytes > INT_MAX)
+static int new_spill_offset(const Function *fn, int *spill_bytes,
+                            int size, int align)
+{
+    long end = align_up((long)fn->locals_size + *spill_bytes + size,
+                        align);
+
+    if (end > INT_MAX)
         diag_fatal("stack frame is too large");
-    return -(int)bytes;
+    *spill_bytes = (int)end - fn->locals_size;
+    return -(int)end;
 }
 
 static int assign_spill_slot(SpillSlot **slots, int *nslots, int *nspill,
-                             Function *fn, int start, int end)
+                             int *spill_bytes, Function *fn, LirType type,
+                             int start, int end)
 {
+    int size = lir_type_storage_size(type);
+    int align = lir_type_storage_align(type);
+
     for (int i = 0; i < *nslots; i++) {
-        if ((*slots)[i].last_end < start) {
+        if ((*slots)[i].last_end < start && (*slots)[i].size == size &&
+            (*slots)[i].align == align) {
             (*slots)[i].last_end = end;
             return (*slots)[i].off;
         }
     }
 
     (*nspill)++;
-    int off = spill_offset(fn, *nspill);
+    int off = new_spill_offset(fn, spill_bytes, size, align);
 
     SpillSlot *n = arena_alloc((size_t)(*nslots + 1) * sizeof(*n));
     for (int i = 0; i < *nslots; i++)
         n[i] = (*slots)[i];
     n[*nslots].off = off;
     n[*nslots].last_end = end;
+    n[*nslots].size = size;
+    n[*nslots].align = align;
     *slots = n;
     (*nslots)++;
     return off;
@@ -258,12 +275,15 @@ static int mask_count(unsigned mask)
 void regalloc_trivial(LirFn *lf, Function *fn, AllocResult *out)
 {
     int max_out = lir_max_outgoing(lf);
+    int spill_bytes = 0;
 
     out->vreg_reg = arena_alloc((size_t)lf->nvreg * sizeof(*out->vreg_reg));
     out->vreg_off = arena_alloc((size_t)lf->nvreg * sizeof(*out->vreg_off));
     for (int i = 0; i < lf->nvreg; i++) {
         out->vreg_reg[i] = REG_NONE;
-        out->vreg_off[i] = spill_offset(fn, i + 1);
+        out->vreg_off[i] = new_spill_offset(fn, &spill_bytes,
+            lir_type_storage_size(lir_vreg_type(lf, i)),
+            lir_type_storage_align(lir_vreg_type(lf, i)));
     }
 
     out->used_callee_saved = 0;
@@ -278,7 +298,7 @@ void regalloc_trivial(LirFn *lf, Function *fn, AllocResult *out)
     out->split_moves = 0;
     out->outgoing_size = max_out;
     out->frame_size = align_frame_size(
-        (long)fn->locals_size + 8L * lf->nvreg + max_out);
+        (long)fn->locals_size + spill_bytes + max_out);
 }
 
 static void regalloc_pass(LirFn *lf, Function *fn, const Liveness *lv,
@@ -310,6 +330,7 @@ static void regalloc_pass(LirFn *lf, Function *fn, const Liveness *lv,
     int *stackloc = arena_alloc_zeroed((size_t)nv * sizeof(*stackloc));
     int *move_src = arena_alloc((size_t)nv * sizeof(*move_src));
     int nspill = 0;
+    int spill_bytes = 0;
     SpillSlot *slots = NULL;
     int nslots = 0;
 
@@ -343,7 +364,15 @@ static void regalloc_pass(LirFn *lf, Function *fn, const Liveness *lv,
 
         if (force_stack && force_stack[v]) {
             stackloc[v] = assign_spill_slot(
-                &slots, &nslots, &nspill, fn, start, end);
+                &slots, &nslots, &nspill, &spill_bytes, fn,
+                lir_vreg_type(lf, v), start, end);
+            continue;
+        }
+
+        if (lir_vreg_class(lf, v) == REG_CLASS_MEMORY) {
+            stackloc[v] = assign_spill_slot(
+                &slots, &nslots, &nspill, &spill_bytes, fn,
+                lir_vreg_type(lf, v), start, end);
             continue;
         }
 
@@ -386,7 +415,8 @@ static void regalloc_pass(LirFn *lf, Function *fn, const Liveness *lv,
             if (steal) {
                 reg[v] = reg[spill_v];
                 stackloc[spill_v] = assign_spill_slot(
-                    &slots, &nslots, &nspill, fn,
+                    &slots, &nslots, &nspill, &spill_bytes, fn,
+                    lir_vreg_type(lf, spill_v),
                     lv->by_vreg[spill_v].start,
                     lv->by_vreg[spill_v].end);
                 reg[spill_v] = REG_NONE;
@@ -398,7 +428,8 @@ static void regalloc_pass(LirFn *lf, Function *fn, const Liveness *lv,
                 active_insert(active, &nactive, v, end);
             } else {
                 stackloc[v] = assign_spill_slot(
-                    &slots, &nslots, &nspill, fn, start, end);
+                    &slots, &nslots, &nspill, &spill_bytes, fn,
+                    lir_vreg_type(lf, v), start, end);
             }
             continue;
         }
@@ -448,7 +479,7 @@ static void regalloc_pass(LirFn *lf, Function *fn, const Liveness *lv,
     out->split_fragments = 0;
     out->split_moves = 0;
     out->frame_size = align_frame_size(
-        (long)fn->locals_size + 8L * nspill + max_out);
+        (long)fn->locals_size + spill_bytes + max_out);
 }
 
 static int operand_mentions_vreg(Operand op, int vreg)
@@ -621,7 +652,7 @@ static int materialize_spill_fragments(LirFn *lf, const Liveness *lv,
                 int touched = instr_mentions_vreg(&ins, v);
 
                 if (touched && !previous_touched) {
-                    fragment = lir_new_vreg_class(lf, lir_vreg_class(lf, v));
+                    fragment = lir_new_vreg_type(lf, lir_vreg_type(lf, v));
                     parents[fragment] = v;
                     (*split_fragments)++;
                     if (instr_uses_vreg(&ins, v)) {
@@ -660,7 +691,7 @@ static int materialize_spill_fragments(LirFn *lf, const Liveness *lv,
             int term_touched = operand_mentions_vreg(block->term.a, v) ||
                                operand_mentions_vreg(block->term.b, v);
             if (term_touched && !previous_touched) {
-                fragment = lir_new_vreg_class(lf, lir_vreg_class(lf, v));
+                fragment = lir_new_vreg_type(lf, lir_vreg_type(lf, v));
                 parents[fragment] = v;
                 (*split_fragments)++;
                 append_instr(&new_instrs, &new_ninstr, &new_cap,
@@ -772,9 +803,14 @@ void regalloc_verify(const LirFn *lf, const Liveness *lv,
         if (phys < 0) {
             if (alloc->vreg_off[v] == 0)
                 diag_fatal("register allocation left live v%d unassigned", v);
+            if ((-alloc->vreg_off[v]) %
+                lir_type_storage_align(lir_vreg_type(lf, v)) != 0)
+                diag_fatal("register allocation misaligned spill for v%d", v);
             spills++;
             continue;
         }
+        if (lir_vreg_class(lf, v) == REG_CLASS_MEMORY)
+            diag_fatal("register allocation assigned memory-only v%d to a register", v);
         registers++;
         {
             RegClass expected = lir_vreg_class(lf, v);

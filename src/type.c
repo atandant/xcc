@@ -521,7 +521,7 @@ int type_same(Type *a, Type *b)
              * only when every parameter is unchanged by the default argument
              * promotions (C89 3.5.4.3). */
             for (int i = 0; i < proto->nparams; i++) {
-                if (type_same(proto->params[i], type_float()))
+                if (type_same(type_unqualified(proto->params[i]), type_float()))
                     return 0;
                 /* xcc's enum representation and promotion type are int. */
                 if (type_is_enum(proto->params[i]))

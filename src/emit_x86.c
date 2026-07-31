@@ -111,8 +111,8 @@ static const int x86_arg_regs[] = {
 
 const TargetDesc X86_SYSV = {
     .name = "x86-64-sysv",
-    .nalloc = { 9, 14 },
-    .alloc_order = { x86_alloc_order, x86_xmm_alloc_order },
+    .nalloc = { 9, 14, 0 },
+    .alloc_order = { x86_alloc_order, x86_xmm_alloc_order, NULL },
     .reg_name = x86_reg_name_fn,
     .caller_saved_mask = X86_CALLER_SAVED_MASK,
     .callee_saved_mask = X86_CALLEE_SAVED_MASK,
@@ -313,30 +313,74 @@ static void load_float_operand(EmitCtx *c, Operand op, int target,
     assert(0 && "invalid floating operand");
 }
 
+static int float_operand_phys(EmitCtx *c, Operand op)
+{
+    if (op.kind == OPND_PHYS)
+        return op.u.phys;
+    if (op.kind == OPND_VREG)
+        return vreg_phys(c, op.u.vreg);
+    return REG_NONE;
+}
+
+static void emit_float_operand_ref(EmitCtx *c, Operand op)
+{
+    int phys = float_operand_phys(c, op);
+
+    if (phys >= 0) {
+        assert(phys >= PHYS_XMM0);
+        fprintf(c->out, "%s", xmm_name(phys));
+        return;
+    }
+    assert(op.kind == OPND_VREG);
+    fprintf(c->out, "%d(%%rbp)", vreg_off(c, op.u.vreg));
+}
+
+static int f80_operand_off(EmitCtx *c, Operand op)
+{
+    assert(op.kind == OPND_VREG);
+    assert(lir_vreg_type(c->lf, op.u.vreg) == LIR_TYPE_F80);
+    assert(vreg_phys(c, op.u.vreg) < 0);
+    return vreg_off(c, op.u.vreg);
+}
+
 static void emit_float_cmp(EmitCtx *c, Operand a, Operand b,
                            LirFloatWidth fpw)
 {
+    if (fpw == LIR_FP_F80) {
+        fprintf(c->out,
+                "  fldt %d(%%rbp)\n"
+                "  fldt %d(%%rbp)\n"
+                "  fucomip %%st(1), %%st\n"
+                "  fstp %%st(0)\n",
+                f80_operand_off(c, b), f80_operand_off(c, a));
+        return;
+    }
     load_float_operand(c, a, PHYS_XMM15, fpw);
-    load_float_operand(c, b, PHYS_XMM14, fpw);
-    fprintf(c->out, "  ucomis%c %s, %s\n",
-            fpw == LIR_FP_F32 ? 's' : 'd', xmm_name(PHYS_XMM14),
-            xmm_name(PHYS_XMM15));
+    fprintf(c->out, "  ucomis%c ", fpw == LIR_FP_F32 ? 's' : 'd');
+    emit_float_operand_ref(c, b);
+    fprintf(c->out, ", %s\n", xmm_name(PHYS_XMM15));
 }
 
 static void emit_float_setcc(EmitCtx *c, LirCond cc)
 {
+    const char *tmp = reg8_name(c->td->scratch0);
+
     switch (cc) {
     case CC_EQ:
-        fprintf(c->out, "  sete %%al\n  setnp %%dl\n  and %%dl, %%al\n");
+        fprintf(c->out, "  sete %%al\n  setnp %s\n  and %s, %%al\n",
+                tmp, tmp);
         break;
     case CC_NE:
-        fprintf(c->out, "  setne %%al\n  setp %%dl\n  or %%dl, %%al\n");
+        fprintf(c->out, "  setne %%al\n  setp %s\n  or %s, %%al\n",
+                tmp, tmp);
         break;
     case CC_LT:
-        fprintf(c->out, "  setb %%al\n  setnp %%dl\n  and %%dl, %%al\n");
+        fprintf(c->out, "  setb %%al\n  setnp %s\n  and %s, %%al\n",
+                tmp, tmp);
         break;
     case CC_LE:
-        fprintf(c->out, "  setbe %%al\n  setnp %%dl\n  and %%dl, %%al\n");
+        fprintf(c->out, "  setbe %%al\n  setnp %s\n  and %s, %%al\n",
+                tmp, tmp);
         break;
     case CC_GT:
         fprintf(c->out, "  seta %%al\n");
@@ -630,6 +674,22 @@ static void emit_call_register_args(EmitCtx *c, const Instr *ins)
             args[first] = lir_phys(c->td->scratch0);
         }
     }
+}
+
+static LirFloatWidth call_arg_float_width(EmitCtx *c, const Instr *ins,
+                                          int index)
+{
+    LirType type;
+
+    if (ins->call_arg_types)
+        type = ins->call_arg_types[index];
+    else {
+        Operand arg = ins->call_args[index];
+        assert(arg.kind == OPND_VREG);
+        type = lir_vreg_type(c->lf, arg.u.vreg);
+    }
+    assert(type == LIR_TYPE_F32 || type == LIR_TYPE_F64);
+    return type == LIR_TYPE_F32 ? LIR_FP_F32 : LIR_FP_F64;
 }
 
 static void emit_store_rax_partial(EmitCtx *c, X86MemRef ref, int bytes)
@@ -1082,6 +1142,11 @@ static void emit_instr(EmitCtx *c, Instr *ins)
     }
 
     case LIR_MOV:
+        if (ins->dst >= 0 && lir_vreg_type(c->lf, ins->dst) == LIR_TYPE_F80) {
+            fprintf(c->out, "  fldt %d(%%rbp)\n  fstpt %d(%%rbp)\n",
+                    f80_operand_off(c, ins->a), vreg_off(c, ins->dst));
+            return;
+        }
         if (ins->dst >= 0 && lir_vreg_class(c->lf, ins->dst) == REG_CLASS_XMM) {
             int target = vreg_phys(c, ins->dst);
             LirFloatWidth fpw = ins->fpw == LIR_FP_NONE ? LIR_FP_F64 : ins->fpw;
@@ -1135,6 +1200,13 @@ static void emit_instr(EmitCtx *c, Instr *ins)
         int scalar = ins->aux == 1 || ins->aux == 2 ||
                      ins->aux == 4 || ins->aux == 8;
 
+        if (lir_vreg_type(c->lf, ins->dst) == LIR_TYPE_F80) {
+            X86MemRef ref = prepare_mem_ref(c, ins->a);
+            fprintf(c->out, "  fldt ");
+            emit_mem_ref(c, ref);
+            fprintf(c->out, "\n  fstpt %d(%%rbp)\n", vreg_off(c, ins->dst));
+            return;
+        }
         if (lir_vreg_class(c->lf, ins->dst) == REG_CLASS_XMM) {
             X86MemRef ref = prepare_mem_ref(c, ins->a);
             int fp_target = vreg_phys(c, ins->dst);
@@ -1170,11 +1242,26 @@ static void emit_instr(EmitCtx *c, Instr *ins)
                      ins->aux == 4 || ins->aux == 8;
 
         if (ins->b.kind == OPND_VREG &&
-            lir_vreg_class(c->lf, ins->b.u.vreg) == REG_CLASS_XMM) {
-            load_float_operand(c, ins->b, PHYS_XMM15, ins->fpw);
+            lir_vreg_type(c->lf, ins->b.u.vreg) == LIR_TYPE_F80) {
+            fprintf(c->out, "  fldt %d(%%rbp)\n",
+                    f80_operand_off(c, ins->b));
             ref = prepare_mem_ref(c, ins->a);
-            fprintf(c->out, "  %s %s, ", fp_mov(ins->fpw),
-                    xmm_name(PHYS_XMM15));
+            fprintf(c->out, "  fstpt ");
+            emit_mem_ref(c, ref);
+            fprintf(c->out, "\n");
+            return;
+        }
+        if (ins->b.kind == OPND_VREG &&
+            lir_vreg_class(c->lf, ins->b.u.vreg) == REG_CLASS_XMM) {
+            ref = prepare_mem_ref(c, ins->a);
+            if (vreg_phys(c, ins->b.u.vreg) < 0)
+                load_float_operand(c, ins->b, PHYS_XMM15, ins->fpw);
+            fprintf(c->out, "  %s ", fp_mov(ins->fpw));
+            if (vreg_phys(c, ins->b.u.vreg) < 0)
+                fprintf(c->out, "%s", xmm_name(PHYS_XMM15));
+            else
+                emit_float_operand_ref(c, ins->b);
+            fprintf(c->out, ", ");
             emit_mem_ref(c, ref);
             fprintf(c->out, "\n");
             return;
@@ -1327,19 +1414,45 @@ static void emit_instr(EmitCtx *c, Instr *ins)
         const char *op = ins->op == LIR_FADD ? "add" :
                          ins->op == LIR_FSUB ? "sub" :
                          ins->op == LIR_FMUL ? "mul" : "div";
+        if (ins->fpw == LIR_FP_F80) {
+            fprintf(c->out,
+                    "  fldt %d(%%rbp)\n"
+                    "  fldt %d(%%rbp)\n"
+                    "  f%s%sp\n"
+                    "  fstpt %d(%%rbp)\n",
+                    f80_operand_off(c, ins->a), f80_operand_off(c, ins->b),
+                    op, (ins->op == LIR_FSUB || ins->op == LIR_FDIV) ? "r" : "",
+                    vreg_off(c, ins->dst));
+            return;
+        }
         int target = vreg_phys(c, ins->dst);
+        int lhs_phys = float_operand_phys(c, ins->a);
+        int rhs_phys = float_operand_phys(c, ins->b);
+        int saved_rhs = 0;
         if (target < 0)
             target = PHYS_XMM15;
+        if (rhs_phys == target && lhs_phys != target) {
+            load_float_operand(c, ins->b, PHYS_XMM14, ins->fpw);
+            saved_rhs = 1;
+        }
         load_float_operand(c, ins->a, target, ins->fpw);
-        load_float_operand(c, ins->b, PHYS_XMM14, ins->fpw);
-        fprintf(c->out, "  %s%s %s, %s\n", op,
-                ins->fpw == LIR_FP_F32 ? "ss" : "sd",
-                xmm_name(PHYS_XMM14), xmm_name(target));
+        fprintf(c->out, "  %s%s ", op,
+                ins->fpw == LIR_FP_F32 ? "ss" : "sd");
+        if (saved_rhs)
+            fprintf(c->out, "%s", xmm_name(PHYS_XMM14));
+        else
+            emit_float_operand_ref(c, ins->b);
+        fprintf(c->out, ", %s\n", xmm_name(target));
         store_float(c, ins->dst, target, ins->fpw);
         return;
     }
 
     case LIR_FNEG: {
+        if (ins->fpw == LIR_FP_F80) {
+            fprintf(c->out, "  fldt %d(%%rbp)\n  fchs\n  fstpt %d(%%rbp)\n",
+                    f80_operand_off(c, ins->a), vreg_off(c, ins->dst));
+            return;
+        }
         int target = vreg_phys(c, ins->dst);
         if (target < 0)
             target = PHYS_XMM15;
@@ -1362,6 +1475,10 @@ static void emit_instr(EmitCtx *c, Instr *ins)
         emit_float_setcc(c, ins->cc);
         fprintf(c->out, "  movzbq %%al, %%rax\n");
         store_vreg_slot(c, ins->dst, "%rax");
+        return;
+
+    case LIR_FRET:
+        fprintf(c->out, "  fldt %d(%%rbp)\n", f80_operand_off(c, ins->a));
         return;
 
     case LIR_SHL:
@@ -1484,6 +1601,48 @@ static void emit_instr(EmitCtx *c, Instr *ins)
 
     case LIR_CONV: {
         if (ins->conv >= CONV_SI32_F32) {
+            if (ins->conv == CONV_F32_F80 || ins->conv == CONV_F64_F80) {
+                LirFloatWidth srcw = ins->conv == CONV_F32_F80
+                    ? LIR_FP_F32 : LIR_FP_F64;
+                int dst_off = vreg_off(c, ins->dst);
+                int src_phys = float_operand_phys(c, ins->a);
+
+                if (src_phys >= 0) {
+                    fprintf(c->out, "  %s %s, %d(%%rbp)\n",
+                            fp_mov(srcw), xmm_name(src_phys), dst_off);
+                    fprintf(c->out, "  fld%c %d(%%rbp)\n",
+                            srcw == LIR_FP_F32 ? 's' : 'l', dst_off);
+                } else {
+                    assert(ins->a.kind == OPND_VREG);
+                    fprintf(c->out, "  fld%c %d(%%rbp)\n",
+                            srcw == LIR_FP_F32 ? 's' : 'l',
+                            vreg_off(c, ins->a.u.vreg));
+                }
+                fprintf(c->out, "  fstpt %d(%%rbp)\n", dst_off);
+                return;
+            }
+            if (ins->conv == CONV_F80_F32 || ins->conv == CONV_F80_F64) {
+                LirFloatWidth dstw = ins->conv == CONV_F80_F32
+                    ? LIR_FP_F32 : LIR_FP_F64;
+                int target = vreg_phys(c, ins->dst);
+
+                fprintf(c->out, "  fldt %d(%%rbp)\n",
+                        f80_operand_off(c, ins->a));
+                if (target < 0) {
+                    fprintf(c->out, "  fstp%c %d(%%rbp)\n",
+                            dstw == LIR_FP_F32 ? 's' : 'l',
+                            vreg_off(c, ins->dst));
+                } else {
+                    fprintf(c->out,
+                            "  sub $16, %%rsp\n"
+                            "  fstp%c (%%rsp)\n"
+                            "  %s (%%rsp), %s\n"
+                            "  add $16, %%rsp\n",
+                            dstw == LIR_FP_F32 ? 's' : 'l', fp_mov(dstw),
+                            xmm_name(target));
+                }
+                return;
+            }
             int dst_float = lir_vreg_class(c->lf, ins->dst) == REG_CLASS_XMM;
             if (dst_float) {
                 int target = vreg_phys(c, ins->dst);
@@ -1496,6 +1655,30 @@ static void emit_instr(EmitCtx *c, Instr *ins)
                     fprintf(c->out, "  %s %s, %s\n",
                             ins->conv == CONV_F32_F64 ? "cvtss2sd" : "cvtsd2ss",
                             xmm_name(PHYS_XMM14), xmm_name(target));
+                } else if (ins->conv == CONV_UI64_F32 ||
+                           ins->conv == CONV_UI64_F64) {
+                    const char *r0 = reg64_name(s0);
+                    const char *r1 = reg64_name(s1);
+                    char suffix = ins->fpw == LIR_FP_F32 ? 's' : 'd';
+
+                    load_operand(c, ins->a, r0, LIR_W8);
+                    fprintf(c->out,
+                            "  test %s, %s\n"
+                            "  jns 1f\n"
+                            "  mov %s, %s\n"
+                            "  and $1, %s\n"
+                            "  shr %s\n"
+                            "  or %s, %s\n"
+                            "  cvtsi2s%cq %s, %s\n"
+                            "  adds%c %s, %s\n"
+                            "  jmp 2f\n"
+                            "1:\n"
+                            "  cvtsi2s%cq %s, %s\n"
+                            "2:\n",
+                            r0, r0, r0, r1, r0, r1, r0, r1,
+                            suffix, r1, xmm_name(target), suffix,
+                            xmm_name(target), xmm_name(target), suffix, r0,
+                            xmm_name(target));
                 } else {
                     int from64 = ins->conv == CONV_SI64_F32 ||
                                  ins->conv == CONV_SI64_F64 ||
@@ -1511,17 +1694,51 @@ static void emit_instr(EmitCtx *c, Instr *ins)
             } else {
                 int from32 = ins->conv == CONV_F32_SI32 ||
                              ins->conv == CONV_F32_SI64 ||
-                             ins->conv == CONV_F32_UI32;
+                             ins->conv == CONV_F32_UI32 ||
+                             ins->conv == CONV_F32_UI64;
                 int to64 = ins->conv == CONV_F32_SI64 ||
                            ins->conv == CONV_F64_SI64 ||
                            ins->conv == CONV_F32_UI32 ||
-                           ins->conv == CONV_F64_UI32;
+                           ins->conv == CONV_F64_UI32 ||
+                           ins->conv == CONV_F32_UI64 ||
+                           ins->conv == CONV_F64_UI64;
                 load_float_operand(c, ins->a, PHYS_XMM15,
                                    from32 ? LIR_FP_F32 : LIR_FP_F64);
-                fprintf(c->out, "  cvtts%c2si%c %s, %s\n",
-                        from32 ? 's' : 'd', to64 ? 'q' : 'l',
-                        xmm_name(PHYS_XMM15), to64 ? "%rax" : "%eax");
-                store_vreg_slot(c, ins->dst, "%rax");
+                if (ins->conv == CONV_F32_UI64 ||
+                    ins->conv == CONV_F64_UI64) {
+                    const char *r0 = reg64_name(s0);
+                    const char *r1 = reg64_name(s1);
+                    const char *mov = from32 ? "movd" : "movq";
+                    long threshold = from32 ? 0x5f000000L
+                                            : 0x43e0000000000000L;
+
+                    fprintf(c->out,
+                            "  movabs $%ld, %s\n"
+                            "  %s %s, %s\n"
+                            "  ucomis%c %s, %s\n"
+                            "  jb 1f\n"
+                            "  subs%c %s, %s\n"
+                            "  cvtts%c2siq %s, %s\n"
+                            "  movabs $-9223372036854775808, %s\n"
+                            "  xor %s, %s\n"
+                            "  jmp 2f\n"
+                            "1:\n"
+                            "  cvtts%c2siq %s, %s\n"
+                            "2:\n",
+                            threshold, r0, mov, r0, xmm_name(PHYS_XMM14),
+                            from32 ? 's' : 'd', xmm_name(PHYS_XMM14),
+                            xmm_name(PHYS_XMM15), from32 ? 's' : 'd',
+                            xmm_name(PHYS_XMM14), xmm_name(PHYS_XMM15),
+                            from32 ? 's' : 'd', xmm_name(PHYS_XMM15), r0,
+                            r1, r1, r0, from32 ? 's' : 'd',
+                            xmm_name(PHYS_XMM15), r0);
+                    store_vreg_slot(c, ins->dst, r0);
+                } else {
+                    fprintf(c->out, "  cvtts%c2si%c %s, %s\n",
+                            from32 ? 's' : 'd', to64 ? 'q' : 'l',
+                            xmm_name(PHYS_XMM15), to64 ? "%rax" : "%eax");
+                    store_vreg_slot(c, ins->dst, "%rax");
+                }
             }
             return;
         }
@@ -1557,15 +1774,20 @@ static void emit_instr(EmitCtx *c, Instr *ins)
     }
 
     case LIR_CALL: {
-        int nstack = ins->nargs - ins->call_nreg;
+        int stack_size = lir_call_stack_size(ins);
         invalidate_rax(c);
         for (int i = ins->call_nreg; i < ins->nargs; i++) {
             Operand arg = ins->call_args[i];
-            int off = 8 * (i - ins->call_nreg);
-            if (arg.kind == OPND_VREG &&
+            int off = lir_call_stack_offset(ins, i);
+            if (ins->call_arg_types &&
+                ins->call_arg_types[i] == LIR_TYPE_F80) {
+                fprintf(c->out, "  fldt %d(%%rbp)\n  fstpt %d(%%rsp)\n",
+                        f80_operand_off(c, arg), off);
+            } else if (arg.kind == OPND_VREG &&
                 lir_vreg_class(c->lf, arg.u.vreg) == REG_CLASS_XMM) {
-                load_float_operand(c, arg, PHYS_XMM15, LIR_FP_F64);
-                fprintf(c->out, "  movsd %s, %d(%%rsp)\n",
+                LirFloatWidth fpw = call_arg_float_width(c, ins, i);
+                load_float_operand(c, arg, PHYS_XMM15, fpw);
+                fprintf(c->out, "  %s %s, %d(%%rsp)\n", fp_mov(fpw),
                         xmm_name(PHYS_XMM15), off);
             } else {
                 load_operand(c, arg, "%rax", LIR_W8);
@@ -1575,14 +1797,18 @@ static void emit_instr(EmitCtx *c, Instr *ins)
         /* Stage vector arguments through reserved outgoing slots so register
            cycles cannot overwrite another argument's source. */
         for (int i = 0; i < ins->call_nsse; i++) {
-            Operand arg = ins->call_args[ins->call_ngpr + i];
-            load_float_operand(c, arg, PHYS_XMM15, LIR_FP_F64);
-            fprintf(c->out, "  movsd %s, %d(%%rsp)\n",
-                    xmm_name(PHYS_XMM15), 8 * (nstack + i));
+            int index = ins->call_ngpr + i;
+            Operand arg = ins->call_args[index];
+            LirFloatWidth fpw = call_arg_float_width(c, ins, index);
+            load_float_operand(c, arg, PHYS_XMM15, fpw);
+            fprintf(c->out, "  %s %s, %d(%%rsp)\n", fp_mov(fpw),
+                    xmm_name(PHYS_XMM15), stack_size + 8 * i);
         }
         for (int i = 0; i < ins->call_nsse; i++) {
-            fprintf(c->out, "  movsd %d(%%rsp), %s\n",
-                    8 * (nstack + i), xmm_name(PHYS_XMM0 + i));
+            int index = ins->call_ngpr + i;
+            LirFloatWidth fpw = call_arg_float_width(c, ins, index);
+            fprintf(c->out, "  %s %d(%%rsp), %s\n", fp_mov(fpw),
+                    stack_size + 8 * i, xmm_name(PHYS_XMM0 + i));
         }
         if (ins->call_indirect)
             load_operand(c, lir_vreg(ins->call_reg),
@@ -1594,6 +1820,8 @@ static void emit_instr(EmitCtx *c, Instr *ins)
         } else {
             fprintf(c->out, "  call %s\n", ins->call_name);
         }
+        if (ins->call_ret_type == LIR_TYPE_F80)
+            fprintf(c->out, "  fstpt %d(%%rbp)\n", vreg_off(c, ins->dst));
         return;
     }
 
@@ -1725,7 +1953,7 @@ static void emit_terminator(EmitCtx *c, const LirBlock *block, int next)
         emit_instr(c, &ins);
         return;
     }
-    if (term->true_target == next) {
+    if (term->true_target == next && term->fpw == LIR_FP_NONE) {
         ins.cc = invert_cond(term->cc);
         ins.label = term->false_target;
         emit_instr(c, &ins);
@@ -1763,7 +1991,8 @@ void emit_x86_function(LirFn *lf, Function *fn, AllocResult *alloc,
     for (Param *p = fn->params; p; p = p->next) {
         if (p->abi_sse_start >= 0) {
             fprintf(out, "  %s %s, %ld(%%rbp)\n",
-                    type_same(type_decay(p->ty), type_float()) ? "movss" : "movsd",
+                    type_same(type_unqualified(type_decay(p->ty)), type_float())
+                        ? "movss" : "movsd",
                     xmm_name(PHYS_XMM0 + p->abi_sse_start),
                     fp_disp(&ctx, p->offset));
             continue;

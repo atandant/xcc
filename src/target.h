@@ -11,6 +11,7 @@ typedef struct TargetDesc TargetDesc;
 typedef enum {
     REG_CLASS_GPR,
     REG_CLASS_XMM,
+    REG_CLASS_MEMORY,
     REG_CLASS_COUNT,
 } RegClass;
 

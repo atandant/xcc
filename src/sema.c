@@ -722,7 +722,7 @@ static void check_init_list_from_self(Node *init, Node *decl)
         check_init_from_self(e, decl);
 }
 
-static Node *check_flat_init_type(Type *t, Node *e, SourceLoc loc, Node *decl)
+static Node **check_flat_init_type(Type *t, Node **ep, SourceLoc loc, Node *decl)
 {
     int i;
 
@@ -731,24 +731,27 @@ static Node *check_flat_init_type(Type *t, Node *e, SourceLoc loc, Node *decl)
         int n = type_array_count(t);
 
         for (i = 0; i < n; i++)
-            e = check_flat_init_type(elem, e, loc, decl);
-        return e;
+            ep = check_flat_init_type(elem, ep, loc, decl);
+        return ep;
     }
     if (type_is_record(t)) {
         Type *record = type_unqualified(t);
         int i, n = type_is_union(record) ? 1 : record->nmembers;
 
         for (i = 0; i < n; i++)
-            e = check_flat_init_type(record->members[i].ty, e, loc, decl);
-        return e;
+            ep = check_flat_init_type(record->members[i].ty, ep, loc, decl);
+        return ep;
     }
+    Node *e = *ep;
     if (!e)
-        return NULL;
+        return ep;
     if (!expr_assignable_to(t, e))
         diag_incompatible_init(e->loc, t, e);
-    else
+    else {
         warn_value_conversion(e->loc, t, e);
-    return e->next;
+        convert_expr(ep, t);
+    }
+    return &(*ep)->next;
 }
 
 /* C89 3.5.7: a scalar may be initialized by a brace-enclosed single
@@ -810,7 +813,7 @@ static void sema_brace_init(Node *decl)
 
     resolve_init_list(flat, CTX_RVALUE);
     check_init_list_from_self(flat, decl);
-    check_flat_init_type(decl->ty, flat->body, decl->loc, decl);
+    check_flat_init_type(decl->ty, &flat->body, decl->loc, decl);
 }
 
 static int type_record_contains_floating(Type *ty)
@@ -1204,7 +1207,8 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
                 /* C89 default argument promotions: float becomes double and
                  * narrow integer types undergo integral promotion. */
                 for (Node **ap = &n->args; *ap; ap = &(*ap)->next) {
-                    Type *promoted = type_same((*ap)->ty, type_float())
+                    Type *promoted = type_same(type_unqualified((*ap)->ty),
+                                               type_float())
                         ? type_double() : type_int_promote((*ap)->ty);
                     convert_expr(ap, promoted);
                 }
@@ -2438,8 +2442,13 @@ static int floating_constant_eval(Node *n, double *out)
     case ND_NUM:
         if (n->is_floating_literal)
             *out = n->float_val;
-        else if (ice_eval(n, &iv))
-            *out = (double)iv;
+        else if (ice_eval(n, &iv)) {
+            if (type_is_integer(n->ty) && !type_is_signed(n->ty) &&
+                type_int_width(n->ty) == 8)
+                *out = (double)(unsigned long)iv;
+            else
+                *out = (double)iv;
+        }
         else
             return 0;
         break;
@@ -2468,7 +2477,7 @@ static int floating_constant_eval(Node *n, double *out)
     default:
         return 0;
     }
-    if (n->ty && type_same(n->ty, type_float()))
+    if (n->ty && type_same(type_unqualified(n->ty), type_float()))
         *out = (double)(float)*out;
     return 1;
 }
@@ -2538,7 +2547,7 @@ static int encode_static_initializer(GlobalObject *object, Type *ty,
 
             if (!floating_constant_eval(value, &floating))
                 return static_initializer_error(object);
-            if (type_same(ty, type_float())) {
+            if (type_same(type_unqualified(ty), type_float())) {
                 float narrowed = (float)floating;
                 memcpy(object->init_data + offset, &narrowed, sizeof(narrowed));
             } else {
@@ -2660,7 +2669,7 @@ static void sema_global_object(GlobalObject *object)
         flat = flatten_brace_init(object->ty, object->init, object->loc);
         object->init = flat;
         resolve_init_list(flat, CTX_RVALUE);
-        check_flat_init_type(object->ty, flat->body, object->loc, NULL);
+        check_flat_init_type(object->ty, &flat->body, object->loc, NULL);
         cursor = flat->body;
     } else {
         if (object->init->kind == ND_INIT_LIST) {

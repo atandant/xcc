@@ -248,6 +248,12 @@ static void instr_use_def(Instr *ins, int i, const TargetDesc *td, Liveness *lv,
         /* Arguments and an indirect callee are read at i.  The call clobbers
            caller-saved registers immediately afterward, at i + 1. */
         block_caller_saved(lv, td, i + 1);
+        if (ins->call_ret_type == LIR_TYPE_F80)
+            add_def(defs, nd, ins->dst);
+        return;
+
+    case LIR_FRET:
+        operand_vreg_uses(ins->a, uses, nu);
         return;
 
     case LIR_RET:

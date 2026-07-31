@@ -53,13 +53,13 @@ static int fold_literal_operand(Node *n, long *out, Type **out_ty)
     if (!n || !out || !out_ty)
         return 0;
 
-    if (n->kind == ND_NUM) {
+    if (n->kind == ND_NUM && type_is_integer(n->ty)) {
         *out = n->val;
         *out_ty = n->ty;
         return 1;
     }
     if (n->kind == ND_CAST && n->operand && n->operand->kind == ND_NUM &&
-        type_is_integer(n->ty)) {
+        type_is_integer(n->operand->ty) && type_is_integer(n->ty)) {
         *out = type_convert_const_from(n->operand->val, n->operand->ty, n->ty);
         *out_ty = n->ty;
         return 1;
@@ -122,7 +122,8 @@ int ast_const_fold_expr(Node **np)
         /* x - x is zero for the same non-volatile scalar object.  xcc does
            not yet support volatile-qualified types; add that guard here when
            qualifiers are introduced. */
-        if (n->op == OP_SUB && same_scalar_variable(n->lhs, n->rhs)) {
+        if (n->op == OP_SUB && type_is_integer(n->ty) &&
+            same_scalar_variable(n->lhs, n->rhs)) {
             replace_expr_preserve_next(np, n, fold_to_num(0, n->ty, n->loc));
             return 1;
         }
@@ -171,7 +172,8 @@ int ast_const_fold_expr(Node **np)
         return changed;
     case ND_NOT:
         changed |= ast_const_fold_expr(&n->operand);
-        if (n->operand && n->operand->kind == ND_NUM) {
+        if (n->operand && n->operand->kind == ND_NUM &&
+            type_is_integer(n->operand->ty)) {
             replace_expr_preserve_next(np, n,
                 fold_to_num(!n->operand->val, type_int(), n->loc));
             return 1;
@@ -182,7 +184,8 @@ int ast_const_fold_expr(Node **np)
         changed |= ast_const_fold_expr(&n->lhs);
         changed |= ast_const_fold_expr(&n->rhs);
         if (n->lhs && n->rhs && n->lhs->kind == ND_NUM &&
-            n->rhs->kind == ND_NUM) {
+            n->rhs->kind == ND_NUM && type_is_integer(n->lhs->ty) &&
+            type_is_integer(n->rhs->ty)) {
             long value = n->kind == ND_LOGAND
                 ? (n->lhs->val != 0 && n->rhs->val != 0)
                 : (n->lhs->val != 0 || n->rhs->val != 0);
@@ -195,7 +198,8 @@ int ast_const_fold_expr(Node **np)
         changed |= ast_const_fold_expr(&n->cond);
         changed |= ast_const_fold_expr(&n->then_expr);
         changed |= ast_const_fold_expr(&n->else_expr);
-        if (n->cond && n->cond->kind == ND_NUM) {
+        if (n->cond && n->cond->kind == ND_NUM &&
+            type_is_integer(n->cond->ty)) {
             Node *selected = n->cond->val ? n->then_expr : n->else_expr;
             replace_expr_preserve_next(np, n, selected);
             return 1;
@@ -213,7 +217,7 @@ int ast_const_fold_expr(Node **np)
          * Plain (char) reduces modulo 256 (unsigned-byte model); (void) has
          * no value, so it is left for codegen to discard. */
         if (n->operand && n->operand->kind == ND_NUM &&
-            !type_is_void(n->ty) && type_is_scalar(n->ty)) {
+            type_is_integer(n->operand->ty) && type_is_integer(n->ty)) {
             long v = type_convert_const_from(n->operand->val,
                                              n->operand->ty, n->ty);
             replace_expr_preserve_next(np, n, fold_to_num(v, n->ty, n->loc));

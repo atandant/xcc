@@ -81,6 +81,84 @@ static void verify_operand(const LirFn *fn, int block, Operand operand)
     }
 }
 
+static int operand_is_type(const LirFn *fn, Operand operand, LirType type)
+{
+    return operand.kind == OPND_VREG &&
+           lir_vreg_type(fn, operand.u.vreg) == type;
+}
+
+static void verify_f80_instr(const LirFn *fn, int block, const Instr *ins)
+{
+    if (ins->op == LIR_LOAD && ins->dst >= 0 &&
+        lir_vreg_type(fn, ins->dst) == LIR_TYPE_F80) {
+        if (ins->aux != 16 || ins->fpw != LIR_FP_F80)
+            malformed(fn, block, "F80 load has an invalid width");
+        return;
+    }
+
+    if (ins->op == LIR_STORE && ins->b.kind == OPND_VREG &&
+        lir_vreg_type(fn, ins->b.u.vreg) == LIR_TYPE_F80) {
+        if (ins->aux != 16 || ins->fpw != LIR_FP_F80)
+            malformed(fn, block, "F80 store has an invalid width");
+        return;
+    }
+
+    if (ins->op == LIR_MOV && ins->dst >= 0 &&
+        lir_vreg_type(fn, ins->dst) == LIR_TYPE_F80) {
+        if (!operand_is_type(fn, ins->a, LIR_TYPE_F80))
+            malformed(fn, block, "F80 move has a non-F80 source");
+        return;
+    }
+
+    if ((ins->op == LIR_FADD || ins->op == LIR_FSUB ||
+         ins->op == LIR_FMUL || ins->op == LIR_FDIV) &&
+        ins->fpw == LIR_FP_F80) {
+        if (ins->dst < 0 || lir_vreg_type(fn, ins->dst) != LIR_TYPE_F80 ||
+            !operand_is_type(fn, ins->a, LIR_TYPE_F80) ||
+            !operand_is_type(fn, ins->b, LIR_TYPE_F80))
+            malformed(fn, block, "F80 arithmetic mixes value types");
+        return;
+    }
+
+    if (ins->op == LIR_FNEG && ins->fpw == LIR_FP_F80) {
+        if (ins->dst < 0 || lir_vreg_type(fn, ins->dst) != LIR_TYPE_F80 ||
+            !operand_is_type(fn, ins->a, LIR_TYPE_F80))
+            malformed(fn, block, "F80 negation mixes value types");
+        return;
+    }
+
+    if (ins->op == LIR_FSETCC && ins->fpw == LIR_FP_F80) {
+        if (ins->dst < 0 || lir_vreg_type(fn, ins->dst) != LIR_TYPE_I64 ||
+            !operand_is_type(fn, ins->a, LIR_TYPE_F80) ||
+            !operand_is_type(fn, ins->b, LIR_TYPE_F80))
+            malformed(fn, block, "F80 comparison mixes value types");
+        return;
+    }
+
+    if (ins->op == LIR_FRET) {
+        if (ins->fpw != LIR_FP_F80 ||
+            !operand_is_type(fn, ins->a, LIR_TYPE_F80))
+            malformed(fn, block, "F80 return has an invalid value");
+        return;
+    }
+
+    if (ins->op != LIR_CONV)
+        return;
+    if (ins->conv == CONV_F32_F80 || ins->conv == CONV_F64_F80) {
+        LirType source = ins->conv == CONV_F32_F80
+            ? LIR_TYPE_F32 : LIR_TYPE_F64;
+        if (ins->dst < 0 || lir_vreg_type(fn, ins->dst) != LIR_TYPE_F80 ||
+            !operand_is_type(fn, ins->a, source))
+            malformed(fn, block, "conversion to F80 mixes value types");
+    } else if (ins->conv == CONV_F80_F32 || ins->conv == CONV_F80_F64) {
+        LirType destination = ins->conv == CONV_F80_F32
+            ? LIR_TYPE_F32 : LIR_TYPE_F64;
+        if (ins->dst < 0 || lir_vreg_type(fn, ins->dst) != destination ||
+            !operand_is_type(fn, ins->a, LIR_TYPE_F80))
+            malformed(fn, block, "conversion from F80 mixes value types");
+    }
+}
+
 void lir_cfg_verify(const LirFn *fn)
 {
     unsigned char *defined;
@@ -122,6 +200,11 @@ void lir_cfg_verify(const LirFn *fn)
                     malformed(fn, i, "indirect call uses an invalid vreg");
                 for (int a = 0; a < ins->nargs; a++)
                     verify_operand(fn, i, ins->call_args[a]);
+                if (ins->call_ret_type == LIR_TYPE_F80) {
+                    if (ins->dst < 0 || ins->dst >= fn->nvreg ||
+                        lir_vreg_type(fn, ins->dst) != LIR_TYPE_F80)
+                        malformed(fn, i, "F80 call has an invalid destination");
+                }
             }
             if (lir_instruction_defines_vreg(ins)) {
                 if (ins->dst >= fn->nvreg)
@@ -130,10 +213,15 @@ void lir_cfg_verify(const LirFn *fn)
                     malformed(fn, i, "vreg has multiple SSA definitions");
                 defined[ins->dst] = 1;
             }
+            verify_f80_instr(fn, i, ins);
         }
         if (block->term.kind == LIR_TERM_BR) {
             verify_operand(fn, i, block->term.a);
             verify_operand(fn, i, block->term.b);
+            if (block->term.fpw == LIR_FP_F80 &&
+                (!operand_is_type(fn, block->term.a, LIR_TYPE_F80) ||
+                 !operand_is_type(fn, block->term.b, LIR_TYPE_F80)))
+                malformed(fn, i, "F80 branch mixes value types");
         } else if (block->term.kind == LIR_TERM_RET) {
             verify_operand(fn, i, block->term.a);
         }
@@ -166,6 +254,9 @@ void lir_cfg_verify(const LirFn *fn)
                 if (lir_vreg_class(fn, phi->dst) !=
                     lir_vreg_class(fn, phi->inputs[a].value))
                     malformed(fn, i, "phi mixes register classes");
+                if (lir_vreg_type(fn, phi->dst) !=
+                    lir_vreg_type(fn, phi->inputs[a].value))
+                    malformed(fn, i, "phi mixes value types");
                 for (int b = a + 1; b < phi->ninputs; b++) {
                     if (phi->inputs[a].pred == phi->inputs[b].pred)
                         malformed(fn, i, "phi has duplicate predecessor inputs");
@@ -280,7 +371,7 @@ static void lower_phi_copies(LirFn *fn, LirBlockId block_id,
             int tmp;
             while (done[first])
                 first++;
-            tmp = lir_new_vreg_class(fn, lir_vreg_class(fn, src[first]));
+            tmp = lir_new_vreg_type(fn, lir_vreg_type(fn, src[first]));
             append_copy(insert, tmp, src[first]);
             for (int i = 0; i < n; i++) {
                 if (!done[i] && src[i] == src[first])

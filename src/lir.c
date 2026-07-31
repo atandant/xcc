@@ -83,6 +83,8 @@ int lir_instruction_defines_vreg(const Instr *ins)
     case LIR_FSETCC:
     case LIR_CONV:
         return ins->dst >= 0;
+    case LIR_CALL:
+        return ins->call_ret_type == LIR_TYPE_F80 && ins->dst >= 0;
     default:
         return 0;
     }
@@ -99,8 +101,8 @@ LirFn *lir_fn_new(const char *name)
     fn->vreg_fixed_cap = 64;
     fn->vreg_fixed_phys = arena_alloc((size_t)fn->vreg_fixed_cap *
                                       sizeof(*fn->vreg_fixed_phys));
-    fn->vreg_class = arena_alloc((size_t)fn->vreg_fixed_cap *
-                                 sizeof(*fn->vreg_class));
+    fn->vreg_type = arena_alloc((size_t)fn->vreg_fixed_cap *
+                                sizeof(*fn->vreg_type));
     for (int i = 0; i < fn->vreg_fixed_cap; i++)
         fn->vreg_fixed_phys[i] = -1;
     fn->homes_cap = 32;
@@ -223,7 +225,7 @@ int lir_max_outgoing(const LirFn *lf)
 
         if (ins->op != LIR_CALL)
             continue;
-        int out = 8 * ((ins->nargs - ins->call_nreg) + ins->call_nsse);
+        int out = lir_call_outgoing_size(ins);
         if (out > max_out)
             max_out = out;
       }
@@ -231,36 +233,100 @@ int lir_max_outgoing(const LirFn *lf)
     return max_out;
 }
 
+static int call_arg_size(const Instr *ins, int index)
+{
+    if (ins->call_arg_types && ins->call_arg_types[index] == LIR_TYPE_F80)
+        return 16;
+    return 8;
+}
+
+int lir_call_stack_offset(const Instr *ins, int index)
+{
+    int offset = 0;
+
+    assert(index >= ins->call_nreg && index < ins->nargs);
+    for (int i = ins->call_nreg; i < index; i++) {
+        int size = call_arg_size(ins, i);
+        offset = (offset + size - 1) & -size;
+        offset += size;
+    }
+    {
+        int size = call_arg_size(ins, index);
+        return (offset + size - 1) & -size;
+    }
+}
+
+int lir_call_stack_size(const Instr *ins)
+{
+    if (ins->nargs == ins->call_nreg)
+        return 0;
+    {
+        int last = ins->nargs - 1;
+        return lir_call_stack_offset(ins, last) + call_arg_size(ins, last);
+    }
+}
+
+int lir_call_outgoing_size(const Instr *ins)
+{
+    return lir_call_stack_size(ins) + 8 * ins->call_nsse;
+}
+
 int lir_new_vreg(LirFn *fn)
 {
-    return lir_new_vreg_class(fn, REG_CLASS_GPR);
+    return lir_new_vreg_type(fn, LIR_TYPE_I64);
 }
 
 int lir_new_vreg_class(LirFn *fn, RegClass reg_class)
+{
+    return lir_new_vreg_type(fn,
+        reg_class == REG_CLASS_XMM ? LIR_TYPE_F64 :
+        reg_class == REG_CLASS_MEMORY ? LIR_TYPE_F80 : LIR_TYPE_I64);
+}
+
+int lir_new_vreg_type(LirFn *fn, LirType type)
 {
     if (fn->nvreg >= fn->vreg_fixed_cap) {
         int old_cap = fn->vreg_fixed_cap;
         int new_cap = old_cap * 2;
         int *fixed = arena_alloc((size_t)new_cap * sizeof(*fixed));
-        RegClass *classes = arena_alloc((size_t)new_cap * sizeof(*classes));
+        LirType *types = arena_alloc((size_t)new_cap * sizeof(*types));
 
         memcpy(fixed, fn->vreg_fixed_phys, (size_t)old_cap * sizeof(*fixed));
-        memcpy(classes, fn->vreg_class, (size_t)old_cap * sizeof(*classes));
+        memcpy(types, fn->vreg_type, (size_t)old_cap * sizeof(*types));
         for (int i = old_cap; i < new_cap; i++)
             fixed[i] = -1;
         fn->vreg_fixed_phys = fixed;
-        fn->vreg_class = classes;
+        fn->vreg_type = types;
         fn->vreg_fixed_cap = new_cap;
     }
     fn->vreg_fixed_phys[fn->nvreg] = -1;
-    fn->vreg_class[fn->nvreg] = reg_class;
+    fn->vreg_type[fn->nvreg] = type;
     return fn->nvreg++;
+}
+
+LirType lir_vreg_type(const LirFn *fn, int vreg)
+{
+    assert(vreg >= 0 && vreg < fn->nvreg);
+    return fn->vreg_type[vreg];
 }
 
 RegClass lir_vreg_class(const LirFn *fn, int vreg)
 {
-    assert(vreg >= 0 && vreg < fn->nvreg);
-    return fn->vreg_class[vreg];
+    LirType type = lir_vreg_type(fn, vreg);
+    if (type == LIR_TYPE_F80)
+        return REG_CLASS_MEMORY;
+    return type == LIR_TYPE_F32 || type == LIR_TYPE_F64
+        ? REG_CLASS_XMM : REG_CLASS_GPR;
+}
+
+int lir_type_storage_size(LirType type)
+{
+    return type == LIR_TYPE_F80 ? 16 : 8;
+}
+
+int lir_type_storage_align(LirType type)
+{
+    return type == LIR_TYPE_F80 ? 16 : 8;
 }
 
 void lir_precolor_vreg(LirFn *fn, int vreg, int phys)
@@ -349,6 +415,7 @@ static const char *op_name(LirOp op)
     case LIR_FDIV: return "fdiv";
     case LIR_FNEG: return "fneg";
     case LIR_FSETCC: return "fsetcc";
+    case LIR_FRET: return "fret";
     case LIR_BR:    return "br";
     case LIR_JMP:   return "jmp";
     case LIR_LABEL: return "label";
@@ -389,14 +456,22 @@ static const char *conv_name(ConvKind k)
     case CONV_SI64_F64: return "si64_f64";
     case CONV_UI32_F32: return "ui32_f32";
     case CONV_UI32_F64: return "ui32_f64";
+    case CONV_UI64_F32: return "ui64_f32";
+    case CONV_UI64_F64: return "ui64_f64";
     case CONV_F32_SI32: return "f32_si32";
     case CONV_F32_SI64: return "f32_si64";
     case CONV_F64_SI32: return "f64_si32";
     case CONV_F64_SI64: return "f64_si64";
     case CONV_F32_UI32: return "f32_ui32";
     case CONV_F64_UI32: return "f64_ui32";
+    case CONV_F32_UI64: return "f32_ui64";
+    case CONV_F64_UI64: return "f64_ui64";
     case CONV_F32_F64: return "f32_f64";
     case CONV_F64_F32: return "f64_f32";
+    case CONV_F32_F80: return "f32_f80";
+    case CONV_F64_F80: return "f64_f80";
+    case CONV_F80_F32: return "f80_f32";
+    case CONV_F80_F64: return "f80_f64";
     }
     return "?";
 }
@@ -445,6 +520,7 @@ static void dump_instr(FILE *out, Instr *ins, int index)
         case LIR_LOAD:
         case LIR_NEG:
         case LIR_FNEG:
+        case LIR_FRET:
         case LIR_CONV:
             dump_operand(out, ins->a);
             if (ins->op == LIR_LOAD)

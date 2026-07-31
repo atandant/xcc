@@ -37,6 +37,7 @@ typedef enum {
     LIR_FDIV,
     LIR_FNEG,
     LIR_FSETCC,
+    LIR_FRET,       /* load an F80 return value into x87 ST(0) */
     LIR_BR,
     LIR_JMP,
     LIR_LABEL,
@@ -58,7 +59,14 @@ typedef enum { LIR_W4, LIR_W8 } LirWidth;
 
 typedef enum { LIR_SGN_Z, LIR_SGN_S, LIR_SGN_U } LirSign;
 
-typedef enum { LIR_FP_NONE, LIR_FP_F32, LIR_FP_F64 } LirFloatWidth;
+typedef enum { LIR_FP_NONE, LIR_FP_F32, LIR_FP_F64, LIR_FP_F80 } LirFloatWidth;
+
+typedef enum {
+    LIR_TYPE_I64,
+    LIR_TYPE_F32,
+    LIR_TYPE_F64,
+    LIR_TYPE_F80,
+} LirType;
 
 typedef enum {
     CC_EQ,
@@ -83,14 +91,22 @@ typedef enum {
     CONV_SI64_F64,
     CONV_UI32_F32,
     CONV_UI32_F64,
+    CONV_UI64_F32,
+    CONV_UI64_F64,
     CONV_F32_SI32,
     CONV_F32_SI64,
     CONV_F64_SI32,
     CONV_F64_SI64,
     CONV_F32_UI32,
     CONV_F64_UI32,
+    CONV_F32_UI64,
+    CONV_F64_UI64,
     CONV_F32_F64,
     CONV_F64_F32,
+    CONV_F32_F80,
+    CONV_F64_F80,
+    CONV_F80_F32,
+    CONV_F80_F64,
 } ConvKind;
 
 #define LIR_NO_VREG (-1)
@@ -134,6 +150,8 @@ struct Instr {
     int call_ngpr;
     int call_nsse;
     Operand *call_args;
+    LirType *call_arg_types;
+    LirType call_ret_type;
     int aux; /* LOAD/STORE: byte width; POW2 ops: log2(divisor) */
     int position; /* allocator order, assigned after phi elimination */
 };
@@ -219,7 +237,7 @@ struct LirFn {
     int cap;
     int nvreg;
     int *vreg_fixed_phys;
-    RegClass *vreg_class;
+    LirType *vreg_type;
     int vreg_fixed_cap;
     int label_count;
     int epilogue_label;
@@ -241,7 +259,11 @@ int lir_instruction_defines_vreg(const Instr *ins);
 LirFn *lir_fn_new(const char *name);
 int lir_new_vreg(LirFn *fn);
 int lir_new_vreg_class(LirFn *fn, RegClass reg_class);
+int lir_new_vreg_type(LirFn *fn, LirType type);
+LirType lir_vreg_type(const LirFn *fn, int vreg);
 RegClass lir_vreg_class(const LirFn *fn, int vreg);
+int lir_type_storage_size(LirType type);
+int lir_type_storage_align(LirType type);
 void lir_precolor_vreg(LirFn *fn, int vreg, int phys);
 int lir_vreg_precolor(const LirFn *fn, int vreg);
 int lir_new_label(LirFn *fn);
@@ -257,5 +279,8 @@ int lir_home_vreg(const LirFn *lf, int offset);
 int lir_is_home_vreg(const LirFn *lf, int vreg);
 void lir_bind_home(LirFn *lf, int offset, int vreg);
 int lir_max_outgoing(const LirFn *lf);
+int lir_call_stack_offset(const Instr *ins, int index);
+int lir_call_stack_size(const Instr *ins);
+int lir_call_outgoing_size(const Instr *ins);
 
 #endif /* XCC_LIR_H */

@@ -166,6 +166,7 @@ run|deref_int_pointer_read.c|7||
 run|deref_int_pointer_write.c|9||
 run|div_assoc.c|5||
 run|div_mod.c|5||
+run|double_arithmetic.c|17||
 run|else_if_chain.c|2||
 run|else_if_final_else.c|99||
 run|else_if_long_chain.c|4||
@@ -216,11 +217,15 @@ xcc-error|error_continue_outside_loop.c|1|continue statement not within loop|
 xcc-error|error_deref_int.c|1|cannot dereference non-pointer type 'int'|
 xcc-error|error_deref_void_pointer.c|1|dereference of void pointer|
 xcc-error|error_enum_nonconst.c|1|enumerator value is not an integer constant expression|
+xcc-error|error_float_bitwise.c|1|invalid operands to bitwise operator|
+xcc-error|error_float_invalid_literal.c|1|invalid floating constant|
+xcc-error|error_float_long_suffix.c|1|long double constants are not supported|
 xcc-error|error_fnptr_arith.c|1|invalid operands to arithmetic operator|
 xcc-error|error_fnptr_parameter_incomplete_array.c|1|array parameter has incomplete element type 'int[0]'|
 xcc-error|error_fnptr_parameter_void_mixed.c|1|parameter must not have void type|
 xcc-error|error_function_redefinition.c|1|redefinition of 'f'|
 xcc-error|error_hex_unsigned_long_overflow.c|1|integer constant out of range|
+xcc-error|error_long_double.c|1|long double is not supported|
 xcc-error|error_long_literal_overflow.c|1|integer constant out of range|
 xcc-error|error_long_suffix_ll.c|1|invalid suffix on integer constant|
 xcc-error|error_long_suffix_unsigned.c|1|invalid suffix on integer constant|
@@ -278,6 +283,43 @@ run|expression_grammar_layers.c|31||
 run|expr_stmt_effect.c|7||
 run|falloff_non_main_returns_zero.c|0||
 run|fallthrough.c|0||
+run|float_arithmetic.c|10||
+run|float_array.c|13||
+run|float_assignment.c|12||
+run|float_call_preserves_live.c|20||
+run|float_cast_from_int.c|42||
+run|float_cast_long.c|37||
+run|float_cast_to_int.c|1||
+run|float_cast_unsigned.c|1||
+run|float_comma.c|8||
+run|float_comparisons.c|42||
+run|float_compound.c|9||
+run|float_conditional.c|9||
+run|float_const.c|9||
+run|float_function.c|9||
+run|float_function_pointer.c|7||
+run|float_global_array.c|9||
+run|float_global_init.c|10||
+run|float_incdec.c|12||
+run|float_interleaved_args.c|45||
+run|float_literal_forms.c|15||
+run|float_logical.c|3||
+run|float_loop.c|15||
+run|float_many_sse_args.c|36||
+run|float_mixed_arithmetic.c|11||
+run|float_mixed_params.c|36||
+run|float_nan_comparisons.c|1||
+run|float_pointer.c|8||
+run|float_recursive.c|16||
+run|float_sizeof.c|12||
+run|float_spill_pressure.c|78||
+run|float_stack_args.c|55||
+run|float_static_init.c|7||
+run|float_truth.c|7||
+run|float_typedef.c|7||
+run|float_unary.c|7||
+run|float_unprototyped_promotion.c|6||
+run|float_width_cast.c|1||
 run|fnptr_cast_void.c|2||
 run|fnptr_decay_addr.c|7||
 run|fnptr_decl_call.c|42||

@@ -90,8 +90,11 @@ static int fresh(LowerCtx *c)
 
 static int fresh_type(LowerCtx *c, Type *ty)
 {
-    return lir_new_vreg_class(c->lf,
-        type_is_floating(ty) ? REG_CLASS_XMM : REG_CLASS_GPR);
+    if (!type_is_floating(ty))
+        return lir_new_vreg_type(c->lf, LIR_TYPE_I64);
+    return lir_new_vreg_type(c->lf,
+        type_same(type_unqualified(ty), type_float())
+            ? LIR_TYPE_F32 : LIR_TYPE_F64);
 }
 
 static int protect_home_before(LowerCtx *c, int v, Node *later)
@@ -843,13 +846,17 @@ static int emit_conv_value(LowerCtx *c, int src, ConvKind k)
     int to_float = k == CONV_SI32_F32 || k == CONV_SI32_F64 ||
                    k == CONV_SI64_F32 || k == CONV_SI64_F64 ||
                    k == CONV_UI32_F32 || k == CONV_UI32_F64 ||
+                   k == CONV_UI64_F32 || k == CONV_UI64_F64 ||
                    k == CONV_F32_F64 || k == CONV_F64_F32;
-    int dst = lir_new_vreg_class(c->lf,
-        to_float ? REG_CLASS_XMM : REG_CLASS_GPR);
     LirFloatWidth fpw = (k == CONV_SI32_F32 || k == CONV_SI64_F32 ||
                          k == CONV_UI32_F32 || k == CONV_F64_F32 ||
+                         k == CONV_UI64_F32 ||
                          k == CONV_F32_SI32 || k == CONV_F32_SI64 ||
-                         k == CONV_F32_UI32) ? LIR_FP_F32 : LIR_FP_F64;
+                         k == CONV_F32_UI32 || k == CONV_F32_UI64)
+                        ? LIR_FP_F32 : LIR_FP_F64;
+    int dst = lir_new_vreg_type(c->lf, to_float
+        ? (fpw == LIR_FP_F32 ? LIR_TYPE_F32 : LIR_TYPE_F64)
+        : LIR_TYPE_I64);
     emit(c, (Instr){ .op = LIR_CONV, .dst = dst, .a = lir_vreg(src),
                      .conv = k, .fpw = fpw });
     return dst;
@@ -927,14 +934,16 @@ static int convert_value(LowerCtx *c, int v, Type *from, Type *to)
         return v;
 
     if (type_is_floating(from) || type_is_floating(to)) {
-        if (type_same(from, to))
+        if (type_same(type_unqualified(from), type_unqualified(to)))
             return v;
         if (type_is_floating(from) && type_is_floating(to))
-            return emit_conv_value(c, v, type_same(to, type_double())
+            return emit_conv_value(c, v, float_width(to) == LIR_FP_F64
                 ? CONV_F32_F64 : CONV_F64_F32);
         if (type_is_integer(from) && type_is_floating(to)) {
             int wide = type_int_width(from) == 8;
-            int f64 = type_same(to, type_double());
+            int f64 = float_width(to) == LIR_FP_F64;
+            if (!type_is_signed(from) && wide)
+                return emit_conv_value(c, v, f64 ? CONV_UI64_F64 : CONV_UI64_F32);
             if (!type_is_signed(from) && !wide)
                 return emit_conv_value(c, v, f64 ? CONV_UI32_F64 : CONV_UI32_F32);
             return emit_conv_value(c, v,
@@ -943,11 +952,14 @@ static int convert_value(LowerCtx *c, int v, Type *from, Type *to)
         }
         if (type_is_floating(from) && type_is_integer(to)) {
             int wide = type_int_width(to) == 8;
+            if (!type_is_signed(to) && wide)
+                return emit_conv_value(c, v, float_width(from) == LIR_FP_F32
+                    ? CONV_F32_UI64 : CONV_F64_UI64);
             if (!type_is_signed(to) && !wide)
-                return emit_conv_value(c, v, type_same(from, type_float())
+                return emit_conv_value(c, v, float_width(from) == LIR_FP_F32
                     ? CONV_F32_UI32 : CONV_F64_UI32);
             return emit_conv_value(c, v,
-                type_same(from, type_float())
+                float_width(from) == LIR_FP_F32
                     ? (wide ? CONV_F32_SI64 : CONV_F32_SI32)
                     : (wide ? CONV_F64_SI64 : CONV_F64_SI32));
         }
@@ -1365,6 +1377,7 @@ static int lower_call_ex(LowerCtx *c, Node *n, int result_off)
     int stack_cap = 0;
     int total;
     Operand *args;
+    LirType *arg_types;
     int i;
     Node *a;
 
@@ -1421,12 +1434,18 @@ static int lower_call_ex(LowerCtx *c, Node *n, int result_off)
 
     total = nreg + nsse + nstack;
     args = arena_alloc((size_t)total * sizeof(*args));
+    arg_types = arena_alloc((size_t)total * sizeof(*arg_types));
     for (i = 0; i < nreg; i++)
         args[i] = reg_slots[i];
     for (i = 0; i < nsse; i++)
         args[nreg + i] = sse_slots[i];
     for (i = 0; i < nstack; i++)
         args[nreg + nsse + i] = stack_slots[i];
+    for (i = 0; i < total; i++) {
+        if (args[i].kind != OPND_VREG)
+            diag_fatal("internal error: call argument is not a virtual register");
+        arg_types[i] = lir_vreg_type(c->lf, args[i].u.vreg);
+    }
 
     {
         int call_reg = 0;
@@ -1443,6 +1462,7 @@ static int lower_call_ex(LowerCtx *c, Node *n, int result_off)
             .call_ngpr = nreg,
             .call_nsse = nsse,
             .call_args = args,
+            .call_arg_types = arg_types,
         });
     }
 
@@ -1717,7 +1737,7 @@ static int lower_step_value(LowerCtx *c, int old, Type *oty, int is_inc)
         float f = 1.0f;
         unsigned long bits = 0;
 
-        if (type_same(oty, type_float()))
+        if (float_width(oty) == LIR_FP_F32)
             memcpy(&bits, &f, sizeof(f));
         else
             memcpy(&bits, &d, sizeof(d));
@@ -1842,7 +1862,7 @@ static int lower_expr(LowerCtx *c, Node *n)
         int dst = fresh_type(c, n->ty);
         if (n->is_floating_literal) {
             long bits;
-            if (type_same(n->ty, type_float())) {
+            if (float_width(n->ty) == LIR_FP_F32) {
                 float value = (float)n->float_val;
                 unsigned int raw;
                 memcpy(&raw, &value, sizeof(raw));
