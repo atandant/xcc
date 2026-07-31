@@ -8,7 +8,6 @@
 
 int lir_test_failed;
 LirFn *lir_test_fn;
-const char *g_filename = "<lir-test>";
 
 void lir_test_fail(const char *file, int line, const char *fmt, ...)
 {

@@ -16,7 +16,7 @@ void yyerror(const char *msg);
 
 ExternalDecl *g_program = NULL;
 
-#define LOC(L) ((SourceLoc){ (L).first_line, (L).first_column })
+#define LOC(L) ((SourceLoc){ (L).file, (L).first_line, (L).first_column })
 
 static Type *declspec_without_storage(DeclSpec *spec, SourceLoc loc,
                                       const char *context)
@@ -36,6 +36,21 @@ static Type *parameter_declspec_type(DeclSpec *spec, SourceLoc loc)
 %}
 
 %locations
+%define api.location.type {XccLocation}
+%code top {
+#define YYLLOC_DEFAULT(Current, Rhs, N)                                  \
+    do {                                                                 \
+        if (N) {                                                         \
+            (Current).file = YYRHSLOC(Rhs, 1).file;                      \
+            (Current).first_line = YYRHSLOC(Rhs, 1).first_line;          \
+            (Current).first_column = YYRHSLOC(Rhs, 1).first_column;      \
+            (Current).last_line = YYRHSLOC(Rhs, N).last_line;            \
+            (Current).last_column = YYRHSLOC(Rhs, N).last_column;        \
+        } else {                                                         \
+            (Current) = YYRHSLOC(Rhs, 0);                                \
+        }                                                                \
+    } while (0)
+}
 %define parse.error verbose
 /* `extern/static/typedef/auto/register T` is intentionally shifted as a
    storage class plus typedef-name type rather than reduced as an implicit-int
@@ -736,6 +751,6 @@ arg_list:
 
 void yyerror(const char *msg)
 {
-    diag_error_at((SourceLoc){ yylloc.first_line, yylloc.first_column },
-                  "%s", msg);
+    diag_error_at((SourceLoc){ yylloc.file, yylloc.first_line,
+                               yylloc.first_column }, "%s", msg);
 }

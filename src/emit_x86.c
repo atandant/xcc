@@ -116,6 +116,16 @@ typedef struct {
     int rax_vreg;
 } EmitCtx;
 
+#define X86_MEM_NO_REG (-1)
+#define X86_MEM_FRAME  (-2)
+
+typedef struct {
+    int base;
+    int index;
+    int scale;
+    long disp;
+} X86MemRef;
+
 static void invalidate_rax(EmitCtx *c)
 {
     c->rax_vreg = -1;
@@ -216,46 +226,61 @@ static int spilled_vreg_off(EmitCtx *c, Operand op)
     return vreg_off(c, v);
 }
 
-static void emit_vreg_slot(EmitCtx *c, int v, const char *reg)
-{
-    materialize_vreg(c, v, reg);
-}
-
 static void store_vreg_slot(EmitCtx *c, int v, const char *reg)
 {
     store_vreg_value(c, v, reg);
 }
 
-static void load_mem_addr(EmitCtx *c, Operand mem, const char *reg)
+static X86MemRef prepare_mem_ref(EmitCtx *c, Operand mem)
 {
+    X86MemRef ref = {
+        .index = X86_MEM_NO_REG,
+        .scale = mem.u.mem.scale,
+        .disp = mem.u.mem.disp,
+    };
+
+    assert(mem.kind == OPND_MEM);
     if (mem.u.mem.base == LIR_FP) {
-        long disp = fp_disp(c, mem.u.mem.disp);
-
-        if (mem.u.mem.index == LIR_NO_IDX) {
-            fprintf(c->out, "  lea %ld(%%rbp), %s\n", disp, reg);
-            return;
+        ref.base = X86_MEM_FRAME;
+        ref.disp = fp_disp(c, ref.disp);
+    } else {
+        ref.base = vreg_phys(c, mem.u.mem.base);
+        if (ref.base < 0) {
+            ref.base = c->td->scratch0;
+            materialize_vreg(c, mem.u.mem.base, reg64_name(ref.base));
         }
-        emit_vreg_slot(c, mem.u.mem.index, "%r11");
-        fprintf(c->out, "  lea %ld(%%rbp,%%r11,%d), %s\n",
-                disp, mem.u.mem.scale, reg);
-        return;
     }
 
-    if (mem.u.mem.index == LIR_NO_IDX && mem.u.mem.disp == 0) {
-        /* base + 0: load the base directly into the target register. */
-        emit_vreg_slot(c, mem.u.mem.base, reg);
-        return;
+    if (mem.u.mem.index == LIR_NO_IDX)
+        return ref;
+    if (mem.u.mem.base != LIR_FP &&
+        mem.u.mem.index == mem.u.mem.base) {
+        ref.index = ref.base;
+        return ref;
     }
+    ref.index = vreg_phys(c, mem.u.mem.index);
+    if (ref.index < 0) {
+        ref.index = c->td->scratch1;
+        materialize_vreg(c, mem.u.mem.index, reg64_name(ref.index));
+    }
+    return ref;
+}
 
-    emit_vreg_slot(c, mem.u.mem.base, "%r10");
-    if (mem.u.mem.index == LIR_NO_IDX) {
-        fprintf(c->out, "  lea %ld(%%r10), %s\n", mem.u.mem.disp, reg);
-        return;
-    }
-    emit_vreg_slot(c, mem.u.mem.index, "%r11");
-    fprintf(c->out, "  lea (%%r10,%%r11,%d), %s\n", mem.u.mem.scale, reg);
-    if (mem.u.mem.disp)
-        fprintf(c->out, "  lea %ld(%s), %s\n", mem.u.mem.disp, reg, reg);
+static void emit_mem_ref(EmitCtx *c, X86MemRef ref)
+{
+    const char *base = ref.base == X86_MEM_FRAME
+                     ? "%rbp" : reg64_name(ref.base);
+
+    fprintf(c->out, "%ld(%s", ref.disp, base);
+    if (ref.index != X86_MEM_NO_REG)
+        fprintf(c->out, ",%s,%d", reg64_name(ref.index), ref.scale);
+    fputc(')', c->out);
+}
+
+static void emit_mem_ref_at(EmitCtx *c, X86MemRef ref, long delta)
+{
+    ref.disp += delta;
+    emit_mem_ref(c, ref);
 }
 
 static void load_operand(EmitCtx *c, Operand op, const char *reg, LirWidth w)
@@ -274,17 +299,23 @@ static void load_operand(EmitCtx *c, Operand op, const char *reg, LirWidth w)
         fprintf(c->out, "  mov %s, %s\n",
                 x86_reg_name_lir(op.u.phys, w), reg);
         return;
-    case OPND_MEM:
-        load_mem_addr(c, op, "%r10");
+    case OPND_MEM: {
+        X86MemRef ref = prepare_mem_ref(c, op);
+
         switch (w) {
         case LIR_W4:
-            fprintf(c->out, "  movslq (%%r10), %s\n", reg);
+            fprintf(c->out, "  movslq ");
+            emit_mem_ref(c, ref);
+            fprintf(c->out, ", %s\n", reg);
             return;
         case LIR_W8:
-            fprintf(c->out, "  mov (%%r10), %s\n", reg);
+            fprintf(c->out, "  mov ");
+            emit_mem_ref(c, ref);
+            fprintf(c->out, ", %s\n", reg);
             return;
         }
         return;
+    }
     default:
         assert(0);
     }
@@ -485,125 +516,129 @@ static void emit_call_register_args(EmitCtx *c, const Instr *ins)
     }
 }
 
-static void emit_store_rax_partial(EmitCtx *c, const char *base, long off,
-                                   int bytes)
-{
-    if (bytes >= 4) {
-        fprintf(c->out, "  mov %%eax, %ld(%s)\n", off, base);
-        fprintf(c->out, "  shr $32, %%rax\n");
-        off += 4;
-        bytes -= 4;
-    }
-    if (bytes >= 2) {
-        fprintf(c->out, "  mov %%ax, %ld(%s)\n", off, base);
-        fprintf(c->out, "  shr $16, %%rax\n");
-        off += 2;
-        bytes -= 2;
-    }
-    if (bytes == 1)
-        fprintf(c->out, "  mov %%al, %ld(%s)\n", off, base);
-}
-
-static void emit_load_rax_partial(EmitCtx *c, const char *base, long off,
-                                  int bytes)
+static void emit_store_rax_partial(EmitCtx *c, X86MemRef ref, int bytes)
 {
     int done = 0;
 
+    if (bytes >= 4) {
+        fprintf(c->out, "  mov %%eax, ");
+        emit_mem_ref_at(c, ref, done);
+        fputc('\n', c->out);
+        fprintf(c->out, "  shr $32, %%rax\n");
+        done += 4;
+        bytes -= 4;
+    }
+    if (bytes >= 2) {
+        fprintf(c->out, "  mov %%ax, ");
+        emit_mem_ref_at(c, ref, done);
+        fputc('\n', c->out);
+        fprintf(c->out, "  shr $16, %%rax\n");
+        done += 2;
+        bytes -= 2;
+    }
+    if (bytes == 1) {
+        fprintf(c->out, "  mov %%al, ");
+        emit_mem_ref_at(c, ref, done);
+        fputc('\n', c->out);
+    }
+}
+
+static void emit_load_rax_partial(EmitCtx *c, X86MemRef ref, int bytes)
+{
+    int done = 0;
+    int tmp = c->td->scratch1;
+
+    /* The tail loads use scratch1 while assembling the value in %rax.  If a
+       spilled index already occupies it, first collapse the address into
+       scratch0 so later chunks cannot destroy their own index. */
+    if (ref.index == tmp) {
+        fprintf(c->out, "  lea ");
+        emit_mem_ref(c, ref);
+        fprintf(c->out, ", %s\n", reg64_name(c->td->scratch0));
+        ref.base = c->td->scratch0;
+        ref.index = X86_MEM_NO_REG;
+        ref.scale = 1;
+        ref.disp = 0;
+    }
+
     fprintf(c->out, "  xor %%eax, %%eax\n");
     if (bytes >= 4) {
-        fprintf(c->out, "  mov %ld(%s), %%eax\n", off, base);
+        fprintf(c->out, "  mov ");
+        emit_mem_ref(c, ref);
+        fprintf(c->out, ", %%eax\n");
         done = 4;
     } else if (bytes >= 2) {
-        fprintf(c->out, "  movzwl %ld(%s), %%eax\n", off, base);
+        fprintf(c->out, "  movzwl ");
+        emit_mem_ref(c, ref);
+        fprintf(c->out, ", %%eax\n");
         done = 2;
     } else if (bytes == 1) {
-        fprintf(c->out, "  movzbl %ld(%s), %%eax\n", off, base);
+        fprintf(c->out, "  movzbl ");
+        emit_mem_ref(c, ref);
+        fprintf(c->out, ", %%eax\n");
         return;
     }
     if (bytes - done >= 2) {
-        fprintf(c->out, "  movzwl %ld(%s), %%r11d\n", off + done, base);
-        fprintf(c->out, "  shl $%d, %%r11\n", done * 8);
-        fprintf(c->out, "  or %%r11, %%rax\n");
+        fprintf(c->out, "  movzwl ");
+        emit_mem_ref_at(c, ref, done);
+        fprintf(c->out, ", %s\n", reg32_name(tmp));
+        fprintf(c->out, "  shl $%d, %s\n", done * 8, reg64_name(tmp));
+        fprintf(c->out, "  or %s, %%rax\n", reg64_name(tmp));
         done += 2;
     }
     if (bytes - done == 1) {
-        fprintf(c->out, "  movzbl %ld(%s), %%r11d\n", off + done, base);
-        fprintf(c->out, "  shl $%d, %%r11\n", done * 8);
-        fprintf(c->out, "  or %%r11, %%rax\n");
+        fprintf(c->out, "  movzbl ");
+        emit_mem_ref_at(c, ref, done);
+        fprintf(c->out, ", %s\n", reg32_name(tmp));
+        fprintf(c->out, "  shl $%d, %s\n", done * 8, reg64_name(tmp));
+        fprintf(c->out, "  or %s, %%rax\n", reg64_name(tmp));
     }
 }
 
-static void emit_store_mem(EmitCtx *c, Operand mem, LirWidth w, int bytes)
+static int emit_load_scalar_to_phys(EmitCtx *c, X86MemRef ref, int bytes,
+                                    LirSign sgn, int phys)
 {
-    load_mem_addr(c, mem, "%r10");
     switch (bytes) {
     case 1:
-        fprintf(c->out, "  mov %%al, (%%r10)\n");
-        return;
+        fprintf(c->out, sgn == LIR_SGN_S ? "  movsbl " : "  movzbl ");
+        emit_mem_ref(c, ref);
+        fprintf(c->out, ", %s\n", reg32_name(phys));
+        return 1;
     case 2:
-        fprintf(c->out, "  mov %%ax, (%%r10)\n");
-        return;
+        fprintf(c->out, sgn == LIR_SGN_S ? "  movswl " : "  movzwl ");
+        emit_mem_ref(c, ref);
+        fprintf(c->out, ", %s\n", reg32_name(phys));
+        return 1;
     case 4:
-        fprintf(c->out, "  mov %%eax, (%%r10)\n");
-        return;
+        fprintf(c->out, "  movslq ");
+        emit_mem_ref(c, ref);
+        fprintf(c->out, ", %s\n", reg64_name(phys));
+        return 1;
     case 8:
-        fprintf(c->out, "  mov %%rax, (%%r10)\n");
-        (void)w;
-        return;
+        fprintf(c->out, "  mov ");
+        emit_mem_ref(c, ref);
+        fprintf(c->out, ", %s\n", reg64_name(phys));
+        return 1;
     default:
-        emit_store_rax_partial(c, "%r10", 0, bytes);
-        return;
+        return 0;
     }
 }
 
-static void emit_load_fp_slot(EmitCtx *c, Operand mem, int bytes, LirSign sgn)
+static int emit_store_scalar_from_rax(EmitCtx *c, X86MemRef ref, int bytes)
 {
-    long off = fp_disp(c, mem.u.mem.disp);
-    switch (bytes) {
-    case 1:
-        if (sgn == LIR_SGN_S)
-            fprintf(c->out, "  movsbl %ld(%%rbp), %%eax\n", off);
-        else
-            fprintf(c->out, "  movzbl %ld(%%rbp), %%eax\n", off);
-        return;
-    case 2:
-        if (sgn == LIR_SGN_S)
-            fprintf(c->out, "  movswl %ld(%%rbp), %%eax\n", off);
-        else
-            fprintf(c->out, "  movzwl %ld(%%rbp), %%eax\n", off);
-        return;
-    case 4:
-        fprintf(c->out, "  movslq %ld(%%rbp), %%rax\n", off);
-        return;
-    case 8:
-        fprintf(c->out, "  mov %ld(%%rbp), %%rax\n", off);
-        return;
-    default:
-        emit_load_rax_partial(c, "%rbp", off, bytes);
-        return;
-    }
-}
+    const char *src;
 
-static void emit_store_fp_slot(EmitCtx *c, Operand mem, int bytes)
-{
-    long off = fp_disp(c, mem.u.mem.disp);
     switch (bytes) {
-    case 1:
-        fprintf(c->out, "  mov %%al, %ld(%%rbp)\n", off);
-        return;
-    case 2:
-        fprintf(c->out, "  mov %%ax, %ld(%%rbp)\n", off);
-        return;
-    case 4:
-        fprintf(c->out, "  mov %%eax, %ld(%%rbp)\n", off);
-        return;
-    case 8:
-        fprintf(c->out, "  mov %%rax, %ld(%%rbp)\n", off);
-        return;
-    default:
-        emit_store_rax_partial(c, "%rbp", off, bytes);
-        return;
+    case 1: src = "%al"; break;
+    case 2: src = "%ax"; break;
+    case 4: src = "%eax"; break;
+    case 8: src = "%rax"; break;
+    default: return 0;
     }
+    fprintf(c->out, "  mov %s, ", src);
+    emit_mem_ref(c, ref);
+    fputc('\n', c->out);
+    return 1;
 }
 
 #if 0 /* Emitter support for LIR `add/sub [fp+off], $imm` (see lower.c). */
@@ -797,6 +832,17 @@ static void emit_shift(EmitCtx *c, Instr *ins)
     const char *op = ins->op == LIR_SHL ? "sal" :
                      ins->op == LIR_SHR ? "shr" : "sar";
     int result = c->td->scratch0;
+    int dp;
+    int direct = 0;
+
+    /* A variable shift needs %cl for its count, so it cannot also build its
+       result in %rcx.  Otherwise compute directly in the allocated
+       destination instead of copying the result out of scratch. */
+    if (dst_phys(c, ins->dst, &dp) &&
+        (ins->b.kind == OPND_IMM || dp != c->td->shift_count_reg)) {
+        result = dp;
+        direct = 1;
+    }
 
     load_operand(c, ins->a, reg64_name(result), ins->w);
     if (ins->b.kind == OPND_IMM) {
@@ -810,7 +856,8 @@ static void emit_shift(EmitCtx *c, Instr *ins)
     if (ins->w == LIR_W4)
         fprintf(c->out, "  movslq %s, %s\n",
                 reg32_name(result), reg64_name(result));
-    store_vreg_slot(c, ins->dst, reg64_name(result));
+    if (!direct)
+        store_vreg_slot(c, ins->dst, reg64_name(result));
     invalidate_rax(c);
 }
 
@@ -836,7 +883,10 @@ static void emit_reg_to_stack(EmitCtx *c, int phys, int offset, int bytes)
     /* Record tails can have any width from 1 through 7.  Store them in
      * exact-width chunks rather than overwriting adjacent frame slots. */
     fprintf(c->out, "  mov %s, %%rax\n", reg64_name(phys));
-    emit_store_rax_partial(c, "%rbp", offset, bytes);
+    emit_store_rax_partial(c, (X86MemRef){
+        .base = X86_MEM_FRAME, .index = X86_MEM_NO_REG,
+        .scale = 1, .disp = offset,
+    }, bytes);
 }
 
 static void emit_record_param_spill(EmitCtx *c, const TargetDesc *td, Param *p)
@@ -931,54 +981,76 @@ static void emit_instr(EmitCtx *c, Instr *ins)
         return;
 
     case LIR_LOAD:
-        if (ins->a.kind == OPND_MEM && ins->a.u.mem.base == LIR_FP) {
-            emit_load_fp_slot(c, ins->a, ins->aux, ins->sgn);
-        } else {
-            load_mem_addr(c, ins->a, "%r10");
-            switch (ins->aux) {
-            case 1:
-                if (ins->sgn == LIR_SGN_S)
-                    fprintf(c->out, "  movsbl (%%r10), %%eax\n");
-                else
-                    fprintf(c->out, "  movzbl (%%r10), %%eax\n");
-                break;
-            case 2:
-                if (ins->sgn == LIR_SGN_S)
-                    fprintf(c->out, "  movswl (%%r10), %%eax\n");
-                else
-                    fprintf(c->out, "  movzwl (%%r10), %%eax\n");
-                break;
-            case 4:
-                fprintf(c->out, "  movslq (%%r10), %%rax\n");
-                break;
-            case 8:
-                fprintf(c->out, "  mov (%%r10), %%rax\n");
-                break;
-            default:
-                emit_load_rax_partial(c, "%r10", 0, ins->aux);
-                break;
+    {
+        int dp;
+        int target = PHYS_RAX;
+        int scalar = ins->aux == 1 || ins->aux == 2 ||
+                     ins->aux == 4 || ins->aux == 8;
+
+        if (scalar) {
+            X86MemRef ref = prepare_mem_ref(c, ins->a);
+
+            if (dst_phys(c, ins->dst, &dp))
+                target = dp;
+            if (emit_load_scalar_to_phys(c, ref, ins->aux, ins->sgn,
+                                         target)) {
+                if (target == PHYS_RAX)
+                    store_vreg_slot(c, ins->dst, "%rax");
+                return;
             }
         }
+        emit_load_rax_partial(c, prepare_mem_ref(c, ins->a), ins->aux);
         store_vreg_slot(c, ins->dst, "%rax");
         return;
+    }
 
     case LIR_STORE:
+    {
+        X86MemRef ref;
+        int scalar = ins->aux == 1 || ins->aux == 2 ||
+                     ins->aux == 4 || ins->aux == 8;
+
         load_operand(c, ins->b, "%rax", ins->w);
-        if (ins->a.kind == OPND_MEM && ins->a.u.mem.base == LIR_FP)
-            emit_store_fp_slot(c, ins->a, ins->aux);
+        ref = prepare_mem_ref(c, ins->a);
+        if (scalar)
+            emit_store_scalar_from_rax(c, ref, ins->aux);
         else
-            emit_store_mem(c, ins->a, ins->w, ins->aux);
+            emit_store_rax_partial(c, ref, ins->aux);
         return;
+    }
 
     case LIR_LEA:
-        load_mem_addr(c, ins->a, "%rax");
-        store_vreg_slot(c, ins->dst, "%rax");
+    {
+        int dp;
+        int target = PHYS_RAX;
+        X86MemRef ref = prepare_mem_ref(c, ins->a);
+
+        if (dst_phys(c, ins->dst, &dp))
+            target = dp;
+        /* Keep an explicit LIR LEA as an explicit machine instruction.
+           Folding it into a later load/store requires use-def and alias
+           reasoning and belongs in instruction selection, not formatting. */
+        fprintf(c->out, "  lea ");
+        emit_mem_ref(c, ref);
+        fprintf(c->out, ", %s\n", reg64_name(target));
+        if (target == PHYS_RAX)
+            store_vreg_slot(c, ins->dst, "%rax");
         return;
+    }
 
     case LIR_LEA_SYM:
+    {
+        int dp;
+
+        if (dst_phys(c, ins->dst, &dp)) {
+            fprintf(c->out, "  leaq %s(%%rip), %s\n",
+                    ins->sym_name, reg64_name(dp));
+            return;
+        }
         fprintf(c->out, "  leaq %s(%%rip), %%rax\n", ins->sym_name);
         store_vreg_slot(c, ins->dst, "%rax");
         return;
+    }
 
     case LIR_ADD:
     case LIR_SUB:

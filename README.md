@@ -32,7 +32,7 @@ make
 
 ## Status
 
-The pipeline runs end to end (lex → parse → sema → lower → liveness →
+The pipeline runs end to end (preprocessing tokens → lex → parse → sema → lower → liveness →
 regalloc → emit → `.s` → gcc) with a typed semantic layer and an extensive
 acceptance test suite.
 
@@ -104,7 +104,10 @@ records use sret/stack memory.
 ## How it works
 
 ```
- C source ──▶ lexer (flex) ──▶ parser (bison) ──▶ AST
+ C source ──▶ preprocessing-token scanner ──▶ C-token adapter
+                                                    │
+                                                    ▼
+                                            parser (bison) ──▶ AST
                                                    │
                           arena-allocated, thin    │
                           grammar actions only     ▼
@@ -128,6 +131,11 @@ records use sret/stack memory.
                                       emit_x86 ──▶ x86-64 .s ──▶ gcc ──▶ binary
 ```
 
+The native preprocessing-token input path is active, including C89 trigraphs,
+line splicing, and comment replacement; directives, macros, and includes are
+still a work in progress. See [`src/cpp/README.md`](src/cpp/README.md) for the
+detailed support matrix.
+
 The parser builds AST nodes and attaches parsed types to declarations. **sema**
 owns type checking. **lower** builds CFG-based LIR with virtual registers;
 mem2reg promotes eligible locals into SSA form before CFG optimizations run.
@@ -150,14 +158,13 @@ off; it is not gcc `-Wall`.
 ## Build & test
 
 ```sh
-make            # requires bison + flex + a C compiler
+make            # requires bison + a C compiler
 make test       # compile each tests/cases/*.c, run it, assert the exit code
 ./examples/build.sh
 make clean
 ```
 
-Generated parser/lexer sources are produced into `build/` and are not
-committed.
+The generated parser source is produced into `build/` and is not committed.
 
 ## Roadmap
 

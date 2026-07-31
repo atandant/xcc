@@ -1,0 +1,6 @@
+/* SPDX-License-Identifier: MIT */
+/* expect: 4 */
+int main(void) ??<
+    int values??(2??) = ??< 3, 4 ??>;
+    return values??(1??);
+??>

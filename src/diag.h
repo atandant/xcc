@@ -24,9 +24,6 @@ typedef enum {
     W_COUNT
 } DiagWarnId;
 
-/* Source lines for carets (1-based line numbers). NULL disables carets. */
-void diag_set_source(char **lines, int nlines);
-
 void diag_error_at(SourceLoc loc, const char *fmt, ...);
 void diag_warning_at(SourceLoc loc, const char *fmt, ...);
 void diag_note_at(SourceLoc loc, const char *fmt, ...);

@@ -3,13 +3,13 @@ CC      ?= cc
 CFLAGS  ?= -std=c11 -Wall -Wextra -g
 CPPFLAGS = -Isrc -Ibuild
 BISON   ?= bison
-FLEX    ?= flex
 
 BUILD = build
 BIN   = xcc
 
 # Hand-written sources
-SRCS = src/main.c src/arena.c src/ast.c src/type.c src/diag.c src/sema.c \
+SRCS = src/main.c src/arena.c src/source.c src/cpp/cpp.c src/lexer.c \
+       src/ast.c src/type.c src/diag.c src/sema.c \
        src/sema_scope.c src/sema_functab.c src/sema_typedef.c src/sema_struct.c \
        src/sema_enum.c src/abi_sysv_amd64.c \
        src/intconst.c src/ast_const_fold.c src/ast_const_prop.c src/ast_opt.c \
@@ -19,8 +19,8 @@ SRCS = src/main.c src/arena.c src/ast.c src/type.c src/diag.c src/sema.c \
        src/lir.c src/lir_cfg.c src/lower.c src/liveness.c src/regalloc.c src/emit_x86.c
 OBJS = $(patsubst src/%.c,$(BUILD)/%.o,$(SRCS))
 
-# Generated sources (bison/flex) - compiled with warnings off
-GEN_OBJS = $(BUILD)/parser.o $(BUILD)/lexer.o
+# Generated parser source is compiled with warnings off
+GEN_OBJS = $(BUILD)/parser.o
 
 DEPS = $(OBJS:.o=.d) $(GEN_OBJS:.o=.d)
 
@@ -30,7 +30,7 @@ LIR_TEST_SRCS = tests/lir/main.c tests/lir/test.c \
                 tests/lir/algebraic.c tests/lir/strength_reduce.c \
                 tests/lir/simplify_conv.c tests/lir/dce.c \
                 tests/lir/licm.c tests/lir/mem2reg.c tests/lir/cfg.c
-LIR_TEST_OBJS = $(BUILD)/arena.o $(BUILD)/diag.o $(BUILD)/lir.o \
+LIR_TEST_OBJS = $(BUILD)/arena.o $(BUILD)/source.o $(BUILD)/diag.o $(BUILD)/lir.o \
                 $(BUILD)/lir_cfg.o $(BUILD)/lir_dom.o $(BUILD)/lir_mem2reg.o \
                 $(BUILD)/lir_dce.o $(BUILD)/lir_licm.o \
                 $(BUILD)/lir_algebraic_simplify.o $(BUILD)/lir_strength_reduce.o \
@@ -49,22 +49,17 @@ $(BUILD):
 $(BUILD)/parser.c $(BUILD)/parser.h &: src/parser.y | $(BUILD)
 	$(BISON) -d -o $(BUILD)/parser.c src/parser.y
 
-# flex needs the bison-generated token header
-$(BUILD)/lexer.c: src/lexer.l $(BUILD)/parser.h | $(BUILD)
-	$(FLEX) -o $(BUILD)/lexer.c src/lexer.l
-
 # hand-written objects (with full warnings + auto deps)
 $(BUILD)/%.o: src/%.c | $(BUILD)
+	mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $(CPPFLAGS) -MMD -MP -c $< -o $@
 
-# generated objects (warnings suppressed; flex/bison output is noisy).
-# _POSIX_C_SOURCE exposes fileno(), which flex's scanner relies on.
-GEN_CPPFLAGS = $(CPPFLAGS) -D_POSIX_C_SOURCE=200809L
+$(BUILD)/lexer.o: $(BUILD)/parser.h
+
+# generated object (warnings suppressed; bison output is noisy).
+GEN_CPPFLAGS = $(CPPFLAGS)
 
 $(BUILD)/parser.o: $(BUILD)/parser.c | $(BUILD)
-	$(CC) $(CFLAGS) $(GEN_CPPFLAGS) -w -MMD -MP -c $< -o $@
-
-$(BUILD)/lexer.o: $(BUILD)/lexer.c $(BUILD)/parser.h | $(BUILD)
 	$(CC) $(CFLAGS) $(GEN_CPPFLAGS) -w -MMD -MP -c $< -o $@
 
 $(BUILD)/lir-tests: $(LIR_TEST_SRCS) $(LIR_TEST_OBJS)
@@ -73,6 +68,7 @@ $(BUILD)/lir-tests: $(LIR_TEST_SRCS) $(LIR_TEST_OBJS)
 test: $(BIN) $(BUILD)/lir-tests
 	./$(BUILD)/lir-tests
 	./tests/run.sh
+	./tests/run-cpp.sh
 
 examples: $(BIN)
 	./examples/build.sh

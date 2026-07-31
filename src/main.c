@@ -1,13 +1,12 @@
 /* SPDX-License-Identifier: MIT */
-#include <limits.h>
-#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include "token.h"
 #include "ast.h"
 #include "diag.h"
+#include "lexer.h"
+#include "source.h"
 #include "sema.h"
 #include "sema_typedef.h"
 #include "sema_struct.h"
@@ -23,11 +22,8 @@
 #include "regalloc.h"
 #include "target.h"
 
-extern FILE *yyin;
 int yyparse(void);
 extern ExternalDecl *g_program;
-
-const char *g_filename = "<stdin>";
 
 static void usage(FILE *f)
 {
@@ -60,82 +56,14 @@ static void unknown_warn_flag(const char *arg)
     fputc('\n', stderr);
 }
 
-static void append_source_line(char ***lines, int *n, int *cap,
-                               const char *line)
-{
-    if (*n >= *cap) {
-        if (*cap > (INT_MAX / 2))
-            diag_fatal("too many source lines");
-        int new_cap = *cap ? *cap * 2 : 64;
-        char **new_lines = realloc(*lines, (size_t)new_cap * sizeof(**lines));
-
-        if (!new_lines)
-            diag_fatal("out of memory reading source");
-        *lines = new_lines;
-        *cap = new_cap;
-    }
-    (*lines)[(*n)++] = arena_strdup(line);
-}
-
-static char **load_source_lines(FILE *f, int *out_nlines)
-{
-    char **lines = NULL;
-    char *line = NULL;
-    size_t len = 0;
-    size_t line_cap = 0;
-    int n = 0;
-    int cap = 0;
-    int ch;
-
-    rewind(f);
-    while ((ch = fgetc(f)) != EOF) {
-        if (ch == '\n') {
-            if (!line) {
-                line = malloc(1);
-                if (!line)
-                    diag_fatal("out of memory reading source");
-            }
-            line[len] = '\0';
-            append_source_line(&lines, &n, &cap, line);
-            len = 0;
-            continue;
-        }
-
-        if (len == SIZE_MAX || len + 1 >= line_cap) {
-            size_t new_cap;
-
-            if (line_cap > SIZE_MAX / 2)
-                diag_fatal("source line too long");
-            new_cap = line_cap ? line_cap * 2 : 256;
-            char *new_line = realloc(line, new_cap);
-
-            if (!new_line)
-                diag_fatal("out of memory reading source");
-            line = new_line;
-            line_cap = new_cap;
-        }
-        line[len++] = (char)ch;
-    }
-    if (ferror(f))
-        diag_fatal("error reading source");
-    if (len > 0) {
-        line[len] = '\0';
-        append_source_line(&lines, &n, &cap, line);
-    }
-    free(line);
-    *out_nlines = n;
-    return lines;
-}
-
 int main(int argc, char **argv)
 {
     const char *inpath = NULL;
     const char *outpath = NULL;
     int lir_dump_mode = 0;
     int verify_lir = 1;
-    char **source_lines = NULL;
-    int nsource_lines = 0;
-    int from_file = 0;
+    FILE *in = stdin;
+    SourceFile *source;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--help") == 0) {
@@ -188,20 +116,17 @@ int main(int argc, char **argv)
     }
 
     if (inpath && strcmp(inpath, "-") != 0) {
-        yyin = fopen(inpath, "r");
-        if (!yyin) {
+        in = fopen(inpath, "rb");
+        if (!in) {
             diag_error("cannot open '%s'", inpath);
             return 1;
         }
-        g_filename = inpath;
-        from_file = 1;
-        source_lines = load_source_lines(yyin, &nsource_lines);
-        diag_set_source(source_lines, nsource_lines);
-        rewind(yyin);
-    } else {
-        yyin = stdin;
-        g_filename = "<stdin>";
     }
+    source = source_read(in, inpath && strcmp(inpath, "-") != 0
+                         ? inpath : "<stdin>");
+    if (in != stdin)
+        fclose(in);
+    lexer_set_source(source);
 
     typedef_reset();
     struct_tag_reset();
@@ -258,10 +183,6 @@ int main(int argc, char **argv)
             }
             fputc('\n', stdout);
         }
-        if (from_file) {
-            free(source_lines);
-            fclose(yyin);
-        }
         arena_free_all();
         return 0;
     }
@@ -279,10 +200,6 @@ int main(int argc, char **argv)
 
     if (out != stdout)
         fclose(out);
-    if (from_file) {
-        free(source_lines);
-        fclose(yyin);
-    }
     arena_free_all();
     return 0;
 }

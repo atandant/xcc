@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include "diag.h"
+#include "source.h"
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -9,9 +10,6 @@
 
 int diag_error_count = 0;
 int diag_warning_count = 0;
-
-static char **diag_lines;
-static int diag_nlines;
 
 /* GCC-like ANSI styling; disabled when stderr is not a tty or NO_COLOR is set. */
 static const char *sgr_reset = "";
@@ -86,22 +84,13 @@ static void diag_ensure_colors(void)
     }
 }
 
-void diag_set_source(char **lines, int nlines)
-{
-    diag_ensure_colors();
-    diag_lines = lines;
-    diag_nlines = nlines;
-}
-
 static void diag_emit_caret(SourceLoc loc)
 {
-    const char *line;
+    const char *line = source_line(loc.file, loc.line);
     size_t line_len;
 
-    if (!diag_lines || loc.line < 1 || loc.line > diag_nlines)
+    if (!line)
         return;
-
-    line = diag_lines[loc.line - 1];
     line_len = strlen(line);
     fputs(line, stderr);
     fputc('\n', stderr);
@@ -119,8 +108,8 @@ static void diag_vemit_at(SourceLoc loc, const char *kind, const char *sgr_kind,
 {
     diag_ensure_colors();
 
-    fprintf(stderr, "%s%s:%d:%d:%s ", sgr_bold, g_filename, loc.line, loc.col,
-            sgr_reset);
+    fprintf(stderr, "%s%s:%d:%d:%s ", sgr_bold, source_name(loc.file),
+            loc.line, loc.col, sgr_reset);
     fprintf(stderr, "%s%s:%s ", sgr_kind, kind, sgr_reset);
     vfprintf(stderr, fmt, ap);
     fputc('\n', stderr);
