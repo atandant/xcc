@@ -24,7 +24,8 @@
 | `#include` and `-I` include search paths | experimental |
 | `#line`, `#error`, and `#pragma` | not implemented |
 | predefined macros | not implemented |
-| `-D`, `-U`, and `-E` | not implemented |
+| `-D` and `-U` command-line macro actions | implemented |
+| `-E` preprocessing-only output | not implemented |
 
 “Implemented” is a supported contract with broad regression coverage.
 “Experimental” means the documented subset is intended to work and is tested,
@@ -114,8 +115,8 @@ conditions, not only happy paths.
 
 `#include` remains experimental while its header-name edge cases, file-system
 failures, and real-world nested-header coverage mature. Predefined C89 macros
-and command-line `-D`/`-U` are candidates for the next milestone. Variadic
-macros remain out of scope because they are not C89.
+are a candidate for the next milestone. Variadic macros remain out of scope
+because they are not C89.
 
 ## Explicit non-goals for now
 
