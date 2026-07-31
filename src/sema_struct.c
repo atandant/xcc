@@ -164,6 +164,7 @@ static int struct_nest_depth(Type *ty)
 
     if (!type_is_record(ty) || !type_struct_is_complete(ty))
         return 0;
+    ty = type_unqualified(ty);
 
     for (int i = 0; i < ty->nmembers; i++) {
         Type *mty = ty->members[i].ty;

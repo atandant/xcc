@@ -429,8 +429,10 @@ static void lower_init_from_type(LowerCtx *c, Type *ty, Node **pcursor, int base
         return;
     }
     if (type_is_struct(ty)) {
-        for (i = 0; i < ty->nmembers; i++) {
-            Member *m = &ty->members[i];
+        Type *record = type_unqualified(ty);
+
+        for (i = 0; i < record->nmembers; i++) {
+            Member *m = &record->members[i];
 
             if (m->is_bitfield && m->bit_width > 0) {
                 Node *e = *pcursor;
@@ -447,8 +449,10 @@ static void lower_init_from_type(LowerCtx *c, Type *ty, Node **pcursor, int base
         return;
     }
     if (type_is_union(ty)) {
-        if (ty->nmembers > 0)
-            lower_init_from_type(c, ty->members[0].ty, pcursor, base_off);
+        Type *record = type_unqualified(ty);
+
+        if (record->nmembers > 0)
+            lower_init_from_type(c, record->members[0].ty, pcursor, base_off);
         return;
     }
     {
@@ -533,7 +537,9 @@ static int named_label_id(LowerCtx *c, Node *label)
 
 static Member *member_meta(Node *n)
 {
-    return &n->lhs->ty->members[n->member_index];
+    Type *record = type_unqualified(n->lhs->ty);
+
+    return &record->members[n->member_index];
 }
 
 static int var_decl_is_enum(const char *name, Function *fn)
@@ -732,7 +738,7 @@ static void lower_bitfield_store(LowerCtx *c, Node *lhs, Member *m, int val)
 
 static int lower_member_addr(LowerCtx *c, Node *n)
 {
-    Type *sty = n->lhs->ty;
+    Type *sty = type_unqualified(n->lhs->ty);
     Member *m = &sty->members[n->member_index];
     int dst = fresh(c);
 

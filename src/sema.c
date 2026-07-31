@@ -383,16 +383,19 @@ static int type_init_slot_count(Type *t)
     if (type_is_array(t))
         return type_array_count(t) * type_init_slot_count(type_array_elem(t));
     if (type_is_struct(t)) {
+        Type *record = type_unqualified(t);
         int n = 0;
         int i;
 
-        for (i = 0; i < t->nmembers; i++)
-            n += type_init_slot_count(t->members[i].ty);
+        for (i = 0; i < record->nmembers; i++)
+            n += type_init_slot_count(record->members[i].ty);
         return n;
     }
     if (type_is_union(t)) {
-        if (t->nmembers > 0)
-            return type_init_slot_count(t->members[0].ty);
+        Type *record = type_unqualified(t);
+
+        if (record->nmembers > 0)
+            return type_init_slot_count(record->members[0].ty);
         return 1;
     }
     return 1;
@@ -476,10 +479,11 @@ static void pad_aggregate_zeros(Type *t, InitFlat *flat, SourceLoc loc)
         return;
     }
     if (type_is_record(t)) {
-        int i, n = type_is_union(t) ? 1 : t->nmembers;
+        Type *record = type_unqualified(t);
+        int i, n = type_is_union(record) ? 1 : record->nmembers;
 
         for (i = 0; i < n; i++)
-            pad_aggregate_zeros(t->members[i].ty, flat, loc);
+            pad_aggregate_zeros(record->members[i].ty, flat, loc);
         return;
     }
     flat_append(flat, zero_init_expr(t, loc));
@@ -564,16 +568,17 @@ static int init_aggregate(Type *t, Node **pcursor, InitFlat *flat,
     }
 
     if (type_is_struct(t)) {
+        Type *record = type_unqualified(t);
         int i;
 
-        if (!type_struct_is_complete(t)) {
+        if (!type_struct_is_complete(record)) {
             diag_error_at(loc,
                           "initializer element is not computable for "
                           "incomplete type '%s'", type_name(t));
             return 1;
         }
-        for (i = 0; i < t->nmembers; i++) {
-            Type *mty = t->members[i].ty;
+        for (i = 0; i < record->nmembers; i++) {
+            Type *mty = record->members[i].ty;
 
             if (!*pcursor) {
                 pad_aggregate_zeros(mty, flat, loc);
@@ -600,19 +605,20 @@ static int init_aggregate(Type *t, Node **pcursor, InitFlat *flat,
     }
 
     if (type_is_union(t)) {
+        Type *record = type_unqualified(t);
         Type *mty;
 
-        if (!type_struct_is_complete(t)) {
+        if (!type_struct_is_complete(record)) {
             diag_error_at(loc,
                           "initializer element is not computable for "
                           "incomplete type '%s'", type_name(t));
             return 1;
         }
-        if (t->nmembers == 0) {
+        if (record->nmembers == 0) {
             pad_aggregate_zeros(type_int(), flat, loc);
             return 0;
         }
-        mty = t->members[0].ty;
+        mty = record->members[0].ty;
         if (!*pcursor) {
             pad_aggregate_zeros(mty, flat, loc);
             return 0;
@@ -711,10 +717,11 @@ static Node *check_flat_init_type(Type *t, Node *e, SourceLoc loc, Node *decl)
         return e;
     }
     if (type_is_record(t)) {
-        int i, n = type_is_union(t) ? 1 : t->nmembers;
+        Type *record = type_unqualified(t);
+        int i, n = type_is_union(record) ? 1 : record->nmembers;
 
         for (i = 0; i < n; i++)
-            e = check_flat_init_type(t->members[i].ty, e, loc, decl);
+            e = check_flat_init_type(record->members[i].ty, e, loc, decl);
         return e;
     }
     if (!e)
@@ -1166,6 +1173,8 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
         n->var_decay = 0;
         if (!expr_is_lvalue(n->lhs))
             diag_error_at(n->loc, "assignment to non-lvalue");
+        else if (type_is_array(n->lhs->ty))
+            diag_incompatible_assign(n->loc, n->lhs->ty, n->rhs);
         else if (!expr_is_modifiable_lvalue(n->lhs))
             diag_error_at(n->loc, "assignment to const-qualified object");
         else if (!expr_assignable_to(n->lhs->ty, n->rhs))
@@ -1337,7 +1346,7 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
                 scope_mark_address_taken(n->operand->name);
         }
         else if (n->operand->kind == ND_MEMBER) {
-            Type *sty = n->operand->lhs->ty;
+            Type *sty = type_unqualified(n->operand->lhs->ty);
             Member *m = &sty->members[n->operand->member_index];
 
             if (m->is_bitfield && m->bit_width > 0)
@@ -2231,6 +2240,7 @@ static int static_lvalue_address(Node *n, char **symbol, long *addend)
         Member *member;
 
         if (!type_is_record(owner) || n->member_index < 0 ||
+            !(owner = type_unqualified(owner)) ||
             n->member_index >= owner->nmembers ||
             !static_lvalue_address(n->lhs, symbol, addend))
             return 0;
@@ -2337,8 +2347,10 @@ static int encode_static_initializer(GlobalObject *object, Type *ty,
         return 1;
     }
     if (type_is_struct(ty)) {
-        for (int i = 0; i < ty->nmembers; i++) {
-            Member *member = &ty->members[i];
+        Type *record = type_unqualified(ty);
+
+        for (int i = 0; i < record->nmembers; i++) {
+            Member *member = &record->members[i];
 
             if (member->is_bitfield && member->bit_width > 0) {
                 Node *value = *pcursor;
@@ -2367,9 +2379,11 @@ static int encode_static_initializer(GlobalObject *object, Type *ty,
         return 1;
     }
     if (type_is_union(ty)) {
-        if (ty->nmembers == 0)
+        Type *record = type_unqualified(ty);
+
+        if (record->nmembers == 0)
             return 1;
-        return encode_static_initializer(object, ty->members[0].ty, pcursor,
+        return encode_static_initializer(object, record->members[0].ty, pcursor,
                                          offset);
     }
     {
