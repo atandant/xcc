@@ -55,7 +55,7 @@ static Type *parameter_declspec_type(DeclSpec *spec, SourceLoc loc)
 /* `extern/static/typedef/auto/register T` is intentionally shifted as a
    storage class plus typedef-name type rather than reduced as an implicit-int
    declaration of T.  There is one equivalent conflict per storage class. */
-%expect 5
+%expect 13
 
 %code requires {
     #include "ast.h"
@@ -91,7 +91,7 @@ static Type *parameter_declspec_type(DeclSpec *spec, SourceLoc loc)
 %token <num> NUM
 %token <str> IDENT TYPEDEF_NAME
 %token <string> STRING
-%token INT CHAR SHORT LONG VOID UNSIGNED SIGNED RETURN IF ELSE WHILE DO FOR SWITCH CASE DEFAULT GOTO BREAK CONTINUE SIZEOF TYPEDEF EXTERN STATIC AUTO REGISTER STRUCT UNION ENUM
+%token INT CHAR SHORT LONG VOID UNSIGNED SIGNED CONST RETURN IF ELSE WHILE DO FOR SWITCH CASE DEFAULT GOTO BREAK CONTINUE SIZEOF TYPEDEF EXTERN STATIC AUTO REGISTER STRUCT UNION ENUM
 %token EQ NE LE GE ARROW LAND LOR SHL SHR INC DEC
 
 %type <node> expr expr_opt arg_expr conditional_expr logical_or_expr
@@ -186,6 +186,7 @@ builtin_declaration_specifiers:
   | TYPEDEF             { $$ = declspec_add_storage(NULL, STORAGE_TYPEDEF, LOC(@1)); }
   | AUTO                { $$ = declspec_add_storage(NULL, STORAGE_AUTO, LOC(@1)); }
   | REGISTER            { $$ = declspec_add_storage(NULL, STORAGE_REGISTER, LOC(@1)); }
+  | CONST               { $$ = declspec_add_qualifier(NULL, TQ_CONST, LOC(@1)); }
   | builtin_declaration_specifiers INT
         { $$ = declspec_add_builtin($1, TYPE_SPEC_INT, LOC(@2)); }
   | builtin_declaration_specifiers CHAR
@@ -210,6 +211,8 @@ builtin_declaration_specifiers:
         { $$ = declspec_add_storage($1, STORAGE_AUTO, LOC(@2)); }
   | builtin_declaration_specifiers REGISTER
         { $$ = declspec_add_storage($1, STORAGE_REGISTER, LOC(@2)); }
+  | builtin_declaration_specifiers CONST
+        { $$ = declspec_add_qualifier($1, TQ_CONST, LOC(@2)); }
   ;
 
 /* A typedef name or tagged type is already a complete type specifier; only a
@@ -300,6 +303,10 @@ named_declaration_specifiers:
                           $$ = declspec_add_storage($$, STORAGE_AUTO, LOC(@2)); }
   | enum_specifier REGISTER { $$ = declspec_add_type(NULL, $1, LOC(@1));
                               $$ = declspec_add_storage($$, STORAGE_REGISTER, LOC(@2)); }
+  | CONST named_declaration_specifiers
+        { $$ = declspec_add_qualifier($2, TQ_CONST, LOC(@1)); }
+  | named_declaration_specifiers CONST
+        { $$ = declspec_add_qualifier($1, TQ_CONST, LOC(@2)); }
   ;
 
 struct_specifier:
@@ -409,7 +416,8 @@ cast_type:
   ;
 
 declarator:
-    '*' declarator           { $$ = declarator_ptr($2); }
+    '*' declarator           { $$ = declarator_ptr($2, TQ_NONE); }
+  | '*' CONST declarator     { $$ = declarator_ptr($3, TQ_CONST); }
   | direct_declarator
   ;
 
@@ -435,7 +443,9 @@ abstract_declarator_opt:
   ;
 
 abstract_declarator:
-    '*' abstract_declarator_opt  { $$ = declarator_ptr($2); }
+    '*' abstract_declarator_opt  { $$ = declarator_ptr($2, TQ_NONE); }
+  | '*' CONST abstract_declarator_opt
+        { $$ = declarator_ptr($3, TQ_CONST); }
   | direct_abstract_declarator
   ;
 

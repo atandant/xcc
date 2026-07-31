@@ -37,9 +37,22 @@ compiled capacity, scheduling mode, and processing order. The default FIFO
 build returns `67`; priority scheduling changes the order and returns `159`:
 
 ```sh
-./xcc examples/job_queue.c -DJOB_QUEUE_ENABLE_PRIORITY=1 -o /tmp/job_queue.s
+./xcc examples/job_queue.c \
+    -DJOB_QUEUE_ENABLE_PRIORITY=1 \
+    -DJOB_QUEUE_VERBOSE_BUILD=1 \
+    -o /tmp/job_queue.s
 gcc /tmp/job_queue.s -o /tmp/job_queue
 /tmp/job_queue; echo $?   # -> 159
+```
+
+Inspect the fully generated, marker-free C while keeping build messages on
+stderr:
+
+```sh
+./xcc -E examples/job_queue.c \
+    -DJOB_QUEUE_ENABLE_PRIORITY=1 \
+    -DJOB_QUEUE_VERBOSE_BUILD=1 \
+    -o /tmp/job_queue.i
 ```
 
 Invalid configuration is rejected during preprocessing:

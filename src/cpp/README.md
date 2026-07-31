@@ -25,10 +25,11 @@
 | `#error` | implemented |
 | `#pragma` recognition; unknown pragmas ignored | implemented |
 | `#pragma once` | implemented xcc extension |
+| `#pragma message` | implemented xcc extension |
 | `#line` | not implemented |
 | `__LINE__`, `__FILE__`, `__DATE__`, `__TIME__`, `__STDC__`, `__XCC__` | implemented |
 | `-D` and `-U` command-line macro actions | implemented |
-| `-E` preprocessing-only output | not implemented |
+| marker-free `-E` preprocessing-only output | implemented |
 
 “Implemented” is a supported contract with broad regression coverage.
 “Experimental” means the documented subset is intended to work and is tested,
@@ -97,12 +98,23 @@ skipped using device/inode identity with canonical-path fallback. This treats
 relative-path, symlink, and hardlink aliases as the same file. `#pragma once`
 with trailing tokens is not recognized and has no effect.
 
+The registered `message` handler macro-expands its own operands and accepts
+adjacent ordinary string literals, optionally enclosed in parentheses. It emits
+a source-located note on stderr. Malformed message syntax is controlled by the
+default-on `-Wpragmas` warning and can be promoted with `-Werror`.
+
 Potential future pragmas include scoped diagnostic control, structure packing,
 and symbol section or visibility controls. These are not implemented or
 promised: each requires complete support in its owning compiler layer. In
 particular, packing must remain unsupported until layout and ABI effects can be
 implemented together. `_Pragma` and the standard floating-point pragmas from
 later C revisions remain outside the current C89 scope.
+
+`-E` bypasses the C parser, semantic analysis, and code generator. It writes a
+normalized, marker-free C token stream to stdout or `-o`, conservatively
+separating every non-newline token so expansion boundaries cannot accidentally
+form a different token. The output can be piped to gcc or back into xcc. Source
+line markers are deferred until standard `#line` handling exists.
 
 All input is retained for the compilation lifetime. Token locations identify
 their source file, including nested headers, without a mutable global filename.

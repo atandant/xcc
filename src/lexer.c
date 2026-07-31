@@ -139,7 +139,8 @@ static int keyword(const char *text)
         { "default", DEFAULT }, { "goto", GOTO }, { "break", BREAK },
         { "continue", CONTINUE }, { "typedef", TYPEDEF },
         { "extern", EXTERN }, { "static", STATIC }, { "auto", AUTO },
-        { "register", REGISTER }, { "struct", STRUCT }, { "union", UNION },
+        { "register", REGISTER }, { "const", CONST },
+        { "struct", STRUCT }, { "union", UNION },
         { "enum", ENUM }, { "sizeof", SIZEOF },
     };
 

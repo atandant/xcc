@@ -8,7 +8,8 @@
  *   - conditional priority behavior selected at compile time
  *
  * Default FIFO build returns 67. A priority build made with
- * -DJOB_QUEUE_ENABLE_PRIORITY=1 returns 159.
+ * -DJOB_QUEUE_ENABLE_PRIORITY=1 returns 159. Add
+ * -DJOB_QUEUE_VERBOSE_BUILD=1 for compile-time configuration notes.
  */
 
 #include "job_queue/config.h"

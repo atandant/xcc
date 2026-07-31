@@ -84,7 +84,7 @@ static int is_eq_op(BinOp op)
 
 static int is_void_ptr_type(Type *ty)
 {
-    return type_is_pointer(ty) && type_is_void(ty->base);
+    return type_is_pointer(ty) && type_is_void(type_ptr_elem(ty));
 }
 
 static int sema_ice_lookup(const char *name, long *out, Type **out_ty,
@@ -185,8 +185,10 @@ static void warn_value_conversion(SourceLoc loc, Type *dst, Node *src)
 
     if (type_is_pointer(dst) && type_is_pointer(src->ty) &&
         !type_same(dst, src->ty)) {
-        int dst_fn = dst->base && dst->base->kind == TY_FUNC;
-        int src_fn = src->ty->base && src->ty->base->kind == TY_FUNC;
+        Type *dst_base = type_ptr_elem(dst);
+        Type *src_base = type_ptr_elem(src->ty);
+        int dst_fn = dst_base && type_unqualified(dst_base)->kind == TY_FUNC;
+        int src_fn = src_base && type_unqualified(src_base)->kind == TY_FUNC;
 
         if (dst_fn || src_fn) {
             if (is_void_ptr_type(dst) || is_void_ptr_type(src->ty))
@@ -293,7 +295,7 @@ static int expr_is_lvalue(Node *n)
 
 static int expr_is_modifiable_lvalue(Node *n)
 {
-    return expr_is_lvalue(n) && n->ty && type_is_object(n->ty);
+    return expr_is_lvalue(n) && n->ty && type_is_modifiable_object(n->ty);
 }
 
 /* ND_MEMBER / ND_ADDR(&member): mark the enclosing local when its address escapes. */
@@ -328,7 +330,7 @@ static Type *member_owner_record(Node *base)
     if (!base || !base->ty)
         return NULL;
     if (type_is_record(base->ty))
-        return base->ty;
+        return type_unqualified(base->ty);
     return NULL;
 }
 
@@ -1162,8 +1164,10 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
         resolve_expr_ctx(n->lhs, CTX_LVALUE);
         resolve_expr_ctx(n->rhs, CTX_RVALUE);
         n->var_decay = 0;
-        if (!expr_is_modifiable_lvalue(n->lhs))
+        if (!expr_is_lvalue(n->lhs))
             diag_error_at(n->loc, "assignment to non-lvalue");
+        else if (!expr_is_modifiable_lvalue(n->lhs))
+            diag_error_at(n->loc, "assignment to const-qualified object");
         else if (!expr_assignable_to(n->lhs->ty, n->rhs))
             diag_incompatible_assign(n->loc, n->lhs->ty, n->rhs);
         else {
@@ -1316,7 +1320,8 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
     case ND_ADDR:
         resolve_expr_ctx(n->operand, CTX_ADDR_OPERAND);
         n->var_decay = 0;
-        if (n->operand->ty && n->operand->ty->kind == TY_FUNC) {
+        if (n->operand->ty &&
+            type_unqualified(n->operand->ty)->kind == TY_FUNC) {
             n->ty = type_ptr(n->operand->ty);
             n->is_lvalue = 0;
             return;
@@ -1358,7 +1363,7 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
             return;
         }
         {
-            Type *sty = n->lhs->ty;
+            Type *sty = type_unqualified(n->lhs->ty);
             int idx = -1;
             Member *m = type_struct_member(sty, n->name, &idx);
 
@@ -1371,8 +1376,8 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
                 return;
             }
             n->member_index = idx;
-            n->ty = m->ty;
-            n->is_lvalue = expr_is_modifiable_lvalue(n->lhs);
+            n->ty = type_qualify(m->ty, type_qualifiers(n->lhs->ty));
+            n->is_lvalue = expr_is_lvalue(n->lhs);
         }
         return;
     case ND_DEREF:
@@ -1382,16 +1387,16 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
             diag_error_at(n->loc, "cannot dereference non-pointer type '%s'",
                           type_name(n->operand->ty));
             n->ty = type_int();
-        } else if (type_is_void(n->operand->ty->base)) {
+        } else if (type_is_void(type_ptr_elem(n->operand->ty))) {
             diag_error_at(n->loc, "dereference of void pointer");
             diag_note_at(n->loc,
                          "xcc supports void * conversions but not void * dereference");
             n->ty = type_int();
-        } else if (n->operand->ty->base->kind == TY_FUNC) {
-            n->ty = n->operand->ty->base;
+        } else if (type_unqualified(type_ptr_elem(n->operand->ty))->kind == TY_FUNC) {
+            n->ty = type_ptr_elem(n->operand->ty);
             n->is_lvalue = 0;
         } else {
-            n->ty = n->operand->ty->base;
+            n->ty = type_ptr_elem(n->operand->ty);
             n->is_lvalue = 1;
         }
         return;

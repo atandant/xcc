@@ -11,6 +11,7 @@
 typedef enum {
     TY_VOID,
     TY_INT,     /* char, short, int, long; signed and unsigned variants */
+    TY_QUALIFIED, /* immutable qualifier wrapper around another type */
     TY_PTR,
     TY_ARRAY,
     TY_FUNC,
@@ -31,6 +32,12 @@ typedef enum {
     IS_SIGNED,
     IS_UNSIGNED
 } IntSign;
+
+typedef enum {
+    TQ_NONE     = 0,
+    TQ_CONST    = 1u << 0,
+    TQ_VOLATILE = 1u << 1
+} TypeQualifier;
 
 typedef struct Type Type;
 
@@ -65,6 +72,8 @@ struct Type {
     int is_complete;   /* TY_STRUCT: 1 when body has been defined        */
     Member *members;   /* TY_STRUCT: member array (arena-owned)          */
     int nmembers;      /* TY_STRUCT: member count                        */
+
+    unsigned qualifiers; /* TY_QUALIFIED: TypeQualifier bit set          */
 };
 
 typedef struct {
@@ -92,6 +101,12 @@ Type *type_unsigned_char(void);
 Type *type_unsigned_short(void);
 Type *type_unsigned_int(void);
 Type *type_unsigned_long(void);
+
+/* Qualification preserves the identity of the wrapped structural type. */
+Type *type_qualify(Type *ty, unsigned qualifiers);
+Type *type_unqualified(Type *ty);
+unsigned type_qualifiers(Type *ty);
+int type_is_const(Type *ty);
 
 /* Derived-type constructors (arena allocated). */
 Type *type_ptr(Type *base);
@@ -127,6 +142,7 @@ int type_is_function_pointer(Type *ty);
 int type_is_scalar(Type *ty);
 int type_is_object(Type *ty);
 int type_is_complete(Type *ty);
+int type_is_modifiable_object(Type *ty);
 
 /* Relations. */
 int type_same(Type *a, Type *b);

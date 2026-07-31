@@ -3,7 +3,8 @@
 A C89 compiler written from scratch, targeting x86-64 (System V ABI, Linux).
 It emits AT&T-syntax assembly and hands assembling/linking off to `gcc`.
 
-xcc is a `cc1`-style **compiler**, not a driver: one `.c` in, one `.s` out.
+xcc is a `cc1`-style **compiler**, not a driver: normally one `.c` in and one
+`.s` out; `-E` instead emits normalized, marker-free preprocessed C.
 
 ## Quickstart
 
@@ -41,7 +42,8 @@ acceptance test suite.
 | `char`, `short`, `int`, `long`, `void`, pointers (`*`, `&`, dereference) | `#line` |
 | object/function-like `#define`, `#undef`, rescanning, `#`, `##`, and conditionals | multiple translation units |
 | `#error` diagnostics | |
-| `#pragma once`; unknown pragmas ignored | |
+| `#pragma once`, `#pragma message`; unknown pragmas ignored | |
+| marker-free preprocessing-only output with `-E` | |
 | C89 predefined macros, `__XCC__`, and command-line `-D`/`-U` | |
 | experimental `#include` with quoted/angle operands and `-I` search paths | |
 | signed and unsigned integer types, promotions and usual arithmetic conversions | |
@@ -142,9 +144,11 @@ rescanning, and conditional inclusion. Function-like macros, argument prescan,
 stringification, token pasting, the C89 predefined macros, `__XCC__`, and
 command-line `-D`/`-U` are also implemented. Active `#error` directives emit
 their unexpanded preprocessing-token messages. Unknown pragmas are ignored,
-while `#pragma once` suppresses repeated physical-file inclusions. Includes and
-other directives remain a work in progress; quoted and angle-bracket includes
-with `-I` search paths are available experimentally. See
+`#pragma once` suppresses repeated physical-file inclusions, and macro-expanded
+`#pragma message` notes report build configuration on stderr. `-E` emits clean,
+marker-free preprocessed C without invoking the parser. Includes and other
+directives remain a work in progress; quoted and angle-bracket includes with
+`-I` search paths are available experimentally. See
 [`src/cpp/README.md`](src/cpp/README.md) for the detailed support matrix.
 
 The parser builds AST nodes and attaches parsed types to declarations. **sema**

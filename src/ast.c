@@ -41,6 +41,18 @@ DeclSpec *declspec_add_type(DeclSpec *spec, Type *ty, SourceLoc loc)
     return spec;
 }
 
+DeclSpec *declspec_add_qualifier(DeclSpec *spec, unsigned qualifier,
+                                 SourceLoc loc)
+{
+    if (!spec)
+        spec = declspec_new();
+    if (qualifier == TQ_CONST) {
+        if (++spec->nconst > 1)
+            diag_error_at(loc, "duplicate 'const' type qualifier");
+    }
+    return spec;
+}
+
 DeclSpec *declspec_add_builtin(DeclSpec *spec, TypeSpecKind kind,
                                SourceLoc loc)
 {
@@ -65,6 +77,7 @@ DeclSpec *declspec_add_builtin(DeclSpec *spec, TypeSpecKind kind,
 Type *declspec_type(DeclSpec *spec, SourceLoc loc)
 {
     int builtin;
+    Type *ty;
 
     if (!spec)
         return type_int();
@@ -73,7 +86,12 @@ Type *declspec_type(DeclSpec *spec, SourceLoc loc)
     if (spec->named_type) {
         if (builtin)
             diag_error_at(loc, "invalid combination of type specifiers");
-        return spec->named_type;
+        ty = spec->named_type;
+        if (spec->nconst && type_is_const(ty))
+            diag_error_at(loc, "duplicate 'const' type qualifier");
+        if (spec->nconst && type_unqualified(ty)->kind == TY_FUNC)
+            diag_error_at(loc, "function type must not be const-qualified");
+        return spec->nconst ? type_qualify(ty, TQ_CONST) : ty;
     }
     if (spec->nsigned && spec->nunsigned) {
         diag_error_at(loc, "both signed and unsigned specified");
@@ -82,24 +100,29 @@ Type *declspec_type(DeclSpec *spec, SourceLoc loc)
     if (spec->nvoid) {
         if (builtin != 1)
             diag_error_at(loc, "invalid combination with 'void'");
-        return type_void();
+        ty = type_void();
+        return spec->nconst ? type_qualify(ty, TQ_CONST) : ty;
     }
     if (spec->nchar) {
         if (spec->nshort || spec->nint || spec->nlong)
             diag_error_at(loc, "invalid combination with 'char'");
         if (spec->nunsigned)
-            return type_unsigned_char();
-        if (spec->nsigned)
-            return type_signed_char();
-        return type_char();
+            ty = type_unsigned_char();
+        else if (spec->nsigned)
+            ty = type_signed_char();
+        else
+            ty = type_char();
+        return spec->nconst ? type_qualify(ty, TQ_CONST) : ty;
     }
     if (spec->nshort && spec->nlong)
         diag_error_at(loc, "both short and long specified");
     if (spec->nshort)
-        return spec->nunsigned ? type_unsigned_short() : type_short();
-    if (spec->nlong)
-        return spec->nunsigned ? type_unsigned_long() : type_long();
-    return spec->nunsigned ? type_unsigned_int() : type_int();
+        ty = spec->nunsigned ? type_unsigned_short() : type_short();
+    else if (spec->nlong)
+        ty = spec->nunsigned ? type_unsigned_long() : type_long();
+    else
+        ty = spec->nunsigned ? type_unsigned_int() : type_int();
+    return spec->nconst ? type_qualify(ty, TQ_CONST) : ty;
 }
 
 static Node *new_node(NodeKind kind, SourceLoc loc)
@@ -797,11 +820,12 @@ Declarator *declarator_bitfield(Declarator *d, Node *width)
     return d;
 }
 
-Declarator *declarator_ptr(Declarator *d)
+Declarator *declarator_ptr(Declarator *d, unsigned qualifiers)
 {
     Declarator *wrap = declarator_empty();
     wrap->kind = DECL_PTR;
     wrap->inner = d;
+    wrap->qualifiers = qualifiers;
     return wrap;
 }
 
@@ -1010,7 +1034,7 @@ static Type *type_func_from_params(Type *ret, ParamClause *pc, SourceLoc loc)
                         break;
                     }
                 }
-                ptypes[i] = type_decay(pty);
+                ptypes[i] = type_unqualified(type_decay(pty));
             }
         }
     }
@@ -1032,7 +1056,9 @@ Type *type_apply_declarator_cb(Type *base, Declarator *d, SourceLoc loc,
     case DECL_IDENT:
         return base;
     case DECL_PTR:
-        return type_apply_declarator_cb(type_ptr(base), d->inner, loc, eval, ctx);
+        return type_apply_declarator_cb(
+            type_qualify(type_ptr(base), d->qualifiers),
+            d->inner, loc, eval, ctx);
     case DECL_ARRAY:
         if (base && base->kind == TY_FUNC)
             diag_error_at(loc, "array element type must not be a function type");

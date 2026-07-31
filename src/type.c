@@ -30,6 +30,43 @@ Type *type_unsigned_short(void) { return &ty_ushort; }
 Type *type_unsigned_int(void)   { return &ty_uint; }
 Type *type_unsigned_long(void)  { return &ty_ulong; }
 
+Type *type_unqualified(Type *ty)
+{
+    return ty && ty->kind == TY_QUALIFIED ? ty->base : ty;
+}
+
+unsigned type_qualifiers(Type *ty)
+{
+    return ty && ty->kind == TY_QUALIFIED ? ty->qualifiers : TQ_NONE;
+}
+
+int type_is_const(Type *ty)
+{
+    return (type_qualifiers(ty) & TQ_CONST) != 0;
+}
+
+Type *type_qualify(Type *ty, unsigned qualifiers)
+{
+    Type *t;
+
+    if (!ty || qualifiers == TQ_NONE)
+        return ty;
+    if (type_is_array(ty))
+        return type_array(type_qualify(type_array_elem(ty), qualifiers),
+                          type_array_count(ty));
+    if (ty->kind == TY_QUALIFIED) {
+        qualifiers |= ty->qualifiers;
+        ty = ty->base;
+    }
+    t = arena_alloc_zeroed(sizeof(Type));
+    t->kind = TY_QUALIFIED;
+    t->base = ty;
+    t->qualifiers = qualifiers;
+    t->size = type_size(ty);
+    t->align = type_align(ty);
+    return t;
+}
+
 Type *type_ptr(Type *base)
 {
     Type *t = arena_alloc_zeroed(sizeof(Type));
@@ -89,21 +126,25 @@ Type *type_enum(char *tag)
 
 /* ---- predicates ---- */
 
-int type_is_void(Type *ty)    { return ty && ty->kind == TY_VOID; }
+int type_is_void(Type *ty)
+{
+    ty = type_unqualified(ty);
+    return ty && ty->kind == TY_VOID;
+}
 
 int type_is_plain_char(Type *ty)
 {
-    return ty == &ty_char;
+    return type_unqualified(ty) == &ty_char;
 }
 
 int type_is_signed_char(Type *ty)
 {
-    return ty == &ty_schar;
+    return type_unqualified(ty) == &ty_schar;
 }
 
 int type_is_unsigned_char(Type *ty)
 {
-    return ty == &ty_uchar;
+    return type_unqualified(ty) == &ty_uchar;
 }
 
 int type_is_char(Type *ty)
@@ -114,21 +155,25 @@ int type_is_char(Type *ty)
 
 int type_is_long(Type *ty)
 {
+    ty = type_unqualified(ty);
     return ty && ty->kind == TY_INT && ty->width == IW_LONG;
 }
 
 int type_is_short(Type *ty)
 {
+    ty = type_unqualified(ty);
     return ty && ty->kind == TY_INT && ty->width == IW_SHORT;
 }
 
 int type_is_integer(Type *ty)
 {
+    ty = type_unqualified(ty);
     return ty && (ty->kind == TY_INT || ty->kind == TY_ENUM);
 }
 
 int type_is_signed(Type *ty)
 {
+    ty = type_unqualified(ty);
     if (!ty)
         return 0;
     if (ty->kind == TY_ENUM)
@@ -138,46 +183,73 @@ int type_is_signed(Type *ty)
 
 int type_is_unsigned(Type *ty)
 {
+    ty = type_unqualified(ty);
     return ty && ty->kind == TY_INT && ty->sign == IS_UNSIGNED;
 }
 
-int type_is_pointer(Type *ty) { return ty && ty->kind == TY_PTR; }
+int type_is_pointer(Type *ty)
+{
+    ty = type_unqualified(ty);
+    return ty && ty->kind == TY_PTR;
+}
 
 int type_is_function_pointer(Type *ty)
 {
-    return type_is_pointer(ty) && ty->base && ty->base->kind == TY_FUNC;
+    Type *base = type_ptr_elem(ty);
+    return base && type_unqualified(base)->kind == TY_FUNC;
 }
 
 int type_is_typedef_ref(Type *ty)
 {
+    ty = type_unqualified(ty);
     return ty && ty->kind == TY_TYPEDEF_REF;
 }
 
 const char *type_typedef_ref_name(Type *ty)
 {
+    ty = type_unqualified(ty);
     return type_is_typedef_ref(ty) ? ty->ref_name : NULL;
 }
 
-int type_is_array(Type *ty)   { return ty && ty->kind == TY_ARRAY; }
+int type_is_array(Type *ty)
+{
+    ty = type_unqualified(ty);
+    return ty && ty->kind == TY_ARRAY;
+}
 
-int type_is_struct(Type *ty)  { return ty && ty->kind == TY_STRUCT; }
+int type_is_struct(Type *ty)
+{
+    ty = type_unqualified(ty);
+    return ty && ty->kind == TY_STRUCT;
+}
 
-int type_is_union(Type *ty)   { return ty && ty->kind == TY_UNION; }
+int type_is_union(Type *ty)
+{
+    ty = type_unqualified(ty);
+    return ty && ty->kind == TY_UNION;
+}
 
 int type_is_record(Type *ty)
 {
+    ty = type_unqualified(ty);
     return ty && (ty->kind == TY_STRUCT || ty->kind == TY_UNION);
 }
 
-int type_is_enum(Type *ty)    { return ty && ty->kind == TY_ENUM; }
+int type_is_enum(Type *ty)
+{
+    ty = type_unqualified(ty);
+    return ty && ty->kind == TY_ENUM;
+}
 
 int type_struct_is_complete(Type *ty)
 {
+    ty = type_unqualified(ty);
     return type_is_record(ty) && ty->is_complete;
 }
 
 const char *type_struct_tag(Type *ty)
 {
+    ty = type_unqualified(ty);
     return type_is_record(ty) ? ty->tag : NULL;
 }
 
@@ -196,6 +268,7 @@ void type_struct_layout(Type *ty)
     int unit_bits = 0;
     int unit_size = 0;
 
+    ty = type_unqualified(ty);
     if (!type_is_record(ty))
         return;
 
@@ -279,6 +352,7 @@ void type_struct_layout(Type *ty)
 
 Member *type_struct_member(Type *ty, const char *name, int *out_index)
 {
+    ty = type_unqualified(ty);
     if (!type_is_record(ty) || !name)
         return NULL;
 
@@ -312,6 +386,7 @@ static int type_cast_member_ty_ok(Type *ty)
  * scalars or arrays of scalars only (B11 / D16). */
 int type_cast_target_ok(Type *ty)
 {
+    ty = type_unqualified(ty);
     if (!ty)
         return 0;
     if (type_is_void(ty) || type_is_scalar(ty))
@@ -335,11 +410,13 @@ int type_cast_target_ok(Type *ty)
 
 int type_is_object(Type *ty)
 {
+    ty = type_unqualified(ty);
     return ty && ty->kind != TY_VOID && ty->kind != TY_FUNC;
 }
 
 int type_is_complete(Type *ty)
 {
+    ty = type_unqualified(ty);
     if (!ty || type_is_void(ty) || ty->kind == TY_FUNC || type_is_typedef_ref(ty))
         return 0;
     if (type_is_pointer(ty))
@@ -353,16 +430,49 @@ int type_is_complete(Type *ty)
     return 1;
 }
 
+static int type_contains_const(Type *ty)
+{
+    Type *u;
+
+    if (!ty)
+        return 0;
+    if (type_is_const(ty))
+        return 1;
+    u = type_unqualified(ty);
+    if (type_is_array(u))
+        return type_contains_const(type_array_elem(u));
+    if (type_is_record(u)) {
+        for (int i = 0; i < u->nmembers; i++)
+            if (type_contains_const(u->members[i].ty))
+                return 1;
+    }
+    return 0;
+}
+
+int type_is_modifiable_object(Type *ty)
+{
+    return ty && !type_is_array(ty) && type_is_object(ty) &&
+           type_is_complete(ty) && !type_contains_const(ty);
+}
+
 /* ---- relations ---- */
 
 int type_same(Type *a, Type *b)
 {
     if (a == b)
         return 1;
-    if (!a || !b || a->kind != b->kind)
+    if (!a || !b || type_qualifiers(a) != type_qualifiers(b))
+        return 0;
+    a = type_unqualified(a);
+    b = type_unqualified(b);
+    if (a == b)
+        return 1;
+    if (a->kind != b->kind)
         return 0;
 
     switch (a->kind) {
+    case TY_QUALIFIED:
+        return 0;
     case TY_VOID:
         return 1;
     case TY_INT:
@@ -417,7 +527,18 @@ int type_same(Type *a, Type *b)
 
 static int is_void_ptr(Type *ty)
 {
-    return type_is_pointer(ty) && type_is_void(ty->base);
+    return type_is_pointer(ty) && type_is_void(type_ptr_elem(ty));
+}
+
+static int pointed_types_compatible(Type *a, Type *b)
+{
+    Type *ua = type_unqualified(a);
+    Type *ub = type_unqualified(b);
+
+    if (type_is_void(ua) || type_is_void(ub))
+        return type_is_object(ua) || type_is_object(ub) ||
+               (type_is_void(ua) && type_is_void(ub));
+    return type_same(ua, ub);
 }
 
 int type_compatible(Type *a, Type *b)
@@ -426,16 +547,17 @@ int type_compatible(Type *a, Type *b)
         return 1;
 
     if (type_is_pointer(a) && type_is_pointer(b)) {
-        if (a->base && a->base->kind == TY_FUNC) {
-            if (!b->base || b->base->kind != TY_FUNC)
+        Type *abase = type_ptr_elem(a);
+        Type *bbase = type_ptr_elem(b);
+
+        if (abase && type_unqualified(abase)->kind == TY_FUNC) {
+            if (!bbase || type_unqualified(bbase)->kind != TY_FUNC)
                 return 0;
-            return type_same(a->base, b->base);
+            return type_same(abase, bbase);
         }
-        if (b->base && b->base->kind == TY_FUNC)
+        if (bbase && type_unqualified(bbase)->kind == TY_FUNC)
             return 0;
-        if (is_void_ptr(a) || is_void_ptr(b))
-            return 1;
-        return type_same(a->base, b->base);
+        return pointed_types_compatible(abase, bbase);
     }
     return 0;
 }
@@ -452,10 +574,13 @@ int type_assignable(Type *dst, Type *src)
         return 1;
 
     if (type_is_pointer(dst) && type_is_pointer(src))
-        return type_compatible(dst, src);
+        return (type_qualifiers(type_ptr_elem(src)) &
+                ~type_qualifiers(type_ptr_elem(dst))) == 0 &&
+               pointed_types_compatible(type_ptr_elem(dst),
+                                          type_ptr_elem(src));
 
     if (type_is_record(dst) && type_is_record(src))
-        return type_same(dst, src);
+        return type_same(type_unqualified(dst), type_unqualified(src));
 
     return 0;
 }
@@ -518,6 +643,7 @@ int type_int_rank(Type *ty)
 
 int type_int_info(Type *ty, TypeIntInfo *out)
 {
+    ty = type_unqualified(ty);
     if (!ty || (ty->kind != TY_INT && ty->kind != TY_ENUM))
         return 0;
 
@@ -594,6 +720,7 @@ int type_scalar_info(Type *ty, TypeScalarInfo *out)
 
 static Type *type_unsigned_same_width(Type *ty)
 {
+    ty = type_unqualified(ty);
     switch (ty->width) {
     case IW_CHAR:  return type_unsigned_char();
     case IW_SHORT: return type_unsigned_short();
@@ -608,6 +735,7 @@ static Type *type_unsigned_same_width(Type *ty)
  * On LP64 xcc, int holds every char/short value (signed or unsigned). */
 Type *type_int_promote(Type *ty)
 {
+    ty = type_unqualified(ty);
     if (!ty)
         return ty;
     if (ty->kind == TY_ENUM)   /* an enum promotes to int */
@@ -695,6 +823,7 @@ Type *type_classify_integer_constant(long v, int has_long_suffix,
 
 int type_size(Type *ty)
 {
+    ty = type_unqualified(ty);
     if (!ty)
         return 0;
     if (ty->kind == TY_INT)
@@ -704,6 +833,7 @@ int type_size(Type *ty)
 
 int type_align(Type *ty)
 {
+    ty = type_unqualified(ty);
     if (!ty)
         return 1;
     if (ty->kind == TY_INT)
@@ -715,23 +845,26 @@ Type *type_decay(Type *ty)
 {
     if (type_is_array(ty))
         return type_ptr(type_array_elem(ty));
-    if (ty && ty->kind == TY_FUNC)
+    if (ty && type_unqualified(ty)->kind == TY_FUNC)
         return type_ptr(ty);
     return ty;
 }
 
 Type *type_array_elem(Type *ty)
 {
+    ty = type_unqualified(ty);
     return type_is_array(ty) ? ty->base : NULL;
 }
 
 int type_array_count(Type *ty)
 {
+    ty = type_unqualified(ty);
     return type_is_array(ty) ? ty->count : 0;
 }
 
 Type *type_ptr_elem(Type *ty)
 {
+    ty = type_unqualified(ty);
     return type_is_pointer(ty) ? ty->base : NULL;
 }
 
@@ -748,10 +881,24 @@ static const char *int_base_name(Type *ty)
 
 const char *type_name(Type *ty)
 {
+    unsigned qualifiers;
+
     if (!ty)
         return "<null>";
 
+    qualifiers = type_qualifiers(ty);
+    if (qualifiers != TQ_NONE) {
+        const char *inner = type_name(type_unqualified(ty));
+        const char *prefix = (qualifiers & TQ_CONST) ? "const " : "volatile ";
+        size_t n = strlen(prefix) + strlen(inner) + 1;
+        char *buf = arena_alloc(n);
+        snprintf(buf, n, "%s%s", prefix, inner);
+        return buf;
+    }
+
     switch (ty->kind) {
+    case TY_QUALIFIED:
+        return "<qualified-type>";
     case TY_VOID: return "void";
     case TY_INT: {
         if (type_is_signed_char(ty))

@@ -167,6 +167,12 @@ Type *typedef_resolve_type(Type *ty, SourceLoc loc)
     if (!ty)
         return ty;
 
+    if (type_qualifiers(ty) != TQ_NONE) {
+        unsigned qualifiers = type_qualifiers(ty);
+        Type *resolved = typedef_resolve_type(type_unqualified(ty), loc);
+        return type_qualify(resolved, qualifiers);
+    }
+
     if (type_is_typedef_ref(ty))
         return typedef_resolve_type(typedef_resolve_spec(ty, loc), loc);
 

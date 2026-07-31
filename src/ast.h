@@ -49,6 +49,7 @@ typedef struct DeclSpec DeclSpec;
 struct DeclSpec {
     StorageClass storage;
     Type *named_type;
+    int nconst;
     int nvoid;
     int nchar;
     int nshort;
@@ -71,6 +72,7 @@ struct Declarator {
     DeclaratorKind kind;
     char *name;
     Declarator *inner;
+    unsigned qualifiers; /* DECL_PTR: qualifiers following this '*' */
     Node *array_dim;   /* DECL_ARRAY: NULL means unsized `[]` */
     ParamClause *func_params; /* DECL_FUNC parameter clause */
     Node *bit_width_expr; /* struct bit-field `: width`; NULL if ordinary member */
@@ -323,6 +325,8 @@ DeclSpec *declspec_new(void);
 DeclSpec *declspec_add_storage(DeclSpec *spec, StorageClass storage,
                                SourceLoc loc);
 DeclSpec *declspec_add_type(DeclSpec *spec, Type *ty, SourceLoc loc);
+DeclSpec *declspec_add_qualifier(DeclSpec *spec, unsigned qualifier,
+                                 SourceLoc loc);
 DeclSpec *declspec_add_builtin(DeclSpec *spec, TypeSpecKind kind,
                                SourceLoc loc);
 Type *declspec_type(DeclSpec *spec, SourceLoc loc);
@@ -402,7 +406,7 @@ Function *external_functions(ExternalDecl *list);
 Declarator *declarator_empty(void);
 Declarator *declarator_ident(char *name);
 Declarator *declarator_bitfield(Declarator *d, Node *width);
-Declarator *declarator_ptr(Declarator *d);
+Declarator *declarator_ptr(Declarator *d, unsigned qualifiers);
 Declarator *declarator_add_dim(Declarator *d, Node *dim, int after_paren);
 Declarator *declarator_paren_group(Declarator *d);
 Declarator *declarator_paren_outer(Declarator *d, Node *dim);

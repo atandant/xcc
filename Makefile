@@ -70,6 +70,7 @@ test: $(BIN) $(BUILD)/lir-tests
 	./$(BUILD)/lir-tests
 	./tests/run.sh
 	./tests/run-cpp.sh
+	./tests/run-cpp-driver.sh
 
 examples: $(BIN)
 	./examples/build.sh
