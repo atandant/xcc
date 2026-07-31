@@ -3,6 +3,7 @@
 #define XCC_CPP_H
 
 #include <stddef.h>
+#include <stdio.h>
 
 #include "source.h"
 #include "token.h"
@@ -50,5 +51,6 @@ typedef struct {
 
 Cpp *cpp_create(const SourceFile *source, const CppOptions *options);
 CppToken cpp_next(Cpp *cpp);
+int cpp_emit(Cpp *cpp, FILE *out);
 
 #endif /* XCC_CPP_H */

@@ -436,8 +436,7 @@ static CppTokenKind pasted_kind(const char *text)
                 continue;
             }
             if ((ch == '+' || ch == '-') &&
-                (previous == 'e' || previous == 'E' ||
-                 previous == 'p' || previous == 'P')) {
+                (previous == 'e' || previous == 'E')) {
                 previous = ch;
                 continue;
             }

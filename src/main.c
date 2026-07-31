@@ -31,7 +31,8 @@ static void usage(FILE *f)
         "xcc 0.0.1 - a C89 compiler (x86-64 AT&T assembly)\n"
         "usage: xcc [file] [-o out] [options]\n"
         "  file        C source file, or - / omitted for stdin\n"
-        "  -o out      output assembly file, or - / omitted for stdout\n"
+        "  -o out      output file, or - / omitted for stdout\n"
+        "  -E          preprocess only; emit normalized, marker-free C\n"
         "  -I dir      add dir to the header search path\n"
         "  -D name[=value]  define a preprocessing macro\n"
         "  -U name     undefine a preprocessing macro\n"
@@ -83,6 +84,7 @@ int main(int argc, char **argv)
     const char *outpath = NULL;
     int lir_dump_mode = 0;
     int verify_lir = 1;
+    int preprocess_only = 0;
     FILE *in = stdin;
     SourceFile *source;
     const char **include_dirs = NULL;
@@ -102,6 +104,8 @@ int main(int argc, char **argv)
         } else if (strcmp(argv[i], "--version") == 0) {
             printf("xcc 0.0.1\n");
             return 0;
+        } else if (strcmp(argv[i], "-E") == 0) {
+            preprocess_only = 1;
         } else if (strcmp(argv[i], "--xcc-dump-raw-lir") == 0) {
             lir_dump_mode = 1;
         } else if (strcmp(argv[i], "--xcc-dump-lir") == 0) {
@@ -199,6 +203,36 @@ int main(int argc, char **argv)
             .actions = actions,
             .action_count = action_count,
         };
+
+        if (preprocess_only) {
+            FILE *out = stdout;
+            int ok;
+
+            if (lir_dump_mode != 0) {
+                diag_error("-E cannot be combined with LIR dump options");
+                free(actions);
+                free(include_dirs);
+                return 1;
+            }
+            if (outpath && strcmp(outpath, "-") != 0) {
+                out = fopen(outpath, "w");
+                if (!out) {
+                    diag_error("cannot open '%s' for writing", outpath);
+                    free(actions);
+                    free(include_dirs);
+                    return 1;
+                }
+            }
+            ok = cpp_emit(cpp_create(source, &cpp_options), out);
+            if (out != stdout && fclose(out) != 0) {
+                diag_error("failed closing '%s'", outpath);
+                ok = 0;
+            }
+            free(actions);
+            free(include_dirs);
+            arena_free_all();
+            return ok && diag_error_count == 0 ? 0 : 1;
+        }
         lexer_set_source(source, &cpp_options);
     }
     free(actions);

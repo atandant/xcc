@@ -1,0 +1,8 @@
+#define PRAGMA_NAME once
+#pragma PRAGMA_NAME
+#ifndef PRAGMA_MACRO_NAME_COUNT
+#define PRAGMA_MACRO_NAME_COUNT 1
+#else
+#undef PRAGMA_MACRO_NAME_COUNT
+#define PRAGMA_MACRO_NAME_COUNT 2
+#endif

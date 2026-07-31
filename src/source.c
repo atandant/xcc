@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: MIT */
+#define _XOPEN_SOURCE 700
 #include "source.h"
 
 #include "arena.h"
@@ -7,9 +8,16 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 struct SourceFile {
     const char *name;
+    int has_stat_identity;
+    dev_t device;
+    ino_t inode;
+    const char *canonical_path;
     unsigned char *bytes;
     size_t size;
     char **lines;
@@ -89,6 +97,24 @@ SourceFile *source_read(FILE *in, const char *name)
     if (ferror(in))
         diag_fatal("error reading source");
     source = source_create(tmp, len, name);
+    {
+        struct stat status;
+        int fd = fileno(in);
+
+        if (fd >= 0 && fstat(fd, &status) == 0) {
+            source->has_stat_identity = 1;
+            source->device = status.st_dev;
+            source->inode = status.st_ino;
+        }
+    }
+    if (name && name[0] != '<') {
+        char *canonical = realpath(name, NULL);
+
+        if (canonical) {
+            source->canonical_path = arena_strdup(canonical);
+            free(canonical);
+        }
+    }
     free(tmp);
     return source;
 }
@@ -96,6 +122,18 @@ SourceFile *source_read(FILE *in, const char *name)
 const char *source_name(const SourceFile *source)
 {
     return source ? source->name : "<unknown>";
+}
+
+int source_same_file(const SourceFile *left, const SourceFile *right)
+{
+    if (!left || !right)
+        return 0;
+    if (left == right)
+        return 1;
+    if (left->has_stat_identity && right->has_stat_identity)
+        return left->device == right->device && left->inode == right->inode;
+    return left->canonical_path && right->canonical_path &&
+           strcmp(left->canonical_path, right->canonical_path) == 0;
 }
 
 const unsigned char *source_bytes(const SourceFile *source)

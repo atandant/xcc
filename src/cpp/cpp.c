@@ -40,6 +40,18 @@ typedef struct Conditional {
     struct Conditional *next;
 } Conditional;
 
+typedef struct OnceFile {
+    const SourceFile *source;
+    struct OnceFile *next;
+} OnceFile;
+
+typedef void (*PragmaHandler)(Cpp *cpp, const CppToken *tokens, size_t len);
+
+typedef struct {
+    const char *name;
+    PragmaHandler handler;
+} PragmaSpec;
+
 typedef struct CppInput {
     const SourceFile *source;
     LogicalChar *chars;
@@ -63,6 +75,7 @@ struct Cpp {
     const char **include_dirs;
     size_t include_dir_count;
     int include_depth;
+    OnceFile *once_files;
 };
 
 static int trigraph(int ch)
@@ -397,8 +410,7 @@ static CppToken scan_next(Cpp *cpp)
                     continue;
                 }
                 if ((c == '+' || c == '-') &&
-                    (previous == 'e' || previous == 'E' ||
-                     previous == 'p' || previous == 'P')) {
+                    (previous == 'e' || previous == 'E')) {
                     previous = c;
                     input->pos++;
                     continue;
@@ -708,6 +720,26 @@ static SourceFile *find_header(Cpp *cpp, CppToken operand, const char *name,
     return NULL;
 }
 
+static int once_contains(const Cpp *cpp, const SourceFile *source)
+{
+    for (const OnceFile *entry = cpp->once_files; entry; entry = entry->next)
+        if (source_same_file(entry->source, source))
+            return 1;
+    return 0;
+}
+
+static void mark_once(Cpp *cpp, const SourceFile *source)
+{
+    OnceFile *entry;
+
+    if (once_contains(cpp, source))
+        return;
+    entry = arena_alloc(sizeof(*entry));
+    entry->source = source;
+    entry->next = cpp->once_files;
+    cpp->once_files = entry;
+}
+
 static void handle_include(Cpp *cpp, CppToken directive)
 {
     size_t len;
@@ -729,16 +761,16 @@ static void handle_include(Cpp *cpp, CppToken directive)
             return;
         }
     }
-    if (cpp->include_depth >= CPP_INCLUDE_DEPTH_LIMIT) {
-        diag_error_at(operand.loc, "maximum include depth of %d exceeded",
-                      CPP_INCLUDE_DEPTH_LIMIT);
-        free(name);
-        free(expanded);
-        free(tokens);
-        return;
-    }
     source = find_header(cpp, operand, name, quoted);
-    if (source) {
+    if (source && !once_contains(cpp, source)) {
+        if (cpp->include_depth >= CPP_INCLUDE_DEPTH_LIMIT) {
+            diag_error_at(operand.loc, "maximum include depth of %d exceeded",
+                          CPP_INCLUDE_DEPTH_LIMIT);
+            free(name);
+            free(expanded);
+            free(tokens);
+            return;
+        }
         cpp->input = create_input(source, cpp->input, cpp->conditionals, 1, 1);
         cpp->include_depth++;
     }
@@ -960,12 +992,22 @@ static void handle_error(Cpp *cpp, CppToken directive)
     char *message;
 
     for (size_t i = 0; i < len; i++) {
-        if (i > 0 && tokens[i].leading_space)
+        if (i > 0 && tokens[i].leading_space) {
+            if (message_len == (size_t)-1)
+                diag_fatal("#error message is too large");
             message_len++;
+        }
+        if (tokens[i].len > (size_t)-1 - message_len)
+            diag_fatal("#error message is too large");
         message_len += tokens[i].len;
     }
-    if (len)
+    if (len) {
+        if (message_len == (size_t)-1)
+            diag_fatal("#error message is too large");
         message_len++;
+    }
+    if (message_len == (size_t)-1)
+        diag_fatal("#error message is too large");
     message = malloc(message_len + 1);
     if (!message)
         diag_fatal("out of memory processing #error directive");
@@ -982,6 +1024,90 @@ static void handle_error(Cpp *cpp, CppToken directive)
     message[at] = '\0';
     diag_error_at(directive.loc, "%s", message);
     free(message);
+    free(tokens);
+}
+
+static void handle_pragma_once(Cpp *cpp, const CppToken *tokens, size_t len)
+{
+    (void)tokens;
+    if (len == 1)
+        mark_once(cpp, cpp->input->source);
+}
+
+static void handle_pragma_message(Cpp *cpp, const CppToken *tokens, size_t len)
+{
+    CppToken *expanded;
+    size_t expanded_len;
+    size_t first = 0;
+    size_t last;
+    size_t message_len = 0;
+    size_t at = 0;
+    char *message;
+
+    expanded = cpp_macros_expand_tokens(cpp->macros, tokens + 1, len - 1,
+                                        &expanded_len);
+    last = expanded_len;
+    if (first < last && token_is(&expanded[first], "(")) {
+        if (last < 3 || !token_is(&expanded[last - 1], ")"))
+            goto malformed;
+        first++;
+        last--;
+    }
+    if (first == last)
+        goto malformed;
+    for (size_t i = first; i < last; i++) {
+        CppToken token = expanded[i];
+
+        if (token.kind != CPP_STRING || token.len < 2 ||
+            token.text[0] != '"' || token.text[token.len - 1] != '"')
+            goto malformed;
+        if (token.len - 2 > (size_t)-1 - message_len)
+            diag_fatal("#pragma message is too large");
+        message_len += token.len - 2;
+    }
+    if (message_len == (size_t)-1)
+        diag_fatal("#pragma message is too large");
+    message = malloc(message_len + 1);
+    if (!message)
+        diag_fatal("out of memory processing #pragma message");
+    for (size_t i = first; i < last; i++) {
+        size_t part_len = expanded[i].len - 2;
+
+        memcpy(message + at, expanded[i].text + 1, part_len);
+        at += part_len;
+    }
+    message[at] = '\0';
+    diag_note_at(tokens[0].loc, "#pragma message: %s", message);
+    free(message);
+    free(expanded);
+    return;
+
+malformed:
+    diag_warn(W_PRAGMAS, tokens[0].loc,
+              "malformed #pragma message: expected string literal");
+    free(expanded);
+}
+
+static const PragmaSpec pragma_specs[] = {
+    { "once", handle_pragma_once },
+    { "message", handle_pragma_message },
+};
+
+static void handle_pragma(Cpp *cpp)
+{
+    size_t len;
+    CppToken *tokens = read_directive_line(cpp, &len);
+
+    if (len && tokens[0].kind == CPP_IDENT) {
+        size_t count = sizeof(pragma_specs) / sizeof(pragma_specs[0]);
+
+        for (size_t i = 0; i < count; i++) {
+            if (token_is(&tokens[0], pragma_specs[i].name)) {
+                pragma_specs[i].handler(cpp, tokens, len);
+                break;
+            }
+        }
+    }
     free(tokens);
 }
 
@@ -1040,6 +1166,10 @@ static void handle_directive(Cpp *cpp, SourceLoc hash_loc)
     }
     if (token_is(&directive, "error")) {
         handle_error(cpp, directive);
+        return;
+    }
+    if (token_is(&directive, "pragma")) {
+        handle_pragma(cpp);
         return;
     }
     diag_error_at(hash_loc, "preprocessing directives are not yet supported");
@@ -1131,4 +1261,39 @@ CppToken cpp_next(Cpp *cpp)
             continue;
         return token;
     }
+}
+
+int cpp_emit(Cpp *cpp, FILE *out)
+{
+    int line_start = 1;
+
+    for (;;) {
+        CppToken token = cpp_next(cpp);
+
+        if (token.kind == CPP_EOF)
+            break;
+        if (token.kind == CPP_NEWLINE) {
+            if (!line_start) {
+                fputc('\n', out);
+                line_start = 1;
+            }
+            continue;
+        }
+        if (token.starts_line && !line_start) {
+            fputc('\n', out);
+            line_start = 1;
+        }
+        if (!line_start)
+            fputc(' ', out);
+        if (token.len && fwrite(token.text, 1, token.len, out) != token.len)
+            break;
+        line_start = 0;
+    }
+    if (!line_start)
+        fputc('\n', out);
+    if (ferror(out)) {
+        diag_error("failed writing preprocessed output: %s", strerror(errno));
+        return 0;
+    }
+    return diag_error_count == 0;
 }

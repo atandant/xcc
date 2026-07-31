@@ -17,6 +17,7 @@ binary.
 | `star_bfs.c`     | BFS best path, decimal-coded nodes   | 15        |
 | `matmul.c`       | 3x3 matrix multiply + weighted trace | 38        |
 | `critter.c`      | Multi-species 8x8 world simulation   | 20        |
+| `job_queue.c`    | Macro-generated configurable queue   | 67        |
 | `warnex.c`       | Warning demo (compiles; see stderr)  | 42        |
 
 `critter.c` is a multi-species Cornell-style simulation on an 8x8 grid: three
@@ -27,6 +28,26 @@ scent, collisions, struct-by-value snapshots, and a long checksum exit code.
 both flat and nested initializers (`int A[][3]`, `int B[][3]`), a 1-D unsized
 `long weight[]`, and scalar brace init (`int scale = {2}`). It multiplies two
 3x3 matrices, takes a weighted trace, scales it, and returns the result mod 256.
+
+`job_queue.c` is the native-preprocessor showcase. Headers under `job_queue/`
+use `#pragma once`, nested includes, validated `-D` configuration, an X-macro
+command list, stringification, and token pasting to generate a typed queue API.
+It calls libc `puts` through a manual fixed-signature declaration to print the
+compiled capacity, scheduling mode, and processing order. The default FIFO
+build returns `67`; priority scheduling changes the order and returns `159`:
+
+```sh
+./xcc examples/job_queue.c -DJOB_QUEUE_ENABLE_PRIORITY=1 -o /tmp/job_queue.s
+gcc /tmp/job_queue.s -o /tmp/job_queue
+/tmp/job_queue; echo $?   # -> 159
+```
+
+Invalid configuration is rejected during preprocessing:
+
+```sh
+./xcc examples/job_queue.c -DJOB_QUEUE_CAPACITY=4
+# error: #error JOB_QUEUE_CAPACITY must hold at least five jobs
+```
 
 `warnex.c` is a **deliberately sloppy** C89 program: it triggers many default
 xcc warnings (implicit declarations, unprototyped calls, `char` overflow, old-

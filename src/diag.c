@@ -55,6 +55,9 @@ static WarnOpt warn_opts[W_COUNT] = {
     [W_SELF_REFERENTIAL_INITIALIZER] = {
         "self-referential-initializer", 1, 1, 0, 0, 0,
     },
+    [W_PRAGMAS] = {
+        "pragmas", 1, 1, 0, 0, 0,
+    },
 };
 
 static void diag_init_colors(void)

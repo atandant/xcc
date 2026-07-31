@@ -23,7 +23,9 @@
 | `#if`, `#ifdef`, `#ifndef`, `#elif`, `#else`, `#endif` | implemented |
 | `#include` and `-I` include search paths | experimental |
 | `#error` | implemented |
-| `#line` and `#pragma` | not implemented |
+| `#pragma` recognition; unknown pragmas ignored | implemented |
+| `#pragma once` | implemented xcc extension |
+| `#line` | not implemented |
 | `__LINE__`, `__FILE__`, `__DATE__`, `__TIME__`, `__STDC__`, `__XCC__` | implemented |
 | `-D` and `-U` command-line macro actions | implemented |
 | `-E` preprocessing-only output | not implemented |
@@ -87,6 +89,20 @@ and preprocessing-token scanning while sharing the translation unit's macro
 table. Quoted includes search the including file's directory before repeated
 `-I` directories; angle includes search only `-I` directories. Conditional
 groups cannot cross file boundaries, and nesting is limited to 200 files.
+
+Pragmas are dispatched from an internal registry without macro-expanding their
+tokens. Unknown pragmas are silently ignored. The registered `once` handler
+marks the current physical file for the translation unit; later includes are
+skipped using device/inode identity with canonical-path fallback. This treats
+relative-path, symlink, and hardlink aliases as the same file. `#pragma once`
+with trailing tokens is not recognized and has no effect.
+
+Potential future pragmas include scoped diagnostic control, structure packing,
+and symbol section or visibility controls. These are not implemented or
+promised: each requires complete support in its owning compiler layer. In
+particular, packing must remain unsupported until layout and ABI effects can be
+implemented together. `_Pragma` and the standard floating-point pragmas from
+later C revisions remain outside the current C89 scope.
 
 All input is retained for the compilation lifetime. Token locations identify
 their source file, including nested headers, without a mutable global filename.
