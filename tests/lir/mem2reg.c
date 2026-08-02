@@ -7,6 +7,8 @@ static Instr load(int d,int off,int size) { return (Instr){.op=LIR_LOAD,.dst=d,.
 static Instr store(int off,int size,int v) { return (Instr){.op=LIR_STORE,.dst=LIR_NO_VREG,.a=lir_mem(LIR_FP,off),.b=lir_vreg(v),.aux=size,.w=size==8?LIR_W8:LIR_W4}; }
 static Instr fload(int d,int off,LirFloatWidth fpw) { int size=fpw==LIR_FP_F32?4:8; Instr ins=load(d,off,size); ins.fpw=fpw; return ins; }
 static Instr fstore(int off,int v,LirFloatWidth fpw) { int size=fpw==LIR_FP_F32?4:8; Instr ins=store(off,size,v); ins.fpw=fpw; return ins; }
+static Instr f80load(int d,int off) { Instr ins=load(d,off,16); ins.fpw=LIR_FP_F80; return ins; }
+static Instr f80store(int off,int v) { Instr ins=store(off,16,v); ins.fpw=LIR_FP_F80; return ins; }
 
 void test_mem2reg_straight(void)
 {
@@ -62,6 +64,26 @@ void test_mem2reg_float(void)
     check_float_diamond(LIR_TYPE_F32,LIR_FP_F32,4);
     if (lir_test_failed) return;
     check_float_diamond(LIR_TYPE_F64,LIR_FP_F64,8);
+}
+
+void test_mem2reg_f80(void)
+{
+    LirFn *fn=test_fn("mem2reg_f80");
+    int e=fn->entry_block,l=test_block(fn),r=test_block(fn),j=test_block(fn);
+    int cond=test_vreg(fn),lv=lir_new_vreg_type(fn,LIR_TYPE_F80);
+    int rv=lir_new_vreg_type(fn,LIR_TYPE_F80),got=lir_new_vreg_type(fn,LIR_TYPE_F80);
+    test_add_local(fn,-16,16,1,0);
+    test_branch(fn,e,lir_vreg(cond),lir_imm(0),l,r);
+    test_emit(fn,l,(Instr){.op=LIR_FMOVI,.dst=lv,.a=lir_imm(0),.fpw=LIR_FP_F80});
+    test_emit(fn,l,f80store(-16,lv)); test_jump(fn,l,j);
+    test_emit(fn,r,(Instr){.op=LIR_FMOVI,.dst=rv,.a=lir_imm(0),.fpw=LIR_FP_F80});
+    test_emit(fn,r,f80store(-16,rv)); test_jump(fn,r,j);
+    test_emit(fn,j,f80load(got,-16)); test_return(fn,j,lir_vreg(got));
+    test_finish(fn); CHECK(lir_promote_memory_to_registers(fn)); lir_cfg_verify(fn);
+    CHECK_EQ(fn->blocks[j].nphis,1); LirPhi *p=&fn->blocks[j].phis[0];
+    CHECK_EQ(lir_vreg_type(fn,p->dst),LIR_TYPE_F80);
+    CHECK_EQ(test_phi_input(p,l),lv); CHECK_EQ(test_phi_input(p,r),rv);
+    CHECK_EQ(fn->blocks[j].term.a.u.vreg,p->dst); CHECK_EQ(test_op_count(fn,LIR_STORE),0);
 }
 
 static int accesses(const LirFn *fn,int off)

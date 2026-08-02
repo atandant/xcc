@@ -22,6 +22,15 @@ static int nframe_locals;
 static int nscopes;
 static int cur_offset; /* grows downward from the frame pointer, in bytes */
 
+static int promotable_scalar_type(Type *ty)
+{
+    int size = type_size(ty);
+
+    return type_is_scalar(ty) &&
+           (size == 4 || size == 8 ||
+            (size == 16 && type_is_floating(ty)));
+}
+
 void scope_reset(void)
 {
     nlocals = 0;
@@ -111,8 +120,7 @@ int scope_alloc_local(Type *ty)
         frame_locals[nframe_locals++] = (FrameLocal){
             .offset = cur_offset,
             .size = size,
-            .promotable_scalar = type_is_scalar(ty) &&
-                                 (size == 4 || size == 8),
+            .promotable_scalar = promotable_scalar_type(ty),
         };
     }
     return cur_offset;
@@ -165,8 +173,7 @@ void scope_bind(char *name, Type *ty, int offset, SourceLoc loc,
         frame_locals[nframe_locals++] = (FrameLocal){
             .offset = offset,
             .size = size,
-            .promotable_scalar = type_is_scalar(ty) &&
-                                 (size == 4 || size == 8),
+            .promotable_scalar = promotable_scalar_type(ty),
         };
     }
 }

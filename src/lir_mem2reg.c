@@ -165,6 +165,16 @@ static void find_promotable_slots(LirFn *fn, const LirDom *dom,
         if (!slots[s].has_load)
             slots[s].eligible = 0;
     }
+
+    /* setjmp hack: disable mem2reg for the whole function when it calls
+       _setjmp/longjmp.  SSA promotion splits stores into distinct vregs, but
+       longjmp resumes with the register/stack snapshot from _setjmp; values
+       written between the two calls must stay in one stack slot.  See
+       lir_function_has_setjmp() and include/README.md. */
+    if (lir_function_has_setjmp(fn)) {
+        for (int s = 0; s < nslots; s++)
+            slots[s].eligible = 0;
+    }
 }
 
 static int count_eligible(const PromoteSlot *slots, int nslots)

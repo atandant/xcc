@@ -16,7 +16,7 @@ MANIFEST="$TMP/manifest.txt"
 pass=0
 fail=0
 
-while IFS='|' read -r kind file expected expected_err xcc_args; do
+while IFS='|' read -r kind file expected expected_err xcc_args link_args; do
     case "$kind" in
         ''|\#*) continue ;;
     esac
@@ -35,7 +35,7 @@ while IFS='|' read -r kind file expected expected_err xcc_args; do
                 continue
             fi
 
-            if ! gcc "$TMP/out.s" -o "$TMP/out" 2> "$TMP/gccerr"; then
+            if ! gcc "$TMP/out.s" -o "$TMP/out" ${link_args:-} 2> "$TMP/gccerr"; then
                 echo "FAIL $file (assemble/link error)"
                 sed 's/^/      /' "$TMP/gccerr"
                 fail=$((fail + 1))

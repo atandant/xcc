@@ -46,7 +46,7 @@ acceptance test suite.
 | marker-free preprocessing-only output with `-E` | |
 | C89 predefined macros, `__XCC__`, and command-line `-D`/`-U` | |
 | experimental `#include` with quoted/angle operands and `-I` search paths | |
-| C89 `<stddef.h>` implementation header (use `-Iinclude`) | |
+| C89 implementation headers (use `-Iinclude`): `<stddef.h>`, `<limits.h>`, `<float.h>`, `<errno.h>`, `<string.h>`, `<stdlib.h>` | |
 | signed and unsigned integer types, promotions and usual arithmetic conversions | |
 | parenthesized declarators (`int (*p)[3]`), casts (`(int (*)[3])`) | |
 | N-dimensional arrays, `[]` subscript, `ptr ± int/long`, `ptr - ptr`, param decay | |
@@ -92,6 +92,27 @@ integer/pointer-only records follows the SysV AMD64 INTEGER/MEMORY subset:
 records up to 16 bytes use GPRs when the complete argument fits, while larger
 records use sret/stack memory.
 
+### setjmp / longjmp
+
+Hosted non-local control flow via `<setjmp.h>` (`-Iinclude`) is supported on
+x86-64 Linux by linking against glibc. The header maps `setjmp` to `_setjmp` and
+uses a glibc-compatible `jmp_buf` layout.
+
+Because `_setjmp` / `longjmp` snapshot and restore machine state, xcc
+**recognizes direct calls to those libc symbol names** and adjusts codegen:
+
+- **liveness** blocks callee-saved registers at the call sites.
+- **regalloc** keeps affected live ranges on the stack (no callee-saved
+  registers, no spill fragmentation across the calls).
+- **mem2reg** is disabled for all locals in any function that contains those
+  calls.
+
+This is a deliberate, name-based hack (`lir_call_is_setjmp_family()` in
+`src/lir.c`), not a general non-local-control-flow analysis. It matches
+`include/setjmp.h` and is documented in
+[`include/README.md`](include/README.md#setjmp--longjmp). Indirect calls and
+variants such as `sigsetjmp` are not covered yet.
+
 **Floating point:** scalar `float` and `double` use SSE registers and the SysV
 AMD64 calling convention. Scalar `long double` is a 16-byte, 16-aligned,
 memory-resident F80 value with x87 arithmetic, comparisons, loads/stores, all
@@ -117,6 +138,8 @@ prerequisite.
 >
 > Eligible integer, `float`, and `double` locals are promoted from stack slots
 > into typed SSA values; address-taken and narrow integer objects stay in memory.
+> Functions that call hosted `setjmp` / `longjmp` keep all locals on the stack
+> (see [setjmp / longjmp](#setjmp--longjmp) below).
 >
 > Brace initializers pad unspecified elements with zero (`{0}` zero-fills the
 > whole array). Partial lists and excess-element errors follow C89 aggregate rules.
@@ -198,8 +221,9 @@ make clean
 The generated parser source is produced into `build/` and is not committed.
 
 The [`repos/`](repos/) checks document reproducible builds of selected
-third-party C89 code. For example, `./repos/build_jsmn.sh` fetches, compiles,
-links, and runs [jsmn](https://github.com/zserge/jsmn) in all supported modes.
+third-party C89 code. For example, `./repos/build_jsmn.sh` and
+`./repos/build_uthash.sh` fetch pinned sources, compile smoke tests with xcc,
+link with `gcc`, and run them.
 
 ## Roadmap
 

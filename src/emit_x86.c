@@ -1277,6 +1277,8 @@ static void emit_instr(EmitCtx *c, Instr *ins)
 
     case LIR_MOV:
         if (ins->dst >= 0 && lir_vreg_type(c->lf, ins->dst) == LIR_TYPE_F80) {
+            if (ins->a.kind == OPND_VREG && ins->a.u.vreg == ins->dst)
+                return;
             fprintf(c->out, "  fldt %d(%%rbp)\n  fstpt %d(%%rbp)\n",
                     f80_operand_off(c, ins->a), vreg_off(c, ins->dst));
             return;

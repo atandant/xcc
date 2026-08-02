@@ -292,4 +292,16 @@ int lir_call_stack_offset(const Instr *ins, int index);
 int lir_call_stack_size(const Instr *ins);
 int lir_call_outgoing_size(const Instr *ins);
 
+/*
+ * Hosted setjmp/longjmp recognition.
+ *
+ * xcc links against glibc and include/setjmp.h maps setjmp -> _setjmp.
+ * These calls snapshot and restore machine state (stack pointer, callee-saved
+ * GPRs), which breaks ordinary SSA/regalloc assumptions.  liveness, regalloc,
+ * and mem2reg consult these predicates; see include/README.md and the main
+ * README section "setjmp / longjmp".
+ */
+int lir_call_is_setjmp_family(const Instr *ins);
+int lir_function_has_setjmp(const LirFn *fn);
+
 #endif /* XCC_LIR_H */

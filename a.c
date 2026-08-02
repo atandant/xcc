@@ -1,4 +1,6 @@
+#define VAR 5
+
 int main() {
-    int x = 1.5 + 2.5;
+    long double x = 5.385 + VAR;
     return x;
 }

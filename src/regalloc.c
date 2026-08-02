@@ -122,6 +122,24 @@ static int interval_spans_call(const LirFn *lf, const LiveInterval *iv)
     return 0;
 }
 
+/* Live ranges that touch setjmp/longjmp must not use callee-saved registers or
+   spill fragments (see lir_call_is_setjmp_family and include/README.md). */
+static int interval_spans_setjmp(const LirFn *lf, const LiveInterval *iv)
+{
+    for (int b = 0; b < lf->nblocks; b++) {
+        const LirBlock *block = &lf->blocks[b];
+        for (int i = 0; i < block->ninstr; i++) {
+            const Instr *ins = &block->instrs[i];
+            if (!lir_call_is_setjmp_family(ins))
+                continue;
+            if (interval_covers(iv, ins->position) ||
+                interval_covers(iv, ins->position + 1))
+                return 1;
+        }
+    }
+    return 0;
+}
+
 static int reg_ok_for_interval(const TargetDesc *td, int phys, int cross_call)
 {
     if (phys < 0)
@@ -601,7 +619,9 @@ static int materialize_spill_fragments(LirFn *lf, const Liveness *lv,
 
     for (int v = 0; v < original_nv; v++) {
         if (lv->by_vreg[v].end >= 0 && first->vreg_reg[v] < 0 &&
-            lir_vreg_precolor(lf, v) < 0) {
+            lir_vreg_precolor(lf, v) < 0 &&
+            lir_vreg_class(lf, v) != REG_CLASS_MEMORY &&
+            !interval_spans_setjmp(lf, &lv->by_vreg[v])) {
             split[v] = 1;
             any = 1;
             (*split_vregs)++;
@@ -827,6 +847,9 @@ void regalloc_verify(const LirFn *lf, const Liveness *lv,
             if (interval_spans_call(lf, iv) &&
                 (td->caller_saved_mask & (1u << phys)))
                 diag_fatal("register allocation keeps v%d in caller-saved register across call", v);
+            if (interval_spans_setjmp(lf, iv) &&
+                (td->callee_saved_mask & (1u << phys)))
+                diag_fatal("register allocation keeps v%d in callee-saved register across setjmp", v);
         }
     }
     if (registers != alloc->register_vregs || spills != alloc->spilled_vregs)
