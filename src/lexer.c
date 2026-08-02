@@ -216,13 +216,12 @@ static void number_token(CppToken token)
         if (i != end || (!dot && !exp) || (!digits_before && !digits_after) ||
             (exp && !exp_digits))
             diag_error_at(token.loc, "invalid floating constant");
-        if (lsuffix)
-            diag_error_at(token.loc, "long double constants are not supported");
         text = arena_alloc(end + 1);
         memcpy(text, token.text, end); text[end] = '\0';
         errno = 0;
-        yylval.num.float_val = fsuffix ? (double)strtof(text, &parse_end)
-                                       : strtod(text, &parse_end);
+        yylval.num.float_val = fsuffix ? (long double)strtof(text, &parse_end) :
+                               lsuffix ? strtold(text, &parse_end) :
+                                         (long double)strtod(text, &parse_end);
         if (errno == ERANGE)
             diag_error_at(token.loc, "floating constant out of range");
         if (parse_end != text + end)
@@ -232,6 +231,7 @@ static void number_token(CppToken token)
         yylval.num.is_hex = yylval.num.is_octal = yylval.num.is_char = 0;
         yylval.num.is_floating = 1;
         yylval.num.is_float_suffix = fsuffix;
+        yylval.num.is_long_double_suffix = lsuffix;
         return;
     }
 
@@ -299,6 +299,7 @@ static void number_token(CppToken token)
     yylval.num.float_val = 0.0;
     yylval.num.is_floating = 0;
     yylval.num.is_float_suffix = 0;
+    yylval.num.is_long_double_suffix = 0;
 }
 
 int yylex(void)
@@ -347,6 +348,7 @@ int yylex(void)
             yylval.num.float_val = 0.0;
             yylval.num.is_floating = 0;
             yylval.num.is_float_suffix = 0;
+            yylval.num.is_long_double_suffix = 0;
             return NUM;
         }
         if (token.kind == CPP_STRING) {

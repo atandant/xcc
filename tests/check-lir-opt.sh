@@ -38,6 +38,16 @@ int mem2reg_narrow(void) {
     c = 300;
     return c;
 }
+double mem2reg_float(int n) {
+    double x;
+    x = 0.5;
+    while (n) {
+        if (n & 1) x = x + 1.25;
+        else x = x + 2.5;
+        n = n - 1;
+    }
+    return x;
+}
 int dce_dead_chain(int x) {
     (x + 1) * 3;
     return 9;
@@ -143,6 +153,8 @@ if sed -n '/function mul_left /,/^}/p' "$TMP/opt-lir" | grep -Eq '^[[:space:]]+[
    ! sed -n '/function shift_zero /,/^}/p' "$TMP/opt-lir" | grep -Eq '^[[:space:]]+[0-9]+[[:space:]]+shl[[:space:]]' &&
    ! sed -n '/function mem2reg_loop /,/^}/p' "$TMP/opt-lir" | grep -Eq '^[[:space:]]+[0-9]+[[:space:]]+store[[:space:]]' &&
    [ "$(sed -n '/function mem2reg_loop /,/^}/p' "$TMP/opt-lir" | grep -Ec '^[[:space:]]+[0-9]+[[:space:]]+load[[:space:]]')" -eq 0 ] &&
+   ! sed -n '/function mem2reg_float /,/^}/p' "$TMP/opt-lir" | grep -Eq '^[[:space:]]+[0-9]+[[:space:]]+store[[:space:]]' &&
+   [ "$(sed -n '/function mem2reg_float /,/^}/p' "$TMP/opt-lir" | grep -Ec '^[[:space:]]+[0-9]+[[:space:]]+load[[:space:]]')" -eq 0 ] &&
    sed -n '/function mem2reg_address_taken /,/^}/p' "$TMP/opt-lir" | grep -Eq '^[[:space:]]+[0-9]+[[:space:]]+store[[:space:]]' &&
    sed -n '/function mem2reg_narrow /,/^}/p' "$TMP/opt-lir" | grep -Eq '^[[:space:]]+[0-9]+[[:space:]]+store[[:space:]]' &&
    ! sed -n '/function dce_dead_chain /,/^}/p' "$TMP/opt-lir" | grep -Eq '^[[:space:]]+[0-9]+[[:space:]]+(add|mul)[[:space:]]' &&

@@ -418,6 +418,50 @@ static int emit_abi_return(FILE *out)
     return 1;
 }
 
+static int emit_integer_roundtrip(FILE *out, const char *name, uint64_t value,
+                                  ConvKind to_f80, ConvKind from_f80)
+{
+    LirFn *lf = lir_fn_new(name);
+    int entry = lf->entry_block;
+    int epilogue = lir_new_block(lf);
+    int source = lir_new_vreg_type(lf, LIR_TYPE_I64);
+    int extended = lir_new_vreg_type(lf, LIR_TYPE_F80);
+    int result = lir_new_vreg_type(lf, LIR_TYPE_I64);
+    Function fn = { .name = (char *)name, .linkage = LINKAGE_EXTERNAL,
+                    .ret_ty = type_unsigned_long() };
+    Liveness lv;
+    AllocResult alloc;
+    long bits;
+
+    memcpy(&bits, &value, sizeof(bits));
+    lir_block_emit(&lf->blocks[entry], (Instr){
+        .op = LIR_MOVI, .dst = source, .a = lir_imm(bits),
+    });
+    lir_block_emit(&lf->blocks[entry], (Instr){
+        .op = LIR_CONV, .dst = extended, .a = lir_vreg(source),
+        .conv = to_f80, .fpw = LIR_FP_F80,
+    });
+    lir_block_emit(&lf->blocks[entry], (Instr){
+        .op = LIR_CONV, .dst = result, .a = lir_vreg(extended),
+        .conv = from_f80, .fpw = LIR_FP_F80,
+    });
+    lir_precolor_vreg(lf, result, PHYS_RAX);
+    lf->blocks[entry].term = (LirTerminator){
+        .kind = LIR_TERM_JMP, .target = epilogue,
+    };
+    lf->blocks[epilogue].term = (LirTerminator){ .kind = LIR_TERM_RET };
+    lf->epilogue_label = epilogue;
+    lf->stage = LIR_STAGE_LOWERED;
+    lir_cfg_rebuild_preds(lf);
+    lir_cfg_verify(lf);
+    lir_cfg_number_instructions(lf);
+    liveness_compute(lf, &X86_SYSV, &lv);
+    regalloc_linear(lf, &fn, &lv, &X86_SYSV, &alloc);
+    regalloc_verify(lf, &lv, &X86_SYSV, &alloc);
+    emit_x86_function(lf, &fn, &alloc, out, &X86_SYSV);
+    return 1;
+}
+
 void test_x87_runtime(void)
 {
     const char *assembly = "build/lir-x87-generated.s";
@@ -444,6 +488,17 @@ void test_x87_runtime(void)
     CHECK(emit_memory_roundtrip(out));
     CHECK(emit_abi_call(out));
     CHECK(emit_abi_return(out));
+    CHECK(emit_integer_roundtrip(out, "x87_si32_roundtrip",
+          (uint64_t)(int64_t)-123456789, CONV_SI32_F80, CONV_F80_SI32));
+    CHECK(emit_integer_roundtrip(out, "x87_si64_roundtrip",
+          (uint64_t)(int64_t)-9007199254740993LL,
+          CONV_SI64_F80, CONV_F80_SI64));
+    CHECK(emit_integer_roundtrip(out, "x87_ui32_roundtrip",
+          UINT64_C(4000000200), CONV_UI32_F80, CONV_F80_UI32));
+    CHECK(emit_integer_roundtrip(out, "x87_ui64_high_odd",
+          UINT64_C(0x8000000000000001), CONV_UI64_F80, CONV_F80_UI64));
+    CHECK(emit_integer_roundtrip(out, "x87_ui64_max",
+          UINT64_MAX, CONV_UI64_F80, CONV_F80_UI64));
     fputs("  .section .note.GNU-stack,\"\",@progbits\n", out);
     CHECK(fclose(out) == 0);
 
@@ -458,6 +513,9 @@ void test_x87_runtime(void)
         "extern double x87_memory_roundtrip(void);\n"
         "extern double x87_abi_call(void);\n"
         "extern long double x87_abi_return(void);\n"
+        "extern unsigned long x87_si32_roundtrip(void), x87_si64_roundtrip(void);\n"
+        "extern unsigned long x87_ui32_roundtrip(void), x87_ui64_high_odd(void);\n"
+        "extern unsigned long x87_ui64_max(void);\n"
         "long double host_x87_add(long double a, long double b) { return a+b; }\n"
         "int main(void) {\n"
         "  if (x87_add() != 12.0 || x87_sub() != 8.0) return 1;\n"
@@ -469,6 +527,11 @@ void test_x87_runtime(void)
         "  if (x87_memory_roundtrip() != 6.25) return 7;\n"
         "  if (x87_abi_call() != 6.75) return 8;\n"
         "  if (x87_abi_return() != 3.5L) return 9;\n"
+        "  if (x87_si32_roundtrip() != (unsigned long)(long)-123456789) return 10;\n"
+        "  if (x87_si64_roundtrip() != (unsigned long)-9007199254740993LL) return 11;\n"
+        "  if (x87_ui32_roundtrip() != 4000000200UL) return 12;\n"
+        "  if (x87_ui64_high_odd() != 0x8000000000000001UL) return 13;\n"
+        "  if (x87_ui64_max() != 0xffffffffffffffffUL) return 14;\n"
         "  return 0;\n"
         "}\n", c);
     CHECK(fclose(c) == 0);

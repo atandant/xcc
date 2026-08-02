@@ -14,10 +14,12 @@ int main(void)
         {"licm-simple",test_licm_simple}, {"licm-transitive",test_licm_transitive},
         {"licm-variant",test_licm_variant}, {"licm-safety",test_licm_unsafe_and_no_preheader},
         {"mem2reg-straight",test_mem2reg_straight}, {"mem2reg-diamond",test_mem2reg_diamond},
-        {"mem2reg-loop",test_mem2reg_loop}, {"mem2reg-rejections",test_mem2reg_rejections},
+        {"mem2reg-loop",test_mem2reg_loop}, {"mem2reg-float",test_mem2reg_float},
+        {"mem2reg-rejections",test_mem2reg_rejections},
         {"cfg-simplify-forwarding",test_cfg_simplify_forwarding},
         {"cfg-simplify-merge-unreachable",test_cfg_simplify_merge_unreachable},
         {"dom-chk-sparse",test_dom_chk_sparse},
+        {"long-double-type-foundation",test_long_double_type_foundation},
         {"x87-runtime",test_x87_runtime},
     };
     int failed=0, n=(int)(sizeof(cases)/sizeof(cases[0]));

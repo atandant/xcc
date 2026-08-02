@@ -31,7 +31,8 @@ typedef enum {
 
 typedef enum {
     FW_FLOAT,
-    FW_DOUBLE
+    FW_DOUBLE,
+    FW_LONG_DOUBLE
 } FloatWidth;
 
 typedef enum {
@@ -110,6 +111,7 @@ Type *type_unsigned_int(void);
 Type *type_unsigned_long(void);
 Type *type_float(void);
 Type *type_double(void);
+Type *type_long_double(void);
 
 /* Qualification preserves the identity of the wrapped structural type. */
 Type *type_qualify(Type *ty, unsigned qualifiers);

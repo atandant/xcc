@@ -151,9 +151,10 @@ struct Node {
     int var_decay;     /* ND_VAR: array decay address (sema); legacy alias */
 
     long val;          /* ND_NUM                                    */
-    double float_val;  /* ND_NUM floating payload                   */
+    long double float_val; /* ND_NUM floating payload               */
     int is_floating_literal; /* ND_NUM: decimal floating constant    */
     int is_float_suffix; /* ND_NUM: f/F suffix                       */
+    int is_long_double_suffix; /* ND_NUM: l/L floating suffix          */
     int has_long_suffix; /* ND_NUM: literal had an L/l suffix (C89 3.1.5) */
     int has_unsigned_suffix; /* ND_NUM: literal had a U/u suffix */
     int is_hex_literal;  /* ND_NUM: 0x/0X constant (C89 3.1.5 typing) */

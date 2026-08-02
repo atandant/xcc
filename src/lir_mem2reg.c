@@ -11,6 +11,8 @@ typedef struct {
     FrameLocal *frame;
     int eligible;
     int has_load;
+    int has_type;
+    LirType type;
     Instr load_template;
     int seed;
 } PromoteSlot;
@@ -74,9 +76,23 @@ static void disqualify_operand_uses(PromoteSlot *slots, int nslots,
     }
 }
 
-static int same_load_shape(const Instr *a, const Instr *b)
+static int same_load_shape(const LirFn *fn, const Instr *a, const Instr *b)
 {
-    return a->w == b->w && a->sgn == b->sgn && a->aux == b->aux;
+    return a->w == b->w && a->sgn == b->sgn && a->aux == b->aux &&
+           a->fpw == b->fpw &&
+           lir_vreg_type(fn, a->dst) == lir_vreg_type(fn, b->dst);
+}
+
+static void record_slot_type(const LirFn *fn, PromoteSlot *slot, int vreg)
+{
+    LirType type = lir_vreg_type(fn, vreg);
+
+    if (slot->has_type && slot->type != type)
+        slot->eligible = 0;
+    else {
+        slot->has_type = 1;
+        slot->type = type;
+    }
 }
 
 static void find_promotable_slots(LirFn *fn, const LirDom *dom,
@@ -112,12 +128,15 @@ static void find_promotable_slots(LirFn *fn, const LirDom *dom,
                 }
                 if (ins->op == LIR_LOAD) {
                     if (slots[slot].has_load &&
-                        !same_load_shape(&slots[slot].load_template, ins)) {
+                        !same_load_shape(fn, &slots[slot].load_template, ins)) {
                         slots[slot].eligible = 0;
                     } else if (!slots[slot].has_load) {
                         slots[slot].has_load = 1;
                         slots[slot].load_template = *ins;
                     }
+                    record_slot_type(fn, &slots[slot], ins->dst);
+                } else {
+                    record_slot_type(fn, &slots[slot], ins->b.u.vreg);
                 }
                 continue;
             }
@@ -191,7 +210,7 @@ static void insert_seed_loads(LirFn *fn, PromoteSlot *slots, int nslots)
             continue;
         }
         seed = slots[s].load_template;
-        seed.dst = lir_new_vreg(fn);
+        seed.dst = lir_new_vreg_type(fn, slots[s].type);
         seed.position = 0;
         slots[s].seed = seed.dst;
         instrs[out++] = seed;
@@ -260,7 +279,7 @@ static void place_phis(LirFn *fn, const LirDom *dom, PromoteSlot *slots,
 
                 if (phi_vreg[index] != LIR_NO_VREG)
                     continue;
-                phi_vreg[index] = lir_new_vreg(fn);
+                phi_vreg[index] = lir_new_vreg_type(fn, slots[s].type);
                 lir_block_add_phi(&fn->blocks[member], phi_vreg[index]);
                 if (!queued[member]) {
                     queued[member] = 1;

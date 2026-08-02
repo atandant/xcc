@@ -111,7 +111,7 @@ int scope_alloc_local(Type *ty)
         frame_locals[nframe_locals++] = (FrameLocal){
             .offset = cur_offset,
             .size = size,
-            .promotable_scalar = type_is_scalar(ty) && !type_is_floating(ty) &&
+            .promotable_scalar = type_is_scalar(ty) &&
                                  (size == 4 || size == 8),
         };
     }
@@ -165,7 +165,7 @@ void scope_bind(char *name, Type *ty, int offset, SourceLoc loc,
         frame_locals[nframe_locals++] = (FrameLocal){
             .offset = offset,
             .size = size,
-            .promotable_scalar = type_is_scalar(ty) && !type_is_floating(ty) &&
+            .promotable_scalar = type_is_scalar(ty) &&
                                  (size == 4 || size == 8),
         };
     }

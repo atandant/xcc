@@ -75,6 +75,7 @@ static int instruction_has_effect(const Instr *ins)
     case LIR_STORE:
     case LIR_MEMCPY:
     case LIR_CALL:
+    case LIR_FRET:
         return 1;
 #if 0 /* see is_fp_imm_mem_update in lir_dce.c */
     case LIR_ADD:

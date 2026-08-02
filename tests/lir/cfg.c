@@ -2,6 +2,8 @@
 #include "test.h"
 #include "lir_dom.h"
 
+#include <string.h>
+
 void test_cfg_simplify_forwarding(void)
 {
     LirFn *fn = test_fn("cfg_forwarding");
@@ -101,4 +103,17 @@ void test_dom_chk_sparse(void)
     CHECK(lir_dom_in_frontier(&dom, right, header));
     CHECK(lir_dom_in_frontier(&dom, body, header));
     CHECK(lir_dom_in_frontier(&dom, header, header));
+}
+
+void test_long_double_type_foundation(void)
+{
+    Type *ld = type_long_double();
+
+    CHECK(type_is_floating(ld));
+    CHECK_EQ(type_size(ld), 16);
+    CHECK_EQ(type_align(ld), 16);
+    CHECK(type_same(type_arith_convert(type_float(), ld), ld));
+    CHECK(type_same(type_arith_convert(type_double(), ld), ld));
+    CHECK(type_same(type_arith_convert(type_int(), ld), ld));
+    CHECK(strcmp(type_name(ld), "long double") == 0);
 }

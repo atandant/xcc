@@ -1029,7 +1029,8 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
     switch (n->kind) {
     case ND_NUM:
         n->ty = n->is_floating_literal
-            ? (n->is_float_suffix ? type_float() : type_double())
+            ? (n->is_float_suffix ? type_float() :
+               n->is_long_double_suffix ? type_long_double() : type_double())
             : n->is_char_constant ? type_int() :
             type_classify_integer_constant(
                 n->val, n->has_long_suffix, n->has_unsigned_suffix,
@@ -2228,6 +2229,13 @@ static void sema_function(Function *fn)
                 p->abi_ngpr = ap.ngpr;
                 gpr_slot += ap.ngpr;
             }
+        } else if (type_same(type_unqualified(pty), type_long_double())) {
+            stack_off = (stack_off + 15) & -16;
+            p->offset = 16 + stack_off;
+            p->abi_gpr_start = -1;
+            p->abi_ngpr = 0;
+            p->abi_stack_bytes = 16;
+            stack_off += 16;
         } else if (type_is_floating(pty) && sse_slot < 8) {
             p->offset = scope_alloc_local(pty);
             p->abi_gpr_start = -1;
@@ -2431,9 +2439,9 @@ static int static_initializer_error(GlobalObject *object)
     return 0;
 }
 
-static int floating_constant_eval(Node *n, double *out)
+static int floating_constant_eval(Node *n, long double *out)
 {
-    double a, b;
+    long double a, b;
     long iv;
 
     if (!n || !out)
@@ -2445,9 +2453,9 @@ static int floating_constant_eval(Node *n, double *out)
         else if (ice_eval(n, &iv)) {
             if (type_is_integer(n->ty) && !type_is_signed(n->ty) &&
                 type_int_width(n->ty) == 8)
-                *out = (double)(unsigned long)iv;
+                *out = (long double)(unsigned long)iv;
             else
-                *out = (double)iv;
+                *out = (long double)iv;
         }
         else
             return 0;
@@ -2462,7 +2470,7 @@ static int floating_constant_eval(Node *n, double *out)
     case ND_CAST:
         if (!floating_constant_eval(n->operand, &a))
             return 0;
-        *out = type_is_integer(n->ty) ? (double)(long)a : a;
+        *out = type_is_integer(n->ty) ? (long double)(long)a : a;
         break;
     case ND_BINOP:
         if (!floating_constant_eval(n->lhs, &a) ||
@@ -2471,14 +2479,16 @@ static int floating_constant_eval(Node *n, double *out)
         if (n->op == OP_ADD) *out = a + b;
         else if (n->op == OP_SUB) *out = a - b;
         else if (n->op == OP_MUL) *out = a * b;
-        else if (n->op == OP_DIV && b != 0.0) *out = a / b;
+        else if (n->op == OP_DIV && b != 0.0L) *out = a / b;
         else return 0;
         break;
     default:
         return 0;
     }
     if (n->ty && type_same(type_unqualified(n->ty), type_float()))
-        *out = (double)(float)*out;
+        *out = (long double)(float)*out;
+    else if (n->ty && type_same(type_unqualified(n->ty), type_double()))
+        *out = (long double)(double)*out;
     return 1;
 }
 
@@ -2543,15 +2553,19 @@ static int encode_static_initializer(GlobalObject *object, Type *ty,
             return static_initializer_error(object);
         *pcursor = value->next;
         if (type_is_floating(ty)) {
-            double floating;
+            long double floating;
 
             if (!floating_constant_eval(value, &floating))
                 return static_initializer_error(object);
             if (type_same(type_unqualified(ty), type_float())) {
                 float narrowed = (float)floating;
                 memcpy(object->init_data + offset, &narrowed, sizeof(narrowed));
+            } else if (type_same(type_unqualified(ty), type_double())) {
+                double narrowed = (double)floating;
+                memcpy(object->init_data + offset, &narrowed, sizeof(narrowed));
             } else {
-                memcpy(object->init_data + offset, &floating, sizeof(floating));
+                memset(object->init_data + offset, 0, 16);
+                memcpy(object->init_data + offset, &floating, 10);
             }
             return 1;
         }

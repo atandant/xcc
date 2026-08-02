@@ -39,7 +39,7 @@ acceptance test suite.
 
 | Supported | Not yet |
 | --- | --- |
-| `char`, `short`, `int`, `long`, `void`, pointers (`*`, `&`, dereference) | `#line` |
+| `char`, `short`, `int`, `long`, `float`, `double`, `void`, pointers (`*`, `&`, dereference) | `#line` |
 | object/function-like `#define`, `#undef`, rescanning, `#`, `##`, and conditionals | multiple translation units |
 | `#error` diagnostics | |
 | `#pragma once`, `#pragma message`; unknown pragmas ignored | |
@@ -62,7 +62,8 @@ acceptance test suite.
 | casts `(type)expr`, `(void)expr` discard | |
 | `sizeof expr`, `sizeof(type)` (compile-time fold, `unsigned long`) | |
 | ordinary character constants (escapes and implementation-defined multi-character packing) | wide character and string literals |
-| ordinary string literals in expressions (escapes, concatenation, embedded NUL) | floating types and literals |
+| ordinary string literals in expressions (escapes, concatenation, embedded NUL) | |
+| decimal `float`/`double`/`long double` literals; scalar floating arithmetic, comparisons, casts, storage, static initialization, and SysV calls/returns | |
 | function calls (prototyped arg checking, void `*` conversions) | |
 | `if` / `else`, `while`, `do ... while`, `for`, blocks and null statements | |
 | `switch` / `case` / `default`, fallthrough, `break`, `continue` | |
@@ -91,6 +92,16 @@ integer/pointer-only records follows the SysV AMD64 INTEGER/MEMORY subset:
 records up to 16 bytes use GPRs when the complete argument fits, while larger
 records use sret/stack memory.
 
+**Floating point:** scalar `float` and `double` use SSE registers and the SysV
+AMD64 calling convention. Scalar `long double` is a 16-byte, 16-aligned,
+memory-resident F80 value with x87 arithmetic, comparisons, loads/stores, all
+integer/`float`/`double` conversions, 16-byte stack arguments, and `ST(0)`
+returns. Mixed-signature calls and returns are tested in both directions
+against GCC. `L`-suffixed literals retain x87 precision, and local-static and
+file-scope F80 initializers emit deterministic zero padding. An x87
+stack-register allocator is a possible later optimization, not a correctness
+prerequisite.
+
 > Locals use type-aware stack layout (`char` 1 byte, `int` 4 bytes, `long` and
 > pointers 8 bytes). On x86-64 Linux (SysV LP64), `long` is 64 bits — the same
 > width as pointers.
@@ -103,6 +114,9 @@ records use sret/stack memory.
 > `sizeof` is evaluated at compile time in sema (no runtime codegen). Array
 > operands do not decay; function, `void`, and incomplete types are rejected.
 > The operand of `sizeof expr` is not evaluated.
+>
+> Eligible integer, `float`, and `double` locals are promoted from stack slots
+> into typed SSA values; address-taken and narrow integer objects stay in memory.
 >
 > Brace initializers pad unspecified elements with zero (`{0}` zero-fills the
 > whole array). Partial lists and excess-element errors follow C89 aggregate rules.
@@ -190,7 +204,8 @@ links, and runs [jsmn](https://github.com/zserge/jsmn) in all supported modes.
 ## Roadmap
 
 - `volatile` type qualifier
-- floating-point types, literals, operations, and ABI support
+- optionally optimize memory-resident F80 values with an x87 stack scheduler after
+  source-level semantics and ABI interoperability are complete
 - variadic functions and old-style function definitions with parameter declarations
 - function-pointer and nested-declarator conformance edge cases
 - complete C89 preprocessor support

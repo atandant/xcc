@@ -71,9 +71,10 @@ static Type *parameter_declspec_type(DeclSpec *spec, SourceLoc loc)
         int is_hex;
         int is_octal;
         int is_char;
-        double float_val;
+        long double float_val;
         int is_floating;
         int is_float_suffix;
+        int is_long_double_suffix;
     } num;
     char *str;
     StringToken *string;
@@ -765,7 +766,8 @@ primary_expr:
                                $$->is_char_constant = $1.is_char;
                                $$->float_val = $1.float_val;
                                $$->is_floating_literal = $1.is_floating;
-                               $$->is_float_suffix = $1.is_float_suffix; }
+                               $$->is_float_suffix = $1.is_float_suffix;
+                               $$->is_long_double_suffix = $1.is_long_double_suffix; }
   | string_literal          { $$ = $1; }
   | IDENT                    { $$ = node_var($1, LOC(@1)); }
   | '(' expr ')'             { $$ = $2; }

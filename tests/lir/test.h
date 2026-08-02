@@ -51,10 +51,12 @@ void test_licm_unsafe_and_no_preheader(void);
 void test_mem2reg_straight(void);
 void test_mem2reg_diamond(void);
 void test_mem2reg_loop(void);
+void test_mem2reg_float(void);
 void test_mem2reg_rejections(void);
 void test_cfg_simplify_forwarding(void);
 void test_cfg_simplify_merge_unreachable(void);
 void test_dom_chk_sparse(void);
+void test_long_double_type_foundation(void);
 void test_x87_runtime(void);
 
 #endif

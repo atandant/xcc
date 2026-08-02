@@ -1103,6 +1103,121 @@ static void emit_arg_reg_store(EmitCtx *c, int phys, Type *ty, int offset)
     }
 }
 
+static int conv_integer_to_f80(EmitCtx *c, const Instr *ins, int s0, int s1)
+{
+    int dst_off = vreg_off(c, ins->dst);
+    const char *r0 = reg64_name(s0);
+    const char *r1 = reg64_name(s1);
+
+    if (ins->conv != CONV_SI32_F80 && ins->conv != CONV_SI64_F80 &&
+        ins->conv != CONV_UI32_F80 && ins->conv != CONV_UI64_F80)
+        return 0;
+
+    if (ins->conv == CONV_SI32_F80) {
+        load_operand(c, ins->a, r0, LIR_W4);
+        fprintf(c->out, "  mov %s, %d(%%rbp)\n  fildl %d(%%rbp)\n",
+                reg32_name(s0), dst_off, dst_off);
+    } else if (ins->conv == CONV_SI64_F80 ||
+               ins->conv == CONV_UI32_F80) {
+        load_operand(c, ins->a, r0, LIR_W8);
+        fprintf(c->out, "  mov %s, %d(%%rbp)\n  fildq %d(%%rbp)\n",
+                r0, dst_off, dst_off);
+    } else {
+        /* Split uint64 into its low 63 bits plus an exact 2^63.  Unlike the
+           usual halve-and-double SSE sequence, this preserves odd integers
+           because x87 extended precision has a full 64-bit significand. */
+        load_operand(c, ins->a, r0, LIR_W8);
+        fprintf(c->out,
+                "  mov %s, %s\n"
+                "  btr $63, %s\n"
+                "  mov %s, %d(%%rbp)\n"
+                "  fildq %d(%%rbp)\n"
+                "  test %s, %s\n"
+                "  jns 1f\n"
+                "  movabs $-9223372036854775808, %s\n"
+                "  mov %s, %d(%%rbp)\n"
+                "  fildq %d(%%rbp)\n"
+                "  fchs\n"
+                "  faddp\n"
+                "1:\n",
+                r0, r1, r1, r1, dst_off, dst_off, r0, r0, r1, r1,
+                dst_off, dst_off);
+    }
+    fprintf(c->out, "  fstpt %d(%%rbp)\n", dst_off);
+    return 1;
+}
+
+static int conv_f80_to_integer(EmitCtx *c, const Instr *ins, int s0, int s1)
+{
+    const char *r0 = reg64_name(s0);
+    const char *r1 = reg64_name(s1);
+    int source_off;
+
+    if (ins->conv != CONV_F80_SI32 && ins->conv != CONV_F80_SI64 &&
+        ins->conv != CONV_F80_UI32 && ins->conv != CONV_F80_UI64)
+        return 0;
+    source_off = f80_operand_off(c, ins->a);
+
+    /* C floating-to-integer conversion truncates toward zero.  Use a temporary
+       x87 control word instead of requiring SSE3's FISTTP, then restore the
+       caller's control word before exposing the result. */
+    fprintf(c->out,
+            "  sub $32, %%rsp\n"
+            "  fnstcw 28(%%rsp)\n"
+            "  movzwl 28(%%rsp), %s\n"
+            "  or $3072, %s\n"
+            "  movw %s, 30(%%rsp)\n"
+            "  fldcw 30(%%rsp)\n",
+            reg32_name(s0), reg32_name(s0), reg16_name(s0));
+
+    if (ins->conv == CONV_F80_UI64) {
+        /* Values at or above 2^63 are reduced by exactly 2^63, converted as
+           signed, then have the high integer bit restored. */
+        fprintf(c->out,
+                "  movabs $-9223372036854775808, %s\n"
+                "  mov %s, 16(%%rsp)\n"
+                "  fildq 16(%%rsp)\n"
+                "  fchs\n"
+                "  fstpt (%%rsp)\n"
+                "  fldt (%%rsp)\n"
+                "  fldt %d(%%rbp)\n"
+                "  fucomip %%st(1), %%st\n"
+                "  fstp %%st(0)\n"
+                "  jb 1f\n"
+                "  fldt (%%rsp)\n"
+                "  fldt %d(%%rbp)\n"
+                "  fsubp\n"
+                "  fistpq 16(%%rsp)\n"
+                "  mov 16(%%rsp), %s\n"
+                "  movabs $-9223372036854775808, %s\n"
+                "  xor %s, %s\n"
+                "  jmp 2f\n"
+                "1:\n"
+                "  fldt %d(%%rbp)\n"
+                "  fistpq 16(%%rsp)\n"
+                "  mov 16(%%rsp), %s\n"
+                "2:\n",
+                r0, r0, source_off, source_off, r0, r1, r1, r0,
+                source_off, r0);
+    } else {
+        int signed32 = ins->conv == CONV_F80_SI32;
+        char suffix = signed32 ? 'l' : 'q';
+
+        fprintf(c->out,
+                "  fldt %d(%%rbp)\n"
+                "  fistp%c 16(%%rsp)\n"
+                "  mov%s 16(%%rsp), %s\n",
+                source_off, suffix,
+                suffix == 'l' ? "l" : "", suffix == 'l'
+                    ? reg32_name(s0) : r0);
+        if (signed32)
+            fprintf(c->out, "  movslq %s, %s\n", reg32_name(s0), r0);
+    }
+    fprintf(c->out, "  fldcw 28(%%rsp)\n  add $32, %%rsp\n");
+    store_vreg_slot(c, ins->dst, r0);
+    return 1;
+}
+
 static void emit_instr(EmitCtx *c, Instr *ins)
 {
     const TargetDesc *td = c->td;
@@ -1111,6 +1226,25 @@ static void emit_instr(EmitCtx *c, Instr *ins)
 
     switch (ins->op) {
     case LIR_FMOVI: {
+        if (ins->fpw == LIR_FP_F80) {
+            unsigned char bytes[sizeof(long double)];
+            unsigned long long lo = 0;
+            unsigned short hi = 0;
+            int off = vreg_off(c, ins->dst);
+
+            memcpy(bytes, &ins->fimm, sizeof(bytes));
+            memcpy(&lo, bytes, 8);
+            memcpy(&hi, bytes + 8, 2);
+            fprintf(c->out,
+                    "  movabs $0x%016llx, %s\n"
+                    "  mov %s, %d(%%rbp)\n"
+                    "  movw $%u, %d(%%rbp)\n"
+                    "  movl $0, %d(%%rbp)\n"
+                    "  movw $0, %d(%%rbp)\n",
+                    lo, reg64_name(s0), reg64_name(s0), off,
+                    (unsigned)hi, off + 8, off + 10, off + 14);
+            return;
+        }
         int target = vreg_phys(c, ins->dst);
         if (target < 0)
             target = PHYS_XMM15;
@@ -1601,6 +1735,9 @@ static void emit_instr(EmitCtx *c, Instr *ins)
 
     case LIR_CONV: {
         if (ins->conv >= CONV_SI32_F32) {
+            if (conv_integer_to_f80(c, ins, s0, s1) ||
+                conv_f80_to_integer(c, ins, s0, s1))
+                return;
             if (ins->conv == CONV_F32_F80 || ins->conv == CONV_F64_F80) {
                 LirFloatWidth srcw = ins->conv == CONV_F32_F80
                     ? LIR_FP_F32 : LIR_FP_F64;

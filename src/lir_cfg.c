@@ -89,6 +89,13 @@ static int operand_is_type(const LirFn *fn, Operand operand, LirType type)
 
 static void verify_f80_instr(const LirFn *fn, int block, const Instr *ins)
 {
+    if (ins->op == LIR_FMOVI && ins->fpw == LIR_FP_F80) {
+        if (ins->dst < 0 || lir_vreg_type(fn, ins->dst) != LIR_TYPE_F80 ||
+            ins->a.kind != OPND_IMM)
+            malformed(fn, block, "F80 immediate is malformed");
+        return;
+    }
+
     if (ins->op == LIR_LOAD && ins->dst >= 0 &&
         lir_vreg_type(fn, ins->dst) == LIR_TYPE_F80) {
         if (ins->aux != 16 || ins->fpw != LIR_FP_F80)
@@ -144,15 +151,21 @@ static void verify_f80_instr(const LirFn *fn, int block, const Instr *ins)
 
     if (ins->op != LIR_CONV)
         return;
-    if (ins->conv == CONV_F32_F80 || ins->conv == CONV_F64_F80) {
-        LirType source = ins->conv == CONV_F32_F80
-            ? LIR_TYPE_F32 : LIR_TYPE_F64;
+    if (ins->conv == CONV_F32_F80 || ins->conv == CONV_F64_F80 ||
+        ins->conv == CONV_SI32_F80 || ins->conv == CONV_SI64_F80 ||
+        ins->conv == CONV_UI32_F80 || ins->conv == CONV_UI64_F80) {
+        LirType source = ins->conv == CONV_F32_F80 ? LIR_TYPE_F32 :
+                         ins->conv == CONV_F64_F80 ? LIR_TYPE_F64 :
+                         LIR_TYPE_I64;
         if (ins->dst < 0 || lir_vreg_type(fn, ins->dst) != LIR_TYPE_F80 ||
             !operand_is_type(fn, ins->a, source))
             malformed(fn, block, "conversion to F80 mixes value types");
-    } else if (ins->conv == CONV_F80_F32 || ins->conv == CONV_F80_F64) {
+    } else if (ins->conv == CONV_F80_F32 || ins->conv == CONV_F80_F64 ||
+               ins->conv == CONV_F80_SI32 || ins->conv == CONV_F80_SI64 ||
+               ins->conv == CONV_F80_UI32 || ins->conv == CONV_F80_UI64) {
         LirType destination = ins->conv == CONV_F80_F32
-            ? LIR_TYPE_F32 : LIR_TYPE_F64;
+            ? LIR_TYPE_F32 : ins->conv == CONV_F80_F64
+            ? LIR_TYPE_F64 : LIR_TYPE_I64;
         if (ins->dst < 0 || lir_vreg_type(fn, ins->dst) != destination ||
             !operand_is_type(fn, ins->a, LIR_TYPE_F80))
             malformed(fn, block, "conversion from F80 mixes value types");

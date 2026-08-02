@@ -21,6 +21,7 @@ static Type ty_long          = INT_TYPE(IW_LONG, IS_SIGNED, 8);
 static Type ty_ulong         = INT_TYPE(IW_LONG, IS_UNSIGNED, 8);
 static Type ty_float         = { .kind=TY_FLOAT, .float_width=FW_FLOAT, .size=4, .align=4 };
 static Type ty_double        = { .kind=TY_FLOAT, .float_width=FW_DOUBLE, .size=8, .align=8 };
+static Type ty_long_double   = { .kind=TY_FLOAT, .float_width=FW_LONG_DOUBLE, .size=16, .align=16 };
 
 Type *type_void(void)           { return &ty_void; }
 Type *type_char(void)           { return &ty_char; }
@@ -34,6 +35,7 @@ Type *type_unsigned_int(void)   { return &ty_uint; }
 Type *type_unsigned_long(void)  { return &ty_ulong; }
 Type *type_float(void)          { return &ty_float; }
 Type *type_double(void)         { return &ty_double; }
+Type *type_long_double(void)    { return &ty_long_double; }
 
 Type *type_unqualified(Type *ty)
 {
@@ -771,6 +773,9 @@ Type *type_arith_convert(Type *a, Type *b)
     int rank_s;
 
     if (type_is_floating(a) || type_is_floating(b)) {
+        if ((type_is_floating(a) && type_unqualified(a)->float_width == FW_LONG_DOUBLE) ||
+            (type_is_floating(b) && type_unqualified(b)->float_width == FW_LONG_DOUBLE))
+            return type_long_double();
         if ((type_is_floating(a) && type_unqualified(a)->float_width == FW_DOUBLE) ||
             (type_is_floating(b) && type_unqualified(b)->float_width == FW_DOUBLE))
             return type_double();
@@ -934,7 +939,12 @@ const char *type_name(Type *ty)
         return base;
     }
     case TY_FLOAT:
-        return ty->float_width == FW_FLOAT ? "float" : "double";
+        switch (ty->float_width) {
+        case FW_FLOAT:       return "float";
+        case FW_DOUBLE:      return "double";
+        case FW_LONG_DOUBLE: return "long double";
+        }
+        return "<floating-type>";
     case TY_PTR: {
         if (ty->base && ty->base->kind == TY_FUNC) {
             Type *fn = ty->base;

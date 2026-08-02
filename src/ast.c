@@ -107,12 +107,11 @@ Type *declspec_type(DeclSpec *spec, SourceLoc loc)
             spec->nchar || spec->nvoid)
             diag_error_at(loc, "invalid integer type specifier with floating type");
         if (spec->nlong) {
-            if (spec->ndouble)
-                diag_error_at(loc, "long double is not supported");
-            else
+            if (!spec->ndouble)
                 diag_error_at(loc, "invalid combination with 'float'");
         }
-        ty = spec->nfloat ? type_float() : type_double();
+        ty = spec->nfloat ? type_float() :
+             spec->nlong ? type_long_double() : type_double();
         return spec->nconst ? type_qualify(ty, TQ_CONST) : ty;
     }
     if (spec->nvoid) {

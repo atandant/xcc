@@ -472,6 +472,14 @@ static const char *conv_name(ConvKind k)
     case CONV_F64_F80: return "f64_f80";
     case CONV_F80_F32: return "f80_f32";
     case CONV_F80_F64: return "f80_f64";
+    case CONV_SI32_F80: return "si32_f80";
+    case CONV_SI64_F80: return "si64_f80";
+    case CONV_UI32_F80: return "ui32_f80";
+    case CONV_UI64_F80: return "ui64_f80";
+    case CONV_F80_SI32: return "f80_si32";
+    case CONV_F80_SI64: return "f80_si64";
+    case CONV_F80_UI32: return "f80_ui32";
+    case CONV_F80_UI64: return "f80_ui64";
     }
     return "?";
 }

@@ -107,6 +107,14 @@ typedef enum {
     CONV_F64_F80,
     CONV_F80_F32,
     CONV_F80_F64,
+    CONV_SI32_F80,
+    CONV_SI64_F80,
+    CONV_UI32_F80,
+    CONV_UI64_F80,
+    CONV_F80_SI32,
+    CONV_F80_SI64,
+    CONV_F80_UI32,
+    CONV_F80_UI64,
 } ConvKind;
 
 #define LIR_NO_VREG (-1)
@@ -140,6 +148,7 @@ struct Instr {
     LirFloatWidth fpw;
     LirCond cc;
     ConvKind conv;
+    long double fimm; /* FMOVI host representation; F80 uses 10 payload bytes */
     int label;
     char *call_name;
     int call_indirect;

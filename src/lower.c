@@ -88,13 +88,22 @@ static int fresh(LowerCtx *c)
     return lir_new_vreg(c->lf);
 }
 
+static LirType floating_lir_type(Type *ty)
+{
+    switch (type_unqualified(ty)->float_width) {
+    case FW_FLOAT:       return LIR_TYPE_F32;
+    case FW_DOUBLE:      return LIR_TYPE_F64;
+    case FW_LONG_DOUBLE: return LIR_TYPE_F80;
+    }
+    diag_fatal("internal error: invalid floating type");
+    return LIR_TYPE_F64;
+}
+
 static int fresh_type(LowerCtx *c, Type *ty)
 {
     if (!type_is_floating(ty))
         return lir_new_vreg_type(c->lf, LIR_TYPE_I64);
-    return lir_new_vreg_type(c->lf,
-        type_same(type_unqualified(ty), type_float())
-            ? LIR_TYPE_F32 : LIR_TYPE_F64);
+    return lir_new_vreg_type(c->lf, floating_lir_type(ty));
 }
 
 static int protect_home_before(LowerCtx *c, int v, Node *later)
@@ -250,8 +259,13 @@ static LirWidth store_lir_width(Type *ty)
 
 static LirFloatWidth float_width(Type *ty)
 {
-    return type_same(type_unqualified(ty), type_float())
-        ? LIR_FP_F32 : LIR_FP_F64;
+    switch (type_unqualified(ty)->float_width) {
+    case FW_FLOAT:       return LIR_FP_F32;
+    case FW_DOUBLE:      return LIR_FP_F64;
+    case FW_LONG_DOUBLE: return LIR_FP_F80;
+    }
+    diag_fatal("internal error: invalid floating type");
+    return LIR_FP_NONE;
 }
 
 static LirSign load_sign(Type *ty)
@@ -843,20 +857,29 @@ static int lower_addr(LowerCtx *c, Node *n)
 
 static int emit_conv_value(LowerCtx *c, int src, ConvKind k)
 {
-    int to_float = k == CONV_SI32_F32 || k == CONV_SI32_F64 ||
-                   k == CONV_SI64_F32 || k == CONV_SI64_F64 ||
-                   k == CONV_UI32_F32 || k == CONV_UI32_F64 ||
-                   k == CONV_UI64_F32 || k == CONV_UI64_F64 ||
-                   k == CONV_F32_F64 || k == CONV_F64_F32;
+    int to_f32 = k == CONV_SI32_F32 || k == CONV_SI64_F32 ||
+                 k == CONV_UI32_F32 || k == CONV_UI64_F32 ||
+                 k == CONV_F64_F32 || k == CONV_F80_F32;
+    int to_f64 = k == CONV_SI32_F64 || k == CONV_SI64_F64 ||
+                 k == CONV_UI32_F64 || k == CONV_UI64_F64 ||
+                 k == CONV_F32_F64 || k == CONV_F80_F64;
+    int to_f80 = k == CONV_F32_F80 || k == CONV_F64_F80 ||
+                 k == CONV_SI32_F80 || k == CONV_SI64_F80 ||
+                 k == CONV_UI32_F80 || k == CONV_UI64_F80;
     LirFloatWidth fpw = (k == CONV_SI32_F32 || k == CONV_SI64_F32 ||
                          k == CONV_UI32_F32 || k == CONV_F64_F32 ||
                          k == CONV_UI64_F32 ||
                          k == CONV_F32_SI32 || k == CONV_F32_SI64 ||
                          k == CONV_F32_UI32 || k == CONV_F32_UI64)
-                        ? LIR_FP_F32 : LIR_FP_F64;
-    int dst = lir_new_vreg_type(c->lf, to_float
-        ? (fpw == LIR_FP_F32 ? LIR_TYPE_F32 : LIR_TYPE_F64)
-        : LIR_TYPE_I64);
+                        ? LIR_FP_F32 : to_f80 ||
+                          k == CONV_F80_F32 || k == CONV_F80_F64 ||
+                          k == CONV_F80_SI32 || k == CONV_F80_SI64 ||
+                          k == CONV_F80_UI32 || k == CONV_F80_UI64
+                        ? LIR_FP_F80 : LIR_FP_F64;
+    int dst = lir_new_vreg_type(c->lf,
+        to_f80 ? LIR_TYPE_F80 :
+        to_f32 ? LIR_TYPE_F32 : to_f64 ? LIR_TYPE_F64 :
+        LIR_TYPE_I64);
     emit(c, (Instr){ .op = LIR_CONV, .dst = dst, .a = lir_vreg(src),
                      .conv = k, .fpw = fpw });
     return dst;
@@ -936,12 +959,31 @@ static int convert_value(LowerCtx *c, int v, Type *from, Type *to)
     if (type_is_floating(from) || type_is_floating(to)) {
         if (type_same(type_unqualified(from), type_unqualified(to)))
             return v;
-        if (type_is_floating(from) && type_is_floating(to))
-            return emit_conv_value(c, v, float_width(to) == LIR_FP_F64
+        if (type_is_floating(from) && type_is_floating(to)) {
+            LirFloatWidth src = float_width(from);
+            LirFloatWidth dst = float_width(to);
+
+            if (dst == LIR_FP_F80)
+                return emit_conv_value(c, v, src == LIR_FP_F32
+                    ? CONV_F32_F80 : CONV_F64_F80);
+            if (src == LIR_FP_F80)
+                return emit_conv_value(c, v, dst == LIR_FP_F32
+                    ? CONV_F80_F32 : CONV_F80_F64);
+            return emit_conv_value(c, v, dst == LIR_FP_F64
                 ? CONV_F32_F64 : CONV_F64_F32);
+        }
         if (type_is_integer(from) && type_is_floating(to)) {
             int wide = type_int_width(from) == 8;
-            int f64 = float_width(to) == LIR_FP_F64;
+            LirFloatWidth dst = float_width(to);
+
+            if (dst == LIR_FP_F80) {
+                if (!type_is_signed(from))
+                    return emit_conv_value(c, v, wide
+                        ? CONV_UI64_F80 : CONV_UI32_F80);
+                return emit_conv_value(c, v, wide
+                    ? CONV_SI64_F80 : CONV_SI32_F80);
+            }
+            int f64 = dst == LIR_FP_F64;
             if (!type_is_signed(from) && wide)
                 return emit_conv_value(c, v, f64 ? CONV_UI64_F64 : CONV_UI64_F32);
             if (!type_is_signed(from) && !wide)
@@ -952,14 +994,23 @@ static int convert_value(LowerCtx *c, int v, Type *from, Type *to)
         }
         if (type_is_floating(from) && type_is_integer(to)) {
             int wide = type_int_width(to) == 8;
+            LirFloatWidth src = float_width(from);
+
+            if (src == LIR_FP_F80) {
+                if (!type_is_signed(to))
+                    return emit_conv_value(c, v, wide
+                        ? CONV_F80_UI64 : CONV_F80_UI32);
+                return emit_conv_value(c, v, wide
+                    ? CONV_F80_SI64 : CONV_F80_SI32);
+            }
             if (!type_is_signed(to) && wide)
-                return emit_conv_value(c, v, float_width(from) == LIR_FP_F32
+                return emit_conv_value(c, v, src == LIR_FP_F32
                     ? CONV_F32_UI64 : CONV_F64_UI64);
             if (!type_is_signed(to) && !wide)
-                return emit_conv_value(c, v, float_width(from) == LIR_FP_F32
+                return emit_conv_value(c, v, src == LIR_FP_F32
                     ? CONV_F32_UI32 : CONV_F64_UI32);
             return emit_conv_value(c, v,
-                float_width(from) == LIR_FP_F32
+                src == LIR_FP_F32
                     ? (wide ? CONV_F32_SI64 : CONV_F32_SI32)
                     : (wide ? CONV_F64_SI64 : CONV_F64_SI32));
         }
@@ -1379,6 +1430,7 @@ static int lower_call_ex(LowerCtx *c, Node *n, int result_off)
     Operand *args;
     LirType *arg_types;
     int i;
+    int f80_result = LIR_NO_VREG;
     Node *a;
 
     if (n->nargs > XCC_MAX_CALL_ARGS)
@@ -1419,7 +1471,9 @@ static int lower_call_ex(LowerCtx *c, Node *n, int result_off)
 
         int v = lower_expr(c, a);
 
-        if (type_is_floating(a->ty) && nsse < 8)
+        if (type_is_floating(a->ty) && float_width(a->ty) == LIR_FP_F80)
+            append_operand(&stack_slots, &nstack, &stack_cap, lir_vreg(v));
+        else if (type_is_floating(a->ty) && nsse < 8)
             sse_slots[nsse++] = lir_vreg(v);
         else if (!type_is_floating(a->ty) && nreg < 6)
             reg_slots[nreg++] = lir_vreg(v);
@@ -1452,8 +1506,11 @@ static int lower_call_ex(LowerCtx *c, Node *n, int result_off)
 
         if (!n->call_direct)
             call_reg = lower_call_callee(c, n->callee);
+        if (type_is_floating(ret_ty) && float_width(ret_ty) == LIR_FP_F80)
+            f80_result = fresh_type(c, ret_ty);
         emit(c, (Instr){
             .op = LIR_CALL,
+            .dst = f80_result,
             .call_name = n->call_direct ? n->name : NULL,
             .call_indirect = n->call_direct ? 0 : 1,
             .call_reg = call_reg,
@@ -1463,6 +1520,8 @@ static int lower_call_ex(LowerCtx *c, Node *n, int result_off)
             .call_nsse = nsse,
             .call_args = args,
             .call_arg_types = arg_types,
+            .call_ret_type = f80_result == LIR_NO_VREG
+                           ? LIR_TYPE_I64 : LIR_TYPE_F80,
         });
     }
 
@@ -1480,6 +1539,9 @@ static int lower_call_ex(LowerCtx *c, Node *n, int result_off)
         }
         return fresh(c);
     }
+
+    if (f80_result != LIR_NO_VREG)
+        return f80_result;
 
     int dst = fresh_type(c, ret_ty);
     emit(c, (Instr){
@@ -1731,18 +1793,29 @@ static int lower_step_value(LowerCtx *c, int old, Type *oty, int is_inc)
         return dst;
     }
     if (type_is_floating(oty)) {
-        int one = fresh_type(c, oty);
+        int one;
         int dst = fresh_type(c, oty);
         double d = 1.0;
         float f = 1.0f;
         unsigned long bits = 0;
 
-        if (float_width(oty) == LIR_FP_F32)
-            memcpy(&bits, &f, sizeof(f));
-        else
-            memcpy(&bits, &d, sizeof(d));
-        emit(c, (Instr){ .op = LIR_FMOVI, .dst = one, .a = lir_imm((long)bits),
-                         .fpw = float_width(oty) });
+        if (float_width(oty) == LIR_FP_F80) {
+            int integer_one = fresh(c);
+            emit(c, (Instr){
+                .op = LIR_MOVI, .dst = integer_one, .a = lir_imm(1),
+            });
+            one = emit_conv_value(c, integer_one, CONV_SI32_F80);
+        } else {
+            one = fresh_type(c, oty);
+            if (float_width(oty) == LIR_FP_F32)
+                memcpy(&bits, &f, sizeof(f));
+            else
+                memcpy(&bits, &d, sizeof(d));
+            emit(c, (Instr){
+                .op = LIR_FMOVI, .dst = one, .a = lir_imm((long)bits),
+                .fpw = float_width(oty),
+            });
+        }
         emit(c, (Instr){ .op = is_inc ? LIR_FADD : LIR_FSUB, .dst = dst,
                          .a = lir_vreg(old), .b = lir_vreg(one),
                          .fpw = float_width(oty) });
@@ -1867,13 +1940,17 @@ static int lower_expr(LowerCtx *c, Node *n)
                 unsigned int raw;
                 memcpy(&raw, &value, sizeof(raw));
                 bits = (long)raw;
-            } else {
+            } else if (float_width(n->ty) == LIR_FP_F64) {
+                double value = (double)n->float_val;
                 unsigned long raw;
-                memcpy(&raw, &n->float_val, sizeof(raw));
+                memcpy(&raw, &value, sizeof(raw));
                 bits = (long)raw;
+            } else {
+                bits = 0;
             }
             emit(c, (Instr){ .op = LIR_FMOVI, .dst = dst,
-                             .a = lir_imm(bits), .fpw = float_width(n->ty) });
+                             .a = lir_imm(bits), .fpw = float_width(n->ty),
+                             .fimm = n->float_val });
         } else {
             emit(c, (Instr){ .op = LIR_MOVI, .dst = dst, .a = lir_imm(n->val) });
         }
@@ -2234,15 +2311,23 @@ static void lower_stmt(LowerCtx *c, Node *n)
         }
         if (n->operand) {
             int v = lower_expr(c, n->operand);
-            emit(c, (Instr){
-                .op = LIR_MOV,
-                .dst = LIR_NO_VREG,
-                .a = lir_vreg(v),
-                .b = lir_phys(type_is_floating(c->fn->ret_ty)
-                              ? PHYS_XMM0 : PHYS_RAX),
-                .fpw = type_is_floating(c->fn->ret_ty)
-                     ? float_width(c->fn->ret_ty) : LIR_FP_NONE,
-            });
+            if (type_is_floating(c->fn->ret_ty) &&
+                float_width(c->fn->ret_ty) == LIR_FP_F80) {
+                emit(c, (Instr){
+                    .op = LIR_FRET, .dst = LIR_NO_VREG,
+                    .a = lir_vreg(v), .fpw = LIR_FP_F80,
+                });
+            } else {
+                emit(c, (Instr){
+                    .op = LIR_MOV,
+                    .dst = LIR_NO_VREG,
+                    .a = lir_vreg(v),
+                    .b = lir_phys(type_is_floating(c->fn->ret_ty)
+                                  ? PHYS_XMM0 : PHYS_RAX),
+                    .fpw = type_is_floating(c->fn->ret_ty)
+                         ? float_width(c->fn->ret_ty) : LIR_FP_NONE,
+                });
+            }
         }
         emit(c, (Instr){ .op = LIR_JMP, .label = c->ret_label });
         return;
