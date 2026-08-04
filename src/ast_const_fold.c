@@ -119,10 +119,9 @@ int ast_const_fold_expr(Node **np)
             replace_expr_preserve_next(np, n, n->rhs);
             return 1;
         }
-        /* x - x is zero for the same non-volatile scalar object.  xcc does
-           not yet support volatile-qualified types; add that guard here when
-           qualifiers are introduced. */
+        /* Each volatile operand denotes a distinct observable access. */
         if (n->op == OP_SUB && type_is_integer(n->ty) &&
+            !type_is_volatile(n->lhs->ty) &&
             same_scalar_variable(n->lhs, n->rhs)) {
             replace_expr_preserve_next(np, n, fold_to_num(0, n->ty, n->loc));
             return 1;

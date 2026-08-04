@@ -26,7 +26,7 @@ static int promotable_scalar_type(Type *ty)
 {
     int size = type_size(ty);
 
-    return type_is_scalar(ty) &&
+    return !type_is_volatile(ty) && type_is_scalar(ty) &&
            (size == 4 || size == 8 ||
             (size == 16 && type_is_floating(ty)));
 }
@@ -121,6 +121,7 @@ int scope_alloc_local(Type *ty)
             .offset = cur_offset,
             .size = size,
             .promotable_scalar = promotable_scalar_type(ty),
+            .is_volatile = type_is_volatile(ty),
         };
     }
     return cur_offset;
@@ -174,6 +175,7 @@ void scope_bind(char *name, Type *ty, int offset, SourceLoc loc,
             .offset = offset,
             .size = size,
             .promotable_scalar = promotable_scalar_type(ty),
+            .is_volatile = type_is_volatile(ty),
         };
     }
 }

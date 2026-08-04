@@ -83,9 +83,7 @@ static int instruction_has_effect(const Instr *ins)
         return is_fp_imm_mem_update(ins);
 #endif
     case LIR_LOAD:
-        /* Ordinary loads are removable today.  When volatile is represented
-           in LIR, volatile loads MUST be classified as effectful here. */
-        return 0;
+        return ins->is_volatile;
     case LIR_DIV:
     case LIR_MOD:
         /* Division by zero is undefined in C89.  Removing an unused division

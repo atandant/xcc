@@ -52,6 +52,7 @@ struct DeclSpec {
     StorageClass storage;
     Type *named_type;
     int nconst;
+    int nvolatile;
     int nvoid;
     int nchar;
     int nshort;
@@ -237,6 +238,7 @@ typedef struct {
     int size;
     int promotable_scalar;
     int address_taken;
+    int is_volatile;
 } FrameLocal;
 
 typedef struct Function Function;

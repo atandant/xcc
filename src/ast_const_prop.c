@@ -324,7 +324,8 @@ static int prop_expr(Node **np, int rvalue, int allow_subst)
         return changed;
 
     if (rvalue && allow_subst && n->kind == ND_VAR &&
-        type_is_integer(n->ty) && bind_get(n->offset, &v)) {
+        type_is_integer(n->ty) && !type_is_volatile(n->ty) &&
+        bind_get(n->offset, &v)) {
         Node *subst = node_num(v, n->loc);
 
         subst->ty = n->ty;
@@ -368,7 +369,8 @@ static int prop_expr(Node **np, int rvalue, int allow_subst)
     case ND_POSTDEC:
         changed |= prop_expr(&n->operand, 0, 0);
         if (allow_subst && n->operand && n->operand->kind == ND_VAR &&
-            type_is_integer(n->operand->ty)) {
+            type_is_integer(n->operand->ty) &&
+            !type_is_volatile(n->operand->ty)) {
             long v;
             long step = (n->kind == ND_PREINC || n->kind == ND_POSTINC) ? 1 : -1;
             int is_post = n->kind == ND_POSTINC || n->kind == ND_POSTDEC;
@@ -404,7 +406,7 @@ static int prop_expr(Node **np, int rvalue, int allow_subst)
             return changed;
         }
         if (allow_subst && n->lhs && n->lhs->kind == ND_VAR &&
-            type_is_integer(n->lhs->ty)) {
+            type_is_integer(n->lhs->ty) && !type_is_volatile(n->lhs->ty)) {
             if (is_integer_const(n->rhs, &v))
                 bind_set(n->lhs->offset, v);
             else
@@ -449,7 +451,7 @@ static int prop_stmt(Node *s)
                 changed |= prop_expr_rvalue(p);
         } else {
             changed |= prop_expr_rvalue(&s->init);
-            if (type_is_integer(s->ty)) {
+            if (type_is_integer(s->ty) && !type_is_volatile(s->ty)) {
                 if (is_integer_const(s->init, &v))
                     bind_set(s->offset, v);
             }

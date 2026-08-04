@@ -614,6 +614,8 @@ static void dump_instr(FILE *out, Instr *ins, int index)
             fprintf(out, " size=%d", ins->aux);
             break;
         }
+        if (ins->is_volatile)
+            fprintf(out, " volatile");
         fprintf(out, "\n");
 }
 

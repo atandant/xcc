@@ -115,7 +115,8 @@ static int protect_home_before(LowerCtx *c, int v, Node *later)
 
 static int emit_load_slot(LowerCtx *c, int dst, Type *ty, int offset);
 static void emit_store_slot(LowerCtx *c, int src, Type *ty, int offset);
-static void lower_bitfield_store_off(LowerCtx *c, int struct_off, Member *m, int val);
+static void lower_bitfield_store_off(LowerCtx *c, int struct_off, Member *m,
+                                     int val, int is_volatile);
 static int lower_cast_value(LowerCtx *c, Node *n);
 static int convert_value(LowerCtx *c, int v, Type *from, Type *to);
 
@@ -333,6 +334,7 @@ static int emit_load_slot(LowerCtx *c, int dst, Type *ty, int offset)
         .sgn = load_sign(ty),
         .fpw = type_is_floating(ty) ? float_width(ty) : LIR_FP_NONE,
         .aux = bytes,
+        .is_volatile = type_is_volatile(ty),
     });
     return widen_loaded_value(c, dst, ty);
 }
@@ -346,6 +348,7 @@ static void emit_store_slot(LowerCtx *c, int src, Type *ty, int offset)
         .w = store_lir_width(ty),
         .fpw = type_is_floating(ty) ? float_width(ty) : LIR_FP_NONE,
         .aux = store_width_bytes(ty),
+        .is_volatile = type_is_volatile(ty),
     });
 }
 
@@ -375,13 +378,15 @@ static int is_local_integer_lvalue(Node *lv)
 }
 #endif
 
-static void emit_memcpy(LowerCtx *c, int dst, int src, int size)
+static void emit_memcpy(LowerCtx *c, int dst, int src, int size,
+                        int is_volatile)
 {
     emit(c, (Instr){
         .op = LIR_MEMCPY,
         .a = lir_vreg(dst),
         .b = lir_vreg(src),
         .aux = size,
+        .is_volatile = is_volatile,
     });
 }
 
@@ -464,9 +469,11 @@ static void lower_init_from_type(LowerCtx *c, Type *ty, Node **pcursor, int base
     }
     if (type_is_struct(ty)) {
         Type *record = type_unqualified(ty);
+        unsigned qualifiers = type_qualifiers(ty);
 
         for (i = 0; i < record->nmembers; i++) {
             Member *m = &record->members[i];
+            Type *member_ty = type_qualify(m->ty, qualifiers);
 
             if (m->is_bitfield && m->bit_width > 0) {
                 Node *e = *pcursor;
@@ -475,9 +482,11 @@ static void lower_init_from_type(LowerCtx *c, Type *ty, Node **pcursor, int base
                 assert(e);
                 *pcursor = e->next;
                 v = lower_expr(c, e);
-                lower_bitfield_store_off(c, base_off, m, v);
+                lower_bitfield_store_off(c, base_off, m, v,
+                                         type_is_volatile(ty));
             } else {
-                lower_init_from_type(c, m->ty, pcursor, base_off + m->offset);
+                lower_init_from_type(c, member_ty, pcursor,
+                                     base_off + m->offset);
             }
         }
         return;
@@ -486,7 +495,9 @@ static void lower_init_from_type(LowerCtx *c, Type *ty, Node **pcursor, int base
         Type *record = type_unqualified(ty);
 
         if (record->nmembers > 0)
-            lower_init_from_type(c, record->members[0].ty, pcursor, base_off);
+            lower_init_from_type(c,
+                type_qualify(record->members[0].ty, type_qualifiers(ty)),
+                pcursor, base_off);
         return;
     }
     {
@@ -625,7 +636,8 @@ static int emit_binop_imm(LowerCtx *c, LirOp op, int dst, int lhs, long imm)
     return dst;
 }
 
-static int lower_bitfield_unit_load_off(LowerCtx *c, int struct_off, int unit_off)
+static int lower_bitfield_unit_load_off(LowerCtx *c, int struct_off,
+                                        int unit_off, int is_volatile)
 {
     int dst = fresh(c);
 
@@ -636,6 +648,7 @@ static int lower_bitfield_unit_load_off(LowerCtx *c, int struct_off, int unit_of
         .w = LIR_W4,
         .sgn = LIR_SGN_Z,
         .aux = 4,
+        .is_volatile = is_volatile,
     });
     int conv = fresh(c);
     emit(c, (Instr){
@@ -643,7 +656,9 @@ static int lower_bitfield_unit_load_off(LowerCtx *c, int struct_off, int unit_of
     return conv;
 }
 
-static void lower_bitfield_unit_store_off(LowerCtx *c, int struct_off, int unit_off, int val)
+static void lower_bitfield_unit_store_off(LowerCtx *c, int struct_off,
+                                          int unit_off, int val,
+                                          int is_volatile)
 {
     int t = fresh(c);
     emit(c, (Instr){
@@ -654,12 +669,15 @@ static void lower_bitfield_unit_store_off(LowerCtx *c, int struct_off, int unit_
         .b = lir_vreg(t),
         .w = LIR_W4,
         .aux = 4,
+        .is_volatile = is_volatile,
     });
 }
 
-static void lower_bitfield_store_off(LowerCtx *c, int struct_off, Member *m, int val)
+static void lower_bitfield_store_off(LowerCtx *c, int struct_off, Member *m,
+                                     int val, int is_volatile)
 {
-    int unit = lower_bitfield_unit_load_off(c, struct_off, m->offset);
+    int unit = lower_bitfield_unit_load_off(c, struct_off, m->offset,
+                                            is_volatile);
     long bmask = ((1L << m->bit_width) - 1) << m->bit_offset;
     int cleared = fresh(c);
     int bits = fresh(c);
@@ -672,14 +690,17 @@ static void lower_bitfield_store_off(LowerCtx *c, int struct_off, Member *m, int
     emit(c, (Instr){
         .op = LIR_OR, .dst = merged, .a = lir_vreg(cleared), .b = lir_vreg(shifted),
         .w = LIR_W8 });
-    lower_bitfield_unit_store_off(c, struct_off, m->offset, merged);
+    lower_bitfield_unit_store_off(c, struct_off, m->offset, merged,
+                                  is_volatile);
 }
 
-static int lower_bitfield_unit_load(LowerCtx *c, Node *base, int unit_off)
+static int lower_bitfield_unit_load(LowerCtx *c, Node *base, int unit_off,
+                                    int is_volatile)
 {
     if (base->kind == ND_VAR && !base->var_decay &&
         base->storage == VAR_STORAGE_LOCAL)
-        return lower_bitfield_unit_load_off(c, base->offset, unit_off);
+        return lower_bitfield_unit_load_off(c, base->offset, unit_off,
+                                            is_volatile);
 
     {
         int dst = fresh(c);
@@ -692,6 +713,7 @@ static int lower_bitfield_unit_load(LowerCtx *c, Node *base, int unit_off)
             .w = LIR_W4,
             .sgn = LIR_SGN_Z,
             .aux = 4,
+            .is_volatile = is_volatile,
         });
         int conv = fresh(c);
         emit(c, (Instr){
@@ -700,11 +722,13 @@ static int lower_bitfield_unit_load(LowerCtx *c, Node *base, int unit_off)
     }
 }
 
-static void lower_bitfield_unit_store(LowerCtx *c, Node *base, int unit_off, int val)
+static void lower_bitfield_unit_store(LowerCtx *c, Node *base, int unit_off,
+                                      int val, int is_volatile)
 {
     if (base->kind == ND_VAR && !base->var_decay &&
         base->storage == VAR_STORAGE_LOCAL) {
-        lower_bitfield_unit_store_off(c, base->offset, unit_off, val);
+        lower_bitfield_unit_store_off(c, base->offset, unit_off, val,
+                                      is_volatile);
         return;
     }
 
@@ -720,13 +744,15 @@ static void lower_bitfield_unit_store(LowerCtx *c, Node *base, int unit_off, int
             .b = lir_vreg(t),
             .w = LIR_W4,
             .aux = 4,
+            .is_volatile = is_volatile,
         });
     }
 }
 
 static int lower_bitfield_load(LowerCtx *c, Node *n, Member *m)
 {
-    int unit = lower_bitfield_unit_load(c, n->lhs, m->offset);
+    int unit = lower_bitfield_unit_load(c, n->lhs, m->offset,
+                                       type_is_volatile(n->ty));
     int dst = fresh(c);
     int t = fresh(c);
     long mask = (1L << m->bit_width) - 1;
@@ -748,12 +774,14 @@ static void lower_bitfield_store(LowerCtx *c, Node *lhs, Member *m, int val)
 {
     if (lhs->lhs->kind == ND_VAR && !lhs->lhs->var_decay &&
         lhs->lhs->storage == VAR_STORAGE_LOCAL) {
-        lower_bitfield_store_off(c, lhs->lhs->offset, m, val);
+        lower_bitfield_store_off(c, lhs->lhs->offset, m, val,
+                                 type_is_volatile(lhs->ty));
         return;
     }
 
     {
-        int unit = lower_bitfield_unit_load(c, lhs->lhs, m->offset);
+        int unit = lower_bitfield_unit_load(c, lhs->lhs, m->offset,
+                                            type_is_volatile(lhs->ty));
         long bmask = ((1L << m->bit_width) - 1) << m->bit_offset;
         int cleared = fresh(c);
         int bits = fresh(c);
@@ -766,7 +794,8 @@ static void lower_bitfield_store(LowerCtx *c, Node *lhs, Member *m, int val)
         emit(c, (Instr){
             .op = LIR_OR, .dst = merged, .a = lir_vreg(cleared), .b = lir_vreg(shifted),
             .w = LIR_W8 });
-        lower_bitfield_unit_store(c, lhs->lhs, m->offset, merged);
+        lower_bitfield_unit_store(c, lhs->lhs, m->offset, merged,
+                                  type_is_volatile(lhs->ty));
     }
 }
 
@@ -1694,6 +1723,7 @@ static int load_prepared_lvalue(LowerCtx *c, PreparedLvalue *lv)
         emit(c, (Instr){
             .op = LIR_LOAD, .dst = raw, .a = lir_mem(lv->addr, 0),
             .w = LIR_W4, .sgn = LIR_SGN_Z, .aux = 4,
+            .is_volatile = type_is_volatile(ty),
         });
         lv->bitfield_unit = fresh(c);
         emit(c, (Instr){
@@ -1721,6 +1751,7 @@ static int load_prepared_lvalue(LowerCtx *c, PreparedLvalue *lv)
         .w = load_lir_width(ty), .sgn = load_sign(ty),
         .fpw = type_is_floating(ty) ? float_width(ty) : LIR_FP_NONE,
         .aux = store_width_bytes(ty),
+        .is_volatile = type_is_volatile(ty),
     });
     return widen_loaded_value(c, raw, ty);
 }
@@ -1753,6 +1784,7 @@ static void store_prepared_lvalue(LowerCtx *c, PreparedLvalue *lv, int value)
         emit(c, (Instr){
             .op = LIR_STORE, .a = lir_mem(lv->addr, 0),
             .b = lir_vreg(truncated), .w = LIR_W4, .aux = 4,
+            .is_volatile = type_is_volatile(ty),
         });
         return;
     }
@@ -1765,6 +1797,7 @@ static void store_prepared_lvalue(LowerCtx *c, PreparedLvalue *lv, int value)
         .w = store_lir_width(ty),
         .fpw = type_is_floating(ty) ? float_width(ty) : LIR_FP_NONE,
         .aux = store_width_bytes(ty),
+        .is_volatile = type_is_volatile(ty),
     });
 }
 
@@ -1970,6 +2003,7 @@ static int lower_expr(LowerCtx *c, Node *n)
                 .sgn = load_sign(n->ty),
                 .fpw = type_is_floating(n->ty) ? float_width(n->ty) : LIR_FP_NONE,
                 .aux = store_width_bytes(n->ty),
+                .is_volatile = type_is_volatile(n->ty),
             });
             return widen_loaded_value(c, dst, n->ty);
         }
@@ -2116,6 +2150,7 @@ static int lower_expr(LowerCtx *c, Node *n)
             .sgn = load_sign(n->ty),
             .fpw = type_is_floating(n->ty) ? float_width(n->ty) : LIR_FP_NONE,
             .aux = bytes,
+            .is_volatile = type_is_volatile(n->ty),
         });
         return widen_loaded_value(c, dst, n->ty);
     }
@@ -2134,6 +2169,7 @@ static int lower_expr(LowerCtx *c, Node *n)
             .sgn = load_sign(n->ty),
             .fpw = type_is_floating(n->ty) ? float_width(n->ty) : LIR_FP_NONE,
             .aux = bytes,
+            .is_volatile = type_is_volatile(n->ty),
         });
         return widen_loaded_value(c, dst, n->ty);
     }
@@ -2163,7 +2199,9 @@ static int lower_expr(LowerCtx *c, Node *n)
                 int src = lower_object_addr(c, n->rhs);
                 int val = fresh(c);
 
-                emit_memcpy(c, dst, src, type_size(n->lhs->ty));
+                emit_memcpy(c, dst, src, type_size(n->lhs->ty),
+                            type_is_volatile(n->lhs->ty) ||
+                            type_is_volatile(n->rhs->ty));
                 emit(c, (Instr){ .op = LIR_MOVI, .dst = val, .a = lir_imm(0) });
                 return val;
             }
@@ -2179,6 +2217,7 @@ static int lower_expr(LowerCtx *c, Node *n)
                     .w = store_lir_width(n->lhs->ty),
                     .fpw = type_is_floating(n->lhs->ty) ? float_width(n->lhs->ty) : LIR_FP_NONE,
                     .aux = store_width_bytes(n->lhs->ty),
+                    .is_volatile = type_is_volatile(n->lhs->ty),
                 });
             } else {
                 emit_store_slot(c, val, n->lhs->ty, n->lhs->offset);
@@ -2199,6 +2238,7 @@ static int lower_expr(LowerCtx *c, Node *n)
                 .w = store_lir_width(n->lhs->ty),
                 .fpw = type_is_floating(n->lhs->ty) ? float_width(n->lhs->ty) : LIR_FP_NONE,
                 .aux = store_width_bytes(n->lhs->ty),
+                .is_volatile = type_is_volatile(n->lhs->ty),
             });
             return val;
         }
@@ -2210,6 +2250,7 @@ static int lower_expr(LowerCtx *c, Node *n)
             .w = store_lir_width(n->lhs->ty),
             .fpw = type_is_floating(n->lhs->ty) ? float_width(n->lhs->ty) : LIR_FP_NONE,
             .aux = store_width_bytes(n->lhs->ty),
+            .is_volatile = type_is_volatile(n->lhs->ty),
         });
         return val;
     }

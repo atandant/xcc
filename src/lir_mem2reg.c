@@ -106,7 +106,8 @@ static void find_promotable_slots(LirFn *fn, const LirDom *dom,
            loads sign- or zero-extend, so direct vreg substitution would change
            values.  Narrow promotion must normalize every definition. */
         slots[s].eligible = slots[s].frame->promotable_scalar &&
-                            !slots[s].frame->address_taken;
+                            !slots[s].frame->address_taken &&
+                            !slots[s].frame->is_volatile;
         slots[s].seed = LIR_NO_VREG;
     }
 
@@ -121,7 +122,8 @@ static void find_promotable_slots(LirFn *fn, const LirDom *dom,
 
             if ((ins->op == LIR_LOAD || ins->op == LIR_STORE) && slot >= 0 &&
                 slots[slot].eligible) {
-                if (!dom->reachable[b] || ins->aux != slots[slot].frame->size ||
+                if (ins->is_volatile || !dom->reachable[b] ||
+                    ins->aux != slots[slot].frame->size ||
                     (ins->op == LIR_STORE && ins->b.kind != OPND_VREG)) {
                     slots[slot].eligible = 0;
                     continue;

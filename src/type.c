@@ -52,6 +52,11 @@ int type_is_const(Type *ty)
     return (type_qualifiers(ty) & TQ_CONST) != 0;
 }
 
+int type_is_volatile(Type *ty)
+{
+    return (type_qualifiers(ty) & TQ_VOLATILE) != 0;
+}
+
 Type *type_qualify(Type *ty, unsigned qualifiers)
 {
     Type *t;
@@ -915,7 +920,9 @@ const char *type_name(Type *ty)
     qualifiers = type_qualifiers(ty);
     if (qualifiers != TQ_NONE) {
         const char *inner = type_name(type_unqualified(ty));
-        const char *prefix = (qualifiers & TQ_CONST) ? "const " : "volatile ";
+        const char *prefix = qualifiers == (TQ_CONST | TQ_VOLATILE)
+            ? "const volatile "
+            : (qualifiers & TQ_CONST) ? "const " : "volatile ";
         size_t n = strlen(prefix) + strlen(inner) + 1;
         char *buf = arena_alloc(n);
         snprintf(buf, n, "%s%s", prefix, inner);

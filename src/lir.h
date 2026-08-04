@@ -162,6 +162,7 @@ struct Instr {
     LirType *call_arg_types;
     LirType call_ret_type;
     int aux; /* LOAD/STORE: byte width; POW2 ops: log2(divisor) */
+    int is_volatile; /* observable LOAD/STORE/MEMCPY access */
     int position; /* allocator order, assigned after phi elimination */
 };
 

@@ -49,8 +49,17 @@ DeclSpec *declspec_add_qualifier(DeclSpec *spec, unsigned qualifier,
     if (qualifier == TQ_CONST) {
         if (++spec->nconst > 1)
             diag_error_at(loc, "duplicate 'const' type qualifier");
+    } else if (qualifier == TQ_VOLATILE) {
+        if (++spec->nvolatile > 1)
+            diag_error_at(loc, "duplicate 'volatile' type qualifier");
     }
     return spec;
+}
+
+static unsigned declspec_qualifiers(const DeclSpec *spec)
+{
+    return (spec->nconst ? TQ_CONST : TQ_NONE) |
+           (spec->nvolatile ? TQ_VOLATILE : TQ_NONE);
 }
 
 DeclSpec *declspec_add_builtin(DeclSpec *spec, TypeSpecKind kind,
@@ -79,6 +88,7 @@ DeclSpec *declspec_add_builtin(DeclSpec *spec, TypeSpecKind kind,
 Type *declspec_type(DeclSpec *spec, SourceLoc loc)
 {
     int builtin;
+    unsigned qualifiers;
     Type *ty;
 
     if (!spec)
@@ -86,15 +96,22 @@ Type *declspec_type(DeclSpec *spec, SourceLoc loc)
     builtin = spec->nvoid + spec->nchar + spec->nshort + spec->nint +
               spec->nlong + spec->nsigned + spec->nunsigned;
     builtin += spec->nfloat + spec->ndouble;
+    qualifiers = declspec_qualifiers(spec);
     if (spec->named_type) {
         if (builtin)
             diag_error_at(loc, "invalid combination of type specifiers");
         ty = spec->named_type;
         if (spec->nconst && type_is_const(ty))
             diag_error_at(loc, "duplicate 'const' type qualifier");
-        if (spec->nconst && type_unqualified(ty)->kind == TY_FUNC)
-            diag_error_at(loc, "function type must not be const-qualified");
-        return spec->nconst ? type_qualify(ty, TQ_CONST) : ty;
+        if (spec->nvolatile && type_is_volatile(ty))
+            diag_error_at(loc, "duplicate 'volatile' type qualifier");
+        if (qualifiers && type_unqualified(ty)->kind == TY_FUNC)
+            diag_error_at(loc, qualifiers == TQ_CONST
+                          ? "function type must not be const-qualified"
+                          : qualifiers == TQ_VOLATILE
+                          ? "function type must not be volatile-qualified"
+                          : "function type must not be const-volatile-qualified");
+        return type_qualify(ty, qualifiers);
     }
     if (spec->nsigned && spec->nunsigned) {
         diag_error_at(loc, "both signed and unsigned specified");
@@ -112,13 +129,13 @@ Type *declspec_type(DeclSpec *spec, SourceLoc loc)
         }
         ty = spec->nfloat ? type_float() :
              spec->nlong ? type_long_double() : type_double();
-        return spec->nconst ? type_qualify(ty, TQ_CONST) : ty;
+        return type_qualify(ty, qualifiers);
     }
     if (spec->nvoid) {
         if (builtin != 1)
             diag_error_at(loc, "invalid combination with 'void'");
         ty = type_void();
-        return spec->nconst ? type_qualify(ty, TQ_CONST) : ty;
+        return type_qualify(ty, qualifiers);
     }
     if (spec->nchar) {
         if (spec->nshort || spec->nint || spec->nlong)
@@ -129,7 +146,7 @@ Type *declspec_type(DeclSpec *spec, SourceLoc loc)
             ty = type_signed_char();
         else
             ty = type_char();
-        return spec->nconst ? type_qualify(ty, TQ_CONST) : ty;
+        return type_qualify(ty, qualifiers);
     }
     if (spec->nshort && spec->nlong)
         diag_error_at(loc, "both short and long specified");
@@ -139,7 +156,7 @@ Type *declspec_type(DeclSpec *spec, SourceLoc loc)
         ty = spec->nunsigned ? type_unsigned_long() : type_long();
     else
         ty = spec->nunsigned ? type_unsigned_int() : type_int();
-    return spec->nconst ? type_qualify(ty, TQ_CONST) : ty;
+    return type_qualify(ty, qualifiers);
 }
 
 static Node *new_node(NodeKind kind, SourceLoc loc)

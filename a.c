@@ -1,6 +1,7 @@
-#define VAR 5
+#include <math.h>
 
 int main() {
-    long double x = 5.385 + VAR;
+    double x = 50.492;
+    sin(x);
     return x;
 }

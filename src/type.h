@@ -118,6 +118,7 @@ Type *type_qualify(Type *ty, unsigned qualifiers);
 Type *type_unqualified(Type *ty);
 unsigned type_qualifiers(Type *ty);
 int type_is_const(Type *ty);
+int type_is_volatile(Type *ty);
 
 /* Derived-type constructors (arena allocated). */
 Type *type_ptr(Type *base);

@@ -52,10 +52,10 @@ static Type *parameter_declspec_type(DeclSpec *spec, SourceLoc loc)
     } while (0)
 }
 %define parse.error verbose
-/* `extern/static/typedef/auto/register T` is intentionally shifted as a
-   storage class plus typedef-name type rather than reduced as an implicit-int
-   declaration of T.  There is one equivalent conflict per storage class. */
-%expect 13
+/* Storage classes and qualifiers next to a typedef name are intentionally
+   shifted into declaration specifiers rather than reduced as an implicit-int
+   declaration whose declarator happens to use that spelling. */
+%expect 29
 
 %code requires {
     #include "ast.h"
@@ -95,7 +95,7 @@ static Type *parameter_declspec_type(DeclSpec *spec, SourceLoc loc)
 %token <num> NUM
 %token <str> IDENT TYPEDEF_NAME
 %token <string> STRING
-%token INT CHAR SHORT LONG FLOAT DOUBLE VOID UNSIGNED SIGNED CONST RETURN IF ELSE WHILE DO FOR SWITCH CASE DEFAULT GOTO BREAK CONTINUE SIZEOF TYPEDEF EXTERN STATIC AUTO REGISTER STRUCT UNION ENUM
+%token INT CHAR SHORT LONG FLOAT DOUBLE VOID UNSIGNED SIGNED CONST VOLATILE RETURN IF ELSE WHILE DO FOR SWITCH CASE DEFAULT GOTO BREAK CONTINUE SIZEOF TYPEDEF EXTERN STATIC AUTO REGISTER STRUCT UNION ENUM
 %token EQ NE LE GE ARROW LAND LOR SHL SHR INC DEC
 %token MUL_ASSIGN DIV_ASSIGN MOD_ASSIGN ADD_ASSIGN SUB_ASSIGN
 %token SHL_ASSIGN SHR_ASSIGN AND_ASSIGN XOR_ASSIGN OR_ASSIGN
@@ -119,9 +119,11 @@ static Type *parameter_declspec_type(DeclSpec *spec, SourceLoc loc)
 %type <decl> declarator direct_declarator abstract_declarator
              abstract_declarator_opt direct_abstract_declarator
 %type <scope> param_scope_start block_scope_start function_body_scope_start
+%type <scope> type_qualifier_list
 
 %precedence IFX
 %precedence ELSE
+%right CONST VOLATILE
 
 %destructor { if ($$) { typedef_leave_scope(); struct_tag_leave_scope(); } }
             param_scope_start block_scope_start function_body_scope_start
@@ -177,6 +179,12 @@ toplevel:
 declaration_specifiers:
     builtin_declaration_specifiers { $$ = $1; }
   | named_declaration_specifiers   { $$ = $1; }
+  | CONST VOLATILE builtin_declaration_specifiers
+        { $$ = declspec_add_qualifier($3, TQ_CONST, LOC(@1));
+          $$ = declspec_add_qualifier($$, TQ_VOLATILE, LOC(@2)); }
+  | VOLATILE CONST builtin_declaration_specifiers
+        { $$ = declspec_add_qualifier($3, TQ_VOLATILE, LOC(@1));
+          $$ = declspec_add_qualifier($$, TQ_CONST, LOC(@2)); }
   ;
 
 builtin_declaration_specifiers:
@@ -195,6 +203,7 @@ builtin_declaration_specifiers:
   | AUTO                { $$ = declspec_add_storage(NULL, STORAGE_AUTO, LOC(@1)); }
   | REGISTER            { $$ = declspec_add_storage(NULL, STORAGE_REGISTER, LOC(@1)); }
   | CONST               { $$ = declspec_add_qualifier(NULL, TQ_CONST, LOC(@1)); }
+  | VOLATILE            { $$ = declspec_add_qualifier(NULL, TQ_VOLATILE, LOC(@1)); }
   | builtin_declaration_specifiers INT
         { $$ = declspec_add_builtin($1, TYPE_SPEC_INT, LOC(@2)); }
   | builtin_declaration_specifiers CHAR
@@ -225,6 +234,8 @@ builtin_declaration_specifiers:
         { $$ = declspec_add_storage($1, STORAGE_REGISTER, LOC(@2)); }
   | builtin_declaration_specifiers CONST
         { $$ = declspec_add_qualifier($1, TQ_CONST, LOC(@2)); }
+  | builtin_declaration_specifiers VOLATILE
+        { $$ = declspec_add_qualifier($1, TQ_VOLATILE, LOC(@2)); }
   ;
 
 /* A typedef name or tagged type is already a complete type specifier; only a
@@ -319,6 +330,10 @@ named_declaration_specifiers:
         { $$ = declspec_add_qualifier($2, TQ_CONST, LOC(@1)); }
   | named_declaration_specifiers CONST
         { $$ = declspec_add_qualifier($1, TQ_CONST, LOC(@2)); }
+  | VOLATILE named_declaration_specifiers
+        { $$ = declspec_add_qualifier($2, TQ_VOLATILE, LOC(@1)); }
+  | named_declaration_specifiers VOLATILE
+        { $$ = declspec_add_qualifier($1, TQ_VOLATILE, LOC(@2)); }
   ;
 
 struct_specifier:
@@ -429,8 +444,20 @@ cast_type:
 
 declarator:
     '*' declarator           { $$ = declarator_ptr($2, TQ_NONE); }
-  | '*' CONST declarator     { $$ = declarator_ptr($3, TQ_CONST); }
+  | '*' type_qualifier_list declarator
+        { $$ = declarator_ptr($3, (unsigned)$2); }
   | direct_declarator
+  ;
+
+type_qualifier_list:
+    CONST                    { $$ = TQ_CONST; }
+  | VOLATILE                 { $$ = TQ_VOLATILE; }
+  | type_qualifier_list CONST
+        { if ($1 & TQ_CONST) diag_error_at(LOC(@2), "duplicate 'const' type qualifier");
+          $$ = $1 | TQ_CONST; }
+  | type_qualifier_list VOLATILE
+        { if ($1 & TQ_VOLATILE) diag_error_at(LOC(@2), "duplicate 'volatile' type qualifier");
+          $$ = $1 | TQ_VOLATILE; }
   ;
 
 direct_declarator:
@@ -456,8 +483,8 @@ abstract_declarator_opt:
 
 abstract_declarator:
     '*' abstract_declarator_opt  { $$ = declarator_ptr($2, TQ_NONE); }
-  | '*' CONST abstract_declarator_opt
-        { $$ = declarator_ptr($3, TQ_CONST); }
+  | '*' type_qualifier_list abstract_declarator_opt
+        { $$ = declarator_ptr($3, (unsigned)$2); }
   | direct_abstract_declarator
   ;
 

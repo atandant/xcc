@@ -141,6 +141,7 @@ static int keyword(const char *text)
         { "continue", CONTINUE }, { "typedef", TYPEDEF },
         { "extern", EXTERN }, { "static", STATIC }, { "auto", AUTO },
         { "register", REGISTER }, { "const", CONST },
+        { "volatile", VOLATILE },
         { "struct", STRUCT }, { "union", UNION },
         { "enum", ENUM }, { "sizeof", SIZEOF },
     };
