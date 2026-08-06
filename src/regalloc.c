@@ -741,8 +741,6 @@ static int materialize_spill_fragments(LirFn *lf, const Liveness *lv,
 void regalloc_linear(LirFn *lf, Function *fn, Liveness *lv,
                      const TargetDesc *td, AllocResult *out)
 {
-    regalloc_trivial(lf, fn, out);
-    return;
 
     AllocResult first;
     unsigned char *force_stack = NULL;
