@@ -699,13 +699,20 @@ NodeList *stmt_list_new(void)
 
 NodeList *stmt_list_append(NodeList *list, Node *s)
 {
+    Node *tail;
+
     if (!list)
         list = stmt_list_new();
+    if (!s)
+        return list;
     if (!list->head)
         list->head = s;
     else
         list->tail->next = s;
-    list->tail = s;
+    tail = s;
+    while (tail->next)
+        tail = tail->next;
+    list->tail = tail;
     return list;
 }
 

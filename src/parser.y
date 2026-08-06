@@ -33,6 +33,12 @@ static Type *parameter_declspec_type(DeclSpec *spec, SourceLoc loc)
         diag_error_at(loc, "invalid storage class for parameter");
     return declspec_type(spec, loc);
 }
+
+/* The declaration specifiers are shared by every init-declarator in a local
+   comma-separated declaration. The parser is non-reentrant, and an
+   initializer cannot contain another declaration, so one active context is
+   sufficient. */
+static DeclSpec *local_declspec;
 %}
 
 %locations
@@ -107,7 +113,8 @@ static Type *parameter_declspec_type(DeclSpec *spec, SourceLoc loc)
              equality_expr relational_expr shift_expr additive_expr
              multiplicative_expr cast_expr unary_expr postfix_expr primary_expr
              string_literal stmt initializer init_list initializer_opt
-%type <list> stmt_list arg_clause arg_list
+             local_declaration local_init_declarator
+%type <list> stmt_list arg_clause arg_list local_init_declarator_list
 %type <param> param_list param
 %type <pclause> param_clause
 %type <external> toplevel
@@ -573,23 +580,7 @@ stmt:
   | expr ';'                 { $$ = node_expr_stmt($1, LOC(@2)); }
   | RETURN expr ';'          { $$ = node_return($2, LOC(@1)); }
   | RETURN ';'               { $$ = node_return(NULL, LOC(@1)); }
-  | declaration_specifiers declarator
-        { if ($1->storage != STORAGE_TYPEDEF)
-              typedef_hide_name(declarator_name($2), LOC(@2)); }
-    initializer_opt ';'
-        {
-            Type *ty = declspec_type($1, LOC(@1));
-            if ($1->storage == STORAGE_TYPEDEF) {
-                if ($4)
-                    diag_error_at(LOC(@2), "typedef '%s' is initialized",
-                                  declarator_name($2));
-                typedef_declare(ty, $2, LOC(@1));
-                $$ = node_typedef(ty, $2, LOC(@1));
-            } else {
-                $$ = node_decl(declarator_name($2), ty, $2,
-                               $1->storage, $4, LOC(@1));
-            }
-        }
+  | local_declaration        { $$ = $1; }
   | IF '(' expr ')' stmt %prec IFX
                               { $$ = node_if($3, $5, NULL, LOC(@1)); }
   | IF '(' expr ')' stmt ELSE stmt
@@ -610,6 +601,40 @@ stmt:
   | '{' block_scope_start stmt_list '}'
         { (void)$2; typedef_leave_scope(); struct_tag_leave_scope();
           $$ = node_block(stmt_list_head($3), LOC(@1)); }
+  ;
+
+local_declaration:
+    declaration_specifiers
+        { local_declspec = $1; }
+    local_init_declarator_list ';'
+        { $$ = stmt_list_head($3); local_declspec = NULL; }
+  ;
+
+local_init_declarator_list:
+    local_init_declarator
+        { $$ = stmt_list_append(NULL, $1); }
+  | local_init_declarator_list ',' local_init_declarator
+        { $$ = stmt_list_append($1, $3); }
+  ;
+
+local_init_declarator:
+    declarator
+        { if (local_declspec->storage != STORAGE_TYPEDEF)
+              typedef_hide_name(declarator_name($1), LOC(@1)); }
+    initializer_opt
+        {
+            Type *ty = declspec_type(local_declspec, LOC(@1));
+            if (local_declspec->storage == STORAGE_TYPEDEF) {
+                if ($3)
+                    diag_error_at(LOC(@1), "typedef '%s' is initialized",
+                                  declarator_name($1));
+                typedef_declare(ty, $1, LOC(@1));
+                $$ = node_typedef(ty, $1, LOC(@1));
+            } else {
+                $$ = node_decl(declarator_name($1), ty, $1,
+                               local_declspec->storage, $3, LOC(@1));
+            }
+        }
   ;
 
 label_name:
