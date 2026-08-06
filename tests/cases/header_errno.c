@@ -1,6 +1,5 @@
 /* SPDX-License-Identifier: MIT */
 /* expect: 11 */
-/* xcc-args: -Iinclude */
 #include <errno.h>
 
 int main(void)

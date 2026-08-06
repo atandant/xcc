@@ -13,6 +13,59 @@ trap 'rm -rf "$TMP"' EXIT
 MANIFEST="$TMP/manifest.txt"
 ./tests/gen-manifest.sh "$DIR" "$ABI_DIR" > "$MANIFEST" || exit 1
 
+full_suite=1
+if [ "$#" -gt 0 ]; then
+    full_suite=0
+    selected="$TMP/selected-manifest.txt"
+    : > "$selected"
+    case_dir=$(realpath "$DIR")
+    abi_dir=$(realpath "$ABI_DIR")
+
+    for requested in "$@"; do
+        if [ -f "$requested" ]; then
+            path=$(realpath "$requested")
+        elif [ "${requested#*/}" = "$requested" ] && [ -f "$DIR/$requested" ]; then
+            path=$(realpath "$DIR/$requested")
+        elif [ "${requested#*/}" = "$requested" ] && [ -f "$ABI_DIR/$requested" ]; then
+            path=$(realpath "$ABI_DIR/$requested")
+        else
+            echo "run: test file not found: $requested" >&2
+            exit 1
+        fi
+
+        file=${path##*/}
+        case "$path" in
+            "$case_dir"/*) kind_group=case ;;
+            "$abi_dir"/*)  kind_group=abi ;;
+            *)
+                echo "run: not a test source: $requested" >&2
+                exit 1
+                ;;
+        esac
+
+        matches="$TMP/matches"
+        if [ "$kind_group" = abi ]; then
+            awk -F'|' -v file="$file" '$1 ~ /^abi-/ && $2 == file' \
+                "$MANIFEST" > "$matches"
+        else
+            awk -F'|' -v file="$file" '$1 !~ /^abi-/ && $2 == file' \
+                "$MANIFEST" > "$matches"
+        fi
+        if [ ! -s "$matches" ]; then
+            echo "run: no manifest test for: $requested" >&2
+            exit 1
+        fi
+        if [ "$(wc -l < "$matches")" -ne 1 ]; then
+            echo "run: ambiguous test file: $requested" >&2
+            exit 1
+        fi
+        if ! grep -Fqx -f "$matches" "$selected"; then
+            cat "$matches" >> "$selected"
+        fi
+    done
+    MANIFEST="$selected"
+fi
+
 pass=0
 fail=0
 
@@ -50,6 +103,31 @@ while IFS='|' read -r kind file expected expected_err xcc_args link_args; do
                 pass=$((pass + 1))
             else
                 echo "FAIL $file: expected $expected, got $got"
+                fail=$((fail + 1))
+            fi
+            ;;
+        stdout)
+            # shellcheck disable=SC2086
+            if ! $XCC $xcc_args "$src" -o "$TMP/out.s" 2> "$TMP/err"; then
+                echo "FAIL $file (xcc error)"
+                sed 's/^/      /' "$TMP/err"
+                fail=$((fail + 1))
+                continue
+            fi
+            if ! gcc "$TMP/out.s" -o "$TMP/out" ${link_args:-} 2> "$TMP/gccerr"; then
+                echo "FAIL $file (assemble/link error)"
+                sed 's/^/      /' "$TMP/gccerr"
+                fail=$((fail + 1))
+                continue
+            fi
+
+            output=$("$TMP/out")
+            got=$?
+            if [ "$got" = 0 ] && [ "$output" = "$expected_err" ]; then
+                echo "ok   $file -> '$output'"
+                pass=$((pass + 1))
+            else
+                echo "FAIL $file: expected stdout '$expected_err' and exit 0, got stdout '$output' and exit $got"
                 fail=$((fail + 1))
             fi
             ;;
@@ -134,6 +212,7 @@ while IFS='|' read -r kind file expected expected_err xcc_args link_args; do
     esac
 done < "$MANIFEST"
 
+if [ "$full_suite" -eq 1 ]; then
 # Optimizer checks must inspect LIR: runtime equivalence alone does not prove
 # that the intended rewrites happened.
 if ./tests/check-lir-opt.sh "$XCC"; then
@@ -199,6 +278,7 @@ else
     echo "FAIL cli-long-diagnostic-line: expected diagnostic at line 1, column 5001"
     sed 's/^/      /' "$TMP/err"
     fail=$((fail + 1))
+fi
 fi
 
 echo "----"

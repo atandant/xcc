@@ -1,6 +1,5 @@
 /* SPDX-License-Identifier: MIT */
 /* expect: 42 */
-/* xcc-args: -Iinclude */
 #include <stdlib.h>
 
 int main(void)

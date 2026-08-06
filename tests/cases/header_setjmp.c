@@ -1,6 +1,5 @@
 /* SPDX-License-Identifier: MIT */
 /* expect: 99 */
-/* xcc-args: -Iinclude */
 #include <setjmp.h>
 
 int main(void)

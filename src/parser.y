@@ -99,6 +99,8 @@ static Type *parameter_declspec_type(DeclSpec *spec, SourceLoc loc)
 %token EQ NE LE GE ARROW LAND LOR SHL SHR INC DEC
 %token MUL_ASSIGN DIV_ASSIGN MOD_ASSIGN ADD_ASSIGN SUB_ASSIGN
 %token SHL_ASSIGN SHR_ASSIGN AND_ASSIGN XOR_ASSIGN OR_ASSIGN
+%token ELLIPSIS
+%token BUILTIN_VA_START BUILTIN_VA_ARG BUILTIN_VA_END
 
 %type <node> expr expr_opt arg_expr conditional_expr logical_or_expr
              logical_and_expr bitwise_or_expr bitwise_xor_expr bitwise_and_expr
@@ -520,15 +522,16 @@ function_body_scope_start:
   ;
 
 param_clause:
-    %empty                   { $$ = param_clause(NULL, 0); }
+    %empty                   { $$ = param_clause(NULL, 0, 0); }
   | param_list
         {
             Param *h = $1;
             if (h && h->next == NULL && h->name == NULL && type_is_void(h->ty))
-                $$ = param_clause(NULL, 1);
+                $$ = param_clause(NULL, 1, 0);
             else
-                $$ = param_clause(h, 1);
+                $$ = param_clause(h, 1, 0);
         }
+  | param_list ',' ELLIPSIS { $$ = param_clause($1, 1, 1); }
   ;
 
 param_list:
@@ -797,6 +800,12 @@ primary_expr:
                                $$->is_long_double_suffix = $1.is_long_double_suffix; }
   | string_literal          { $$ = $1; }
   | IDENT                    { $$ = node_var($1, LOC(@1)); }
+  | BUILTIN_VA_START '(' arg_expr ',' arg_expr ')'
+                             { $$ = node_builtin_va_start($3, $5, LOC(@1)); }
+  | BUILTIN_VA_ARG '(' arg_expr ',' cast_type ')'
+                             { $$ = node_builtin_va_arg($3, $5, LOC(@1)); }
+  | BUILTIN_VA_END '(' arg_expr ')'
+                             { $$ = node_builtin_va_end($3, LOC(@1)); }
   | '(' expr ')'             { $$ = $2; }
   ;
 

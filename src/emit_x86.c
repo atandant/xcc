@@ -2123,6 +2123,17 @@ void emit_x86_function(LirFn *lf, Function *fn, AllocResult *alloc,
 
     emit_prologue(&ctx);
 
+    if (fn->variadic) {
+        int off = fn->abi_vararg_save;
+
+        for (int i = 0; i < 6; i++)
+            fprintf(out, "  mov %s, %ld(%%rbp)\n",
+                    reg64_name(td->arg_regs[i]), fp_disp(&ctx, off + i * 8));
+        for (int i = 0; i < 8; i++)
+            fprintf(out, "  movups %s, %ld(%%rbp)\n",
+                    xmm_name(PHYS_XMM0 + i), fp_disp(&ctx, off + 48 + i * 16));
+    }
+
     if (fn->abi_ret_sret)
         fprintf(out, "  mov %%rdi, %ld(%%rbp)\n",
                 fp_disp(&ctx, fn->abi_sret_offset));

@@ -451,8 +451,15 @@ static void lower_branch(LowerCtx *c, Node *n, int true_label,
                          int false_label);
 static int lower_member_addr(LowerCtx *c, Node *n);
 static int lower_call_ex(LowerCtx *c, Node *n, int result_off);
+static int lower_builtin_va(LowerCtx *c, Node *n);
 static Member *member_meta(Node *n);
 static void lower_bitfield_store(LowerCtx *c, Node *lhs, Member *m, int val);
+
+static int is_builtin_va_arg(Node *n)
+{
+    return n && n->kind == ND_CALL && n->name &&
+           strcmp(n->name, "__builtin_va_arg") == 0;
+}
 
 static void lower_init_from_type(LowerCtx *c, Type *ty, Node **pcursor, int base_off)
 {
@@ -537,6 +544,8 @@ static int lower_object_addr(LowerCtx *c, Node *n)
     case ND_MEMBER:
         return lower_member_addr(c, n);
     case ND_CALL: {
+        if (is_builtin_va_arg(n))
+            return lower_builtin_va(c, n);
         int tmp = c->fn->abi_call_scratch;
         int dst;
 
@@ -805,7 +814,8 @@ static int lower_member_addr(LowerCtx *c, Node *n)
     Member *m = &sty->members[n->member_index];
     int dst = fresh(c);
 
-    if (n->lhs->kind == ND_CALL && abi_type_is_record_pass(n->lhs->ty)) {
+    if (n->lhs->kind == ND_CALL && !is_builtin_va_arg(n->lhs) &&
+        abi_type_is_record_pass(n->lhs->ty)) {
         int tmp = c->fn->abi_call_scratch;
 
         if (!tmp)
@@ -1444,6 +1454,182 @@ static int lower_call_callee(LowerCtx *c, Node *n)
     return lower_expr(c, n);
 }
 
+static void lower_store_mem_value(LowerCtx *c, int base, int off, int value,
+                                  int bytes)
+{
+    emit(c, (Instr){
+        .op = LIR_STORE,
+        .a = lir_mem(base, off),
+        .b = lir_vreg(value),
+        .w = bytes == 8 ? LIR_W8 : LIR_W4,
+        .aux = bytes,
+    });
+}
+
+static int lower_imm(LowerCtx *c, long value)
+{
+    int v = fresh(c);
+    emit(c, (Instr){ .op = LIR_MOVI, .dst = v, .a = lir_imm(value) });
+    return v;
+}
+
+static int lower_builtin_va_start(LowerCtx *c, Node *n)
+{
+    int ap = lower_expr(c, n->args);
+    int gp = lower_imm(c, c->fn->abi_named_gpr * 8);
+    int fp = lower_imm(c, 48 + c->fn->abi_named_sse * 16);
+    int overflow = fresh(c);
+    int save = fresh(c);
+
+    emit(c, (Instr){
+        .op = LIR_LEA, .dst = overflow,
+        .a = lir_mem(LIR_FP, 16 + c->fn->abi_named_stack),
+    });
+    emit(c, (Instr){
+        .op = LIR_LEA, .dst = save,
+        .a = lir_mem(LIR_FP, c->fn->abi_vararg_save),
+    });
+    lower_store_mem_value(c, ap, 0, gp, 4);
+    lower_store_mem_value(c, ap, 4, fp, 4);
+    lower_store_mem_value(c, ap, 8, overflow, 8);
+    lower_store_mem_value(c, ap, 16, save, 8);
+    return lower_imm(c, 0);
+}
+
+static int lower_va_stack_addr(LowerCtx *c, int ap, int align, int size)
+{
+    int raw = fresh(c);
+    int addr = raw;
+    int next;
+
+    emit(c, (Instr){
+        .op = LIR_LOAD, .dst = raw, .a = lir_mem(ap, 8),
+        .w = LIR_W8, .sgn = LIR_SGN_Z, .aux = 8,
+    });
+    if (align > 8) {
+        int added = fresh(c);
+        addr = fresh(c);
+        emit(c, (Instr){
+            .op = LIR_ADD, .dst = added, .a = lir_vreg(raw),
+            .b = lir_imm(align - 1), .w = LIR_W8,
+        });
+        emit(c, (Instr){
+            .op = LIR_AND, .dst = addr, .a = lir_vreg(added),
+            .b = lir_imm(-align), .w = LIR_W8,
+        });
+    }
+    next = fresh(c);
+    emit(c, (Instr){
+        .op = LIR_ADD, .dst = next, .a = lir_vreg(addr),
+        .b = lir_imm(size), .w = LIR_W8,
+    });
+    lower_store_mem_value(c, ap, 8, next, 8);
+    return addr;
+}
+
+static int lower_va_load_value(LowerCtx *c, Type *ty, int addr)
+{
+    int value = fresh_type(c, ty);
+    emit(c, (Instr){
+        .op = LIR_LOAD, .dst = value, .a = lir_mem(addr, 0),
+        .w = load_lir_width(ty), .sgn = load_sign(ty),
+        .fpw = type_is_floating(ty) ? float_width(ty) : LIR_FP_NONE,
+        .aux = store_width_bytes(ty),
+    });
+    return widen_loaded_value(c, value, ty);
+}
+
+static int lower_builtin_va_arg(LowerCtx *c, Node *n)
+{
+    Type *ty = n->cast_ty;
+    int is_record = abi_type_is_record_pass(ty);
+    int is_sse = type_same(type_unqualified(ty), type_double());
+    AbiArgPlan record_plan;
+    int slots = 1;
+    int field = is_sse ? 4 : 0;
+    int limit = is_sse ? 160 : 40;
+    int step = is_sse ? 16 : 8;
+    int ap = lower_expr(c, n->args);
+    int offset = fresh(c);
+    int from_reg = lir_new_label(c->lf);
+    int merge = lir_new_label(c->lf);
+    int stack_addr;
+    int reg_addr;
+    LirBlockId stack_exit;
+    LirBlockId reg_exit;
+    int addr = fresh(c);
+
+    if (type_same(type_unqualified(ty), type_long_double()))
+        return lower_va_load_value(c, ty, lower_va_stack_addr(c, ap, 16, 16));
+    if (is_record) {
+        abi_arg_plan(ty, &record_plan);
+        if (record_plan.kind == ABI_ARG_STACK)
+            return lower_va_stack_addr(c, ap, 8,
+                                       abi_stack_arg_bytes(record_plan.size));
+        slots = record_plan.ngpr;
+        limit = 48 - slots * 8;
+        step = slots * 8;
+    }
+
+    emit(c, (Instr){
+        .op = LIR_LOAD, .dst = offset, .a = lir_mem(ap, field),
+        .w = LIR_W4, .sgn = LIR_SGN_Z, .aux = 4,
+    });
+    emit(c, (Instr){
+        .op = LIR_BR, .a = lir_vreg(offset), .b = lir_imm(limit),
+        .w = LIR_W4, .sgn = LIR_SGN_U, .cc = CC_LE, .label = from_reg,
+    });
+
+    stack_addr = lower_va_stack_addr(c, ap, 8,
+                                     is_record ? abi_stack_arg_bytes(type_size(ty)) : 8);
+    stack_exit = c->current;
+    emit(c, (Instr){ .op = LIR_JMP, .label = merge });
+
+    emit(c, (Instr){ .op = LIR_LABEL, .label = from_reg });
+    {
+        int save = fresh(c);
+        int next = fresh(c);
+
+        reg_addr = fresh(c);
+        emit(c, (Instr){
+            .op = LIR_LOAD, .dst = save, .a = lir_mem(ap, 16),
+            .w = LIR_W8, .sgn = LIR_SGN_Z, .aux = 8,
+        });
+        emit(c, (Instr){
+            .op = LIR_ADD, .dst = reg_addr, .a = lir_vreg(save),
+            .b = lir_vreg(offset), .w = LIR_W8,
+        });
+        emit(c, (Instr){
+            .op = LIR_ADD, .dst = next, .a = lir_vreg(offset),
+            .b = lir_imm(step), .w = LIR_W8,
+        });
+        lower_store_mem_value(c, ap, field, next, 4);
+    }
+    reg_exit = c->current;
+    emit(c, (Instr){ .op = LIR_JMP, .label = merge });
+
+    emit(c, (Instr){ .op = LIR_LABEL, .label = merge });
+    {
+        LirPhi *phi = lir_block_add_phi(current_block(c), addr);
+        lir_phi_add_input(phi, stack_exit, stack_addr);
+        lir_phi_add_input(phi, reg_exit, reg_addr);
+    }
+
+    if (is_record)
+        return addr;
+    return lower_va_load_value(c, ty, addr);
+}
+
+static int lower_builtin_va(LowerCtx *c, Node *n)
+{
+    if (strcmp(n->name, "__builtin_va_start") == 0)
+        return lower_builtin_va_start(c, n);
+    if (strcmp(n->name, "__builtin_va_arg") == 0)
+        return lower_builtin_va_arg(c, n);
+    (void)lower_expr(c, n->args);
+    return lower_imm(c, 0);
+}
+
 static int lower_call_ex(LowerCtx *c, Node *n, int result_off)
 {
     Type *ret_ty = n->func_ty ? n->func_ty->ret : type_int();
@@ -1592,7 +1778,7 @@ static void lower_return_record(LowerCtx *c, Node *n, Type *ret_ty)
 
     abi_ret_plan(ret_ty, &rp);
 
-    if (n->kind == ND_CALL) {
+    if (n->kind == ND_CALL && !is_builtin_va_arg(n)) {
         if (rp.kind == ABI_RET_SRET)
             (void)lower_call_ex(c, n, CALL_SRET_FORWARD);
         else
@@ -2011,6 +2197,8 @@ static int lower_expr(LowerCtx *c, Node *n)
         return emit_load_slot(c, dst, n->ty, n->offset);
     }
     case ND_CALL:
+        if (n->name && strncmp(n->name, "__builtin_va_", 13) == 0)
+            return lower_builtin_va(c, n);
         if (n->func_ty && abi_type_is_record_pass(n->func_ty->ret))
             return lower_call_ex(c, n, CALL_DEST_NONE);
         return lower_call(c, n);
@@ -2180,7 +2368,7 @@ static int lower_expr(LowerCtx *c, Node *n)
         if (n->is_compound_assign)
             return lower_compound_assign(c, n);
         if (type_is_record(n->lhs->ty)) {
-            if (n->rhs->kind == ND_CALL &&
+            if (n->rhs->kind == ND_CALL && !is_builtin_va_arg(n->rhs) &&
                 abi_type_is_record_pass(n->lhs->ty) &&
                 n->lhs->kind == ND_VAR &&
                 n->lhs->storage == VAR_STORAGE_LOCAL) {
@@ -2384,6 +2572,7 @@ static void lower_stmt(LowerCtx *c, Node *n)
             (n->ty && n->ty->kind == TY_FUNC))
             return;
         if (n->init && n->init->kind == ND_CALL &&
+            !is_builtin_va_arg(n->init) &&
             abi_type_is_record_pass(n->ty)) {
             (void)lower_call_ex(c, n->init, n->offset);
             return;

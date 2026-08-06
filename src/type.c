@@ -100,7 +100,8 @@ Type *type_array(Type *elem, int count)
     return t;
 }
 
-Type *type_func(Type *ret, Type **params, int nparams, int prototyped)
+Type *type_func(Type *ret, Type **params, int nparams, int prototyped,
+                int variadic)
 {
     Type *t = arena_alloc_zeroed(sizeof(Type));
     t->kind = TY_FUNC;
@@ -110,6 +111,7 @@ Type *type_func(Type *ret, Type **params, int nparams, int prototyped)
     t->params = params;
     t->nparams = nparams;
     t->prototyped = prototyped;
+    t->variadic = variadic;
     return t;
 }
 
@@ -516,13 +518,16 @@ int type_same(Type *a, Type *b)
         if (!type_same(a->ret, b->ret))
             return 0;
         if (a->prototyped && b->prototyped) {
-            if (a->nparams != b->nparams)
+            if (a->variadic != b->variadic || a->nparams != b->nparams)
                 return 0;
             for (int i = 0; i < a->nparams; i++)
                 if (!type_same(a->params[i], b->params[i]))
                     return 0;
         } else if (a->prototyped || b->prototyped) {
             Type *proto = a->prototyped ? a : b;
+
+            if (proto->variadic)
+                return 0;
 
             /* A prototype is compatible with an old-style `()` declaration
              * only when every parameter is unchanged by the default argument
@@ -965,6 +970,8 @@ const char *type_name(Type *ty)
             else {
                 for (int i = 0; i < fn->nparams; i++)
                     n += strlen(type_name(fn->params[i])) + 2;
+                if (fn->variadic)
+                    n += 5;
             }
 
             char *buf = arena_alloc(n);
@@ -981,6 +988,9 @@ const char *type_name(Type *ty)
                     pos += snprintf(buf + pos, n - (size_t)pos, "%s",
                                     type_name(fn->params[i]));
                 }
+                if (fn->variadic)
+                    snprintf(buf + pos, n - (size_t)pos, ", ...");
+                pos = (int)strlen(buf);
                 snprintf(buf + pos, n - (size_t)pos, ")");
             }
             return buf;
@@ -1044,6 +1054,8 @@ const char *type_func_sig(Type *ty)
     n = strlen(type_name(ty->ret)) + 3;
     for (int i = 0; i < ty->nparams; i++)
         n += strlen(type_name(ty->params[i])) + 2;
+    if (ty->variadic)
+        n += 5;
 
     buf = arena_alloc(n);
     pos = snprintf(buf, n, "%s(", type_name(ty->ret));
@@ -1053,6 +1065,8 @@ const char *type_func_sig(Type *ty)
         pos += snprintf(buf + pos, n - (size_t)pos, "%s",
                         type_name(ty->params[i]));
     }
+    if (ty->variadic)
+        pos += snprintf(buf + pos, n - (size_t)pos, ", ...");
     snprintf(buf + pos, n - (size_t)pos, ")");
     return buf;
 }

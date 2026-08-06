@@ -432,6 +432,35 @@ Node *node_call(Node *callee, NodeList *args, SourceLoc loc)
     return n;
 }
 
+static Node *node_builtin_va(const char *name, Node *ap, SourceLoc loc)
+{
+    Node *n = new_node(ND_CALL, loc);
+    n->name = (char *)name;
+    n->args = ap;
+    n->nargs = 1;
+    return n;
+}
+
+Node *node_builtin_va_start(Node *ap, Node *last, SourceLoc loc)
+{
+    Node *n = node_builtin_va("__builtin_va_start", ap, loc);
+    ap->next = last;
+    n->nargs = 2;
+    return n;
+}
+
+Node *node_builtin_va_arg(Node *ap, Type *ty, SourceLoc loc)
+{
+    Node *n = node_builtin_va("__builtin_va_arg", ap, loc);
+    n->cast_ty = ty;
+    return n;
+}
+
+Node *node_builtin_va_end(Node *ap, SourceLoc loc)
+{
+    return node_builtin_va("__builtin_va_end", ap, loc);
+}
+
 Node *node_if(Node *cond, Node *then_body, Node *else_body, SourceLoc loc)
 {
     Node *n = new_node(ND_IF, loc);
@@ -715,11 +744,12 @@ Param *param_append_decl(Param *list, Type *spec_ty, Declarator *decl,
     return list;
 }
 
-ParamClause *param_clause(Param *head, int prototyped)
+ParamClause *param_clause(Param *head, int prototyped, int variadic)
 {
     ParamClause *pc = arena_alloc_zeroed(sizeof(ParamClause));
     pc->head = head;
     pc->prototyped = prototyped;
+    pc->variadic = variadic;
     for (Param *p = head; p; p = p->next)
         pc->count++;
     return pc;
@@ -736,10 +766,11 @@ Function *func_new(char *name, ParamClause *pc, Type *ret_ty,
     f->params = pc->head;
     f->nparams = pc->count;
     f->prototyped = pc->prototyped;
+    f->variadic = pc->variadic;
     f->ret_ty = ret_ty;
     f->is_definition = is_definition;
     f->body = body;
-    f->ty = type_func(ret_ty, NULL, 0, pc->prototyped);
+    f->ty = type_func(ret_ty, NULL, 0, pc->prototyped, pc->variadic);
     return f;
 }
 
@@ -757,12 +788,12 @@ Function *func_new_decl(Type *spec, Declarator *decl, StorageClass storage,
         diag_error_at(loc, "top-level declarator '%s' does not declare a function",
                       declarator_name(decl));
         if (!pc)
-            pc = param_clause(NULL, 0);
+            pc = param_clause(NULL, 0, 0);
         return func_new(declarator_name(decl), pc, type_int(), storage,
                         is_definition, body, loc);
     }
     if (!pc)
-        pc = param_clause(NULL, ty->prototyped);
+        pc = param_clause(NULL, ty->prototyped, ty->variadic);
     return func_new(declarator_name(decl), pc, ty->ret, storage,
                     is_definition, body, loc);
 }
@@ -778,7 +809,7 @@ Function *func_rebuild_type(Function *fn)
         for (Param *p = fn->params; p; p = p->next, i++)
             ptypes[i] = type_decay(p->ty);
     }
-    fn->ty = type_func(fn->ret_ty, ptypes, n, fn->prototyped);
+    fn->ty = type_func(fn->ret_ty, ptypes, n, fn->prototyped, fn->variadic);
     return fn;
 }
 
@@ -1099,7 +1130,8 @@ static Type *type_func_from_params(Type *ret, ParamClause *pc, SourceLoc loc)
         diag_error_at(loc, "function cannot return function type");
     else if (ret && ret->kind == TY_ARRAY)
         diag_error_at(loc, "function cannot return array type");
-    return type_func(ret, ptypes, n, pc ? pc->prototyped : 0);
+    return type_func(ret, ptypes, n, pc ? pc->prototyped : 0,
+                     pc ? pc->variadic : 0);
 }
 
 Type *type_apply_declarator_cb(Type *base, Declarator *d, SourceLoc loc,

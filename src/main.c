@@ -1,7 +1,9 @@
 /* SPDX-License-Identifier: MIT */
+#define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "ast.h"
 #include "diag.h"
@@ -78,6 +80,39 @@ static void append_cpp_action(CppAction **actions, size_t *count, size_t *cap,
     (*count)++;
 }
 
+static void append_include_dir(const char ***dirs, size_t *count, size_t *cap,
+                               const char *dir)
+{
+    if (*count == *cap) {
+        size_t new_cap = *cap ? *cap * 2 : 4;
+        const char **new_dirs = realloc(*dirs, new_cap * sizeof(*new_dirs));
+
+        if (!new_dirs)
+            diag_fatal("out of memory recording include paths");
+        *dirs = new_dirs;
+        *cap = new_cap;
+    }
+    (*dirs)[(*count)++] = dir;
+}
+
+static const char *resource_include_dir(void)
+{
+    static char path[4096];
+    ssize_t len = readlink("/proc/self/exe", path, sizeof(path) - 1);
+    char *slash;
+
+    if (len <= 0 || (size_t)len >= sizeof(path) - sizeof("/include"))
+        return NULL;
+    path[len] = '\0';
+    slash = strrchr(path, '/');
+    if (!slash)
+        return NULL;
+    if ((size_t)(slash - path) + sizeof("/include") > sizeof(path))
+        return NULL;
+    memcpy(slash, "/include", sizeof("/include"));
+    return path;
+}
+
 int main(int argc, char **argv)
 {
     const char *inpath = NULL;
@@ -144,17 +179,8 @@ int main(int argc, char **argv)
                 }
                 dir = argv[++i];
             }
-            if (include_dir_count == include_dir_cap) {
-                size_t new_cap = include_dir_cap ? include_dir_cap * 2 : 4;
-                const char **new_dirs = realloc(include_dirs,
-                    new_cap * sizeof(*new_dirs));
-
-                if (!new_dirs)
-                    diag_fatal("out of memory recording include paths");
-                include_dirs = new_dirs;
-                include_dir_cap = new_cap;
-            }
-            include_dirs[include_dir_count++] = dir;
+            append_include_dir(&include_dirs, &include_dir_count,
+                               &include_dir_cap, dir);
         } else if (strncmp(argv[i], "-D", 2) == 0 ||
                    strncmp(argv[i], "-U", 2) == 0) {
             CppActionKind kind = argv[i][1] == 'D'
@@ -183,6 +209,14 @@ int main(int argc, char **argv)
             }
             inpath = argv[i];
         }
+    }
+
+    {
+        const char *resource_dir = resource_include_dir();
+
+        if (resource_dir)
+            append_include_dir(&include_dirs, &include_dir_count,
+                               &include_dir_cap, resource_dir);
     }
 
     if (inpath && strcmp(inpath, "-") != 0) {

@@ -1,6 +1,5 @@
 /* SPDX-License-Identifier: MIT */
 /* expect: 0 */
-/* xcc-args: -Iinclude */
 #include <signal.h>
 
 static void ignore_int(int sig)

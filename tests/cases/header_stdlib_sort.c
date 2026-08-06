@@ -1,6 +1,5 @@
 /* SPDX-License-Identifier: MIT */
 /* expect: 0 */
-/* xcc-args: -Iinclude */
 #include <stdlib.h>
 
 static int cmp_long(const void *a, const void *b)

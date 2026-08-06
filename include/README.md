@@ -1,7 +1,8 @@
 # xcc C89 headers
 
-Hosted-environment declaration headers for x86-64 Linux. Compile with
-`-Iinclude` and link with the system C library (`gcc`).
+Hosted-environment declaration headers for glibc on x86-64 Linux. xcc finds
+these headers relative to its executable and links with the system C library
+(`gcc`). User `-I` directories are searched before these headers.
 
 ## Provided (C89)
 
@@ -20,13 +21,12 @@ Hosted-environment declaration headers for x86-64 Linux. Compile with
 | `<assert.h>` | `assert` macro (uses `abort` from `<stdlib.h>`) |
 | `<setjmp.h>` | `setjmp` / `longjmp` (glibc-compatible `jmp_buf` layout) |
 | `<signal.h>` | `signal`, `raise`, `SIG*` constants |
+| `<stdarg.h>` | `va_list`, `va_start`, `va_arg`, `va_end` |
+| `<stdio.h>` | Streams, formatted I/O, file positioning, and buffering |
 
 ## Not provided
 
-| Header | Reason |
-| --- | --- |
-| `<stdio.h>` | Variadic `printf` / `scanf` family |
-| `<stdarg.h>` | Variadic machinery (compiler support pending) |
+All C89 headers are now provided.
 
 Non-C89 headers (`<stdint.h>`, `<stdbool.h>`, …) are intentionally omitted.
 

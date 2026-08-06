@@ -144,6 +144,9 @@ static int keyword(const char *text)
         { "volatile", VOLATILE },
         { "struct", STRUCT }, { "union", UNION },
         { "enum", ENUM }, { "sizeof", SIZEOF },
+        { "__builtin_va_start", BUILTIN_VA_START },
+        { "__builtin_va_arg", BUILTIN_VA_ARG },
+        { "__builtin_va_end", BUILTIN_VA_END },
     };
 
     for (size_t i = 0; i < sizeof(words) / sizeof(words[0]); i++)
@@ -155,6 +158,7 @@ static int keyword(const char *text)
 static int punctuator(CppToken token)
 {
     static const struct { const char *text; int token; } puncts[] = {
+        { "...", ELLIPSIS },
         { "<<=", SHL_ASSIGN }, { ">>=", SHR_ASSIGN },
         { "*=", MUL_ASSIGN }, { "/=", DIV_ASSIGN },
         { "%=", MOD_ASSIGN }, { "+=", ADD_ASSIGN },

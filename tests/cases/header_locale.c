@@ -1,6 +1,5 @@
 /* SPDX-License-Identifier: MIT */
 /* expect: 0 */
-/* xcc-args: -Iinclude */
 #include <locale.h>
 
 int main(void)

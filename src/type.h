@@ -73,6 +73,7 @@ struct Type {
     Type **params;     /* TY_FUNC: parameter type                       */
     int nparams;       /* TY_FUNC: parameter count                      */
     int prototyped;    /* TY_FUNC: 0 = bare () unspecified args          */
+    int variadic;      /* TY_FUNC: prototype ends in `, ...`             */
 
     char *ref_name;    /* TY_TYPEDEF_REF: pending typedef identifier     */
 
@@ -123,7 +124,8 @@ int type_is_volatile(Type *ty);
 /* Derived-type constructors (arena allocated). */
 Type *type_ptr(Type *base);
 Type *type_array(Type *elem, int count);
-Type *type_func(Type *ret, Type **params, int nparams, int prototyped);
+Type *type_func(Type *ret, Type **params, int nparams, int prototyped,
+                int variadic);
 Type *type_typedef_ref(char *name);
 Type *type_enum(char *tag);
 void type_struct_layout(Type *ty);

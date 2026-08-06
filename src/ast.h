@@ -231,6 +231,7 @@ struct ParamClause {
     Param *head;
     int count;
     int prototyped;
+    int variadic;
 };
 
 typedef struct {
@@ -250,6 +251,7 @@ struct Function {
     Param *params;
     int nparams;
     int prototyped;    /* 0 = bare () unspecified args; 1 = checked  */
+    int variadic;      /* 1 = fixed parameters followed by `, ...`   */
     Type *ret_ty;      /* function return type (source of truth)     */
     Type *ty;          /* full TY_FUNC type for this function         */
     int is_definition; /* 1 if it has a body; 0 if just a prototype   */
@@ -259,6 +261,10 @@ struct Function {
     int abi_ret_sret;  /* 1: return >16 bytes via hidden pointer in RDI */
     int abi_sret_offset; /* frame slot holding incoming sret pointer    */
     int abi_call_scratch; /* ephemeral stack for orphan sret call results */
+    int abi_named_gpr;   /* GPR slots consumed by hidden/fixed args      */
+    int abi_named_sse;   /* SSE slots consumed by fixed args             */
+    int abi_named_stack; /* incoming stack bytes consumed by fixed args  */
+    int abi_vararg_save; /* 176-byte SysV register-save area, or 0       */
     FrameLocal *frame_locals;
     int nframe_locals;
     Function *next;    /* next function in the translation unit       */
@@ -376,6 +382,9 @@ Node *node_decl(char *name, Type *spec_ty, Declarator *decl,
 Node *node_init_list(Node *items, SourceLoc loc);
 Node *init_list_append(Node *head, Node *item);
 Node *node_call(Node *callee, NodeList *args, SourceLoc loc);
+Node *node_builtin_va_start(Node *ap, Node *last, SourceLoc loc);
+Node *node_builtin_va_arg(Node *ap, Type *ty, SourceLoc loc);
+Node *node_builtin_va_end(Node *ap, SourceLoc loc);
 Node *node_if(Node *cond, Node *then_body, Node *else_body, SourceLoc loc);
 Node *node_while(Node *cond, Node *body, SourceLoc loc);
 Node *node_do_while(Node *body, Node *cond, SourceLoc loc);
@@ -406,7 +415,7 @@ Node *stmt_list_head(NodeList *list);
 Param *param_append(Param *list, Type *ty, char *name);
 Param *param_append_decl(Param *list, Type *spec_ty, Declarator *decl,
                          char *name);
-ParamClause *param_clause(Param *head, int prototyped);
+ParamClause *param_clause(Param *head, int prototyped, int variadic);
 Function *func_new(char *name, ParamClause *pc, Type *ret_ty,
                    StorageClass storage, int is_definition, Node *body,
                    SourceLoc loc);

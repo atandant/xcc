@@ -19,6 +19,7 @@
 /* return-statement context for the function being resolved */
 static Type *cur_ret_ty;
 static const char *cur_fname;
+static Function *cur_fn;
 static GlobalObject *block_static_objects;
 static GlobalObject *block_static_tail;
 static int next_block_static_id;
@@ -1117,6 +1118,60 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
         n->call_direct = 0;
         n->is_lvalue = 0;
         n->var_decay = 0;
+        if (n->name && strncmp(n->name, "__builtin_va_", 13) == 0) {
+            Node *ap = n->args;
+
+            if (!ap) {
+                diag_error_at(n->loc, "missing va_list argument");
+                return;
+            }
+            resolve_expr_ctx(ap, CTX_RVALUE);
+            if (!type_is_pointer(ap->ty))
+                diag_error_at(ap->loc, "va_list argument must have pointer type");
+
+            if (strcmp(n->name, "__builtin_va_start") == 0) {
+                Node *last = ap->next;
+                Param *rightmost = cur_fn ? cur_fn->params : NULL;
+
+                while (rightmost && rightmost->next)
+                    rightmost = rightmost->next;
+                if (!cur_fn || !cur_fn->variadic)
+                    diag_error_at(n->loc, "va_start used in a non-variadic function");
+                if (!last) {
+                    diag_error_at(n->loc, "va_start requires the last named parameter");
+                } else {
+                    resolve_expr_ctx(last, CTX_RVALUE);
+                    if (!rightmost || last->kind != ND_VAR ||
+                        !rightmost->name || strcmp(last->name, rightmost->name) != 0)
+                        diag_error_at(last->loc,
+                                      "second argument to va_start must be the last named parameter");
+                    else if (rightmost->storage == STORAGE_REGISTER)
+                        diag_error_at(last->loc,
+                                      "last named parameter of va_start must not be register");
+                }
+                n->ty = type_void();
+            } else if (strcmp(n->name, "__builtin_va_end") == 0) {
+                n->ty = type_void();
+            } else {
+                Type *ty = typedef_resolve_type(n->cast_ty, n->loc);
+
+                n->cast_ty = ty;
+                if (!type_is_complete(ty) || type_is_void(ty) ||
+                    type_is_array(ty) || type_unqualified(ty)->kind == TY_FUNC)
+                    diag_error_at(n->loc, "invalid type '%s' for va_arg",
+                                  type_name(ty));
+                else if ((type_is_integer(ty) && type_int_width(ty) < 4) ||
+                         type_same(type_unqualified(ty), type_float()))
+                    diag_error_at(n->loc,
+                                  "type '%s' is promoted when passed through '...'",
+                                  type_name(ty));
+                else if (type_is_record(ty) && type_record_contains_floating(ty))
+                    diag_error_at(n->loc,
+                                  "passing a struct or union containing floating members by value is not supported");
+                n->ty = ty;
+            }
+            return;
+        }
         if (n->nargs > XCC_MAX_CALL_ARGS) {
             diag_error_at(n->loc, "too many arguments in function call");
         }
@@ -1127,7 +1182,7 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
         if (n->callee->kind == ND_VAR) {
             if (!scope_lookup_binding(n->callee->name) &&
                 !filesym_find(n->callee->name)) {
-                Type *implicit_ty = type_func(type_int(), NULL, 0, 0);
+                Type *implicit_ty = type_func(type_int(), NULL, 0, 0, 0);
                 FuncSym *imp = entity_declare(n->callee->name, implicit_ty,
                                               FILESYM_FUNCTION,
                                               LINKAGE_EXTERNAL, n->loc);
@@ -1175,7 +1230,9 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
                 diag_warn(W_CALL_WITHOUT_PROTOTYPE, n->loc,
                           "call to function pointer without a prototype");
             }
-            if (fty->prototyped && fty->nparams != n->nargs) {
+            if (fty->prototyped &&
+                (n->nargs < fty->nparams ||
+                 (!fty->variadic && n->nargs > fty->nparams))) {
                 const char *callee_name = n->name ? n->name : "function";
 
                 if (n->nargs < fty->nparams)
@@ -1193,7 +1250,16 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
                 for (Node **ap = &n->args; *ap; ap = &(*ap)->next, i++) {
                     Node *a = *ap;
 
-                    if (!expr_assignable_to(fty->params[i], a))
+                    if (i >= fty->nparams) {
+                        Type *promoted = type_same(type_unqualified(a->ty),
+                                                   type_float())
+                            ? type_double() : type_int_promote(a->ty);
+                        if (type_is_record(a->ty) &&
+                            type_record_contains_floating(a->ty))
+                            diag_error_at(a->loc,
+                                          "passing a struct or union containing floating members by value is not supported");
+                        convert_expr(ap, promoted);
+                    } else if (!expr_assignable_to(fty->params[i], a))
                         diag_error_at(a->loc,
                                       "passing '%s' to parameter of type '%s' in call to '%s'",
                                       type_name(a->ty),
@@ -2193,6 +2259,7 @@ static void sema_function(Function *fn)
     typedef_enter_scope();
     cur_ret_ty = fn->ret_ty;
     cur_fname = fn->name;
+    cur_fn = fn;
 
     enter_scope();
 
@@ -2200,6 +2267,7 @@ static void sema_function(Function *fn)
     fn->abi_ret_sret = (ret_plan.kind == ABI_RET_SRET);
     fn->abi_sret_offset = 0;
     fn->abi_call_scratch = 0;
+    fn->abi_vararg_save = 0;
 
     if (fn->abi_ret_sret)
         fn->abi_sret_offset = scope_alloc_local(type_ptr(type_void()));
@@ -2261,6 +2329,13 @@ static void sema_function(Function *fn)
         }
     }
 
+    fn->abi_named_gpr = gpr_slot;
+    fn->abi_named_sse = sse_slot;
+    fn->abi_named_stack = stack_off;
+    if (fn->variadic)
+        fn->abi_vararg_save = scope_alloc_local(
+            type_array(type_long_double(), 11));
+
     resolve_stmt_list(fn->body);
 
     {
@@ -2279,6 +2354,7 @@ static void sema_function(Function *fn)
     scope_export_frame_locals(&fn->frame_locals, &fn->nframe_locals);
     leave_scope();
     typedef_leave_scope();
+    cur_fn = NULL;
 
     int locals_size = scope_frame_size();
 
