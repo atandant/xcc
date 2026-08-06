@@ -70,8 +70,9 @@ acceptance test suite.
 | function-scoped labels and `goto` (forward and backward) | |
 | prefix/postfix `++` and `--` on integer and pointer lvalues | |
 | arithmetic, bitwise, shifts, comparisons, unary `+`/`-`/`~`, compound assignments, `&&`, `\|\|`, `!`, `?:`, comma | |
+| Variadic Functions and Multi declerators
 | pointer `==` / `!=` / ordering, truthiness, `p == 0` | |
-| `U`/`u` and `L`/`l` integer suffixes (including `UL`/`LU`); `0x` hex literals (C89 typing) | `volatile` qualifier |
+| `U`/`u` and `L`/`l` integer suffixes (including `UL`/`LU`); `0x` hex literals (C89 typing) |
 | `const` qualification, including pointer levels and assignment constraints | |
 | `int`/`long` promotions; `ptr - ptr` → `long` | |
 | warnings (`implicit` decl, unprototyped calls, `char` overflow, …) | |
@@ -83,7 +84,8 @@ acceptance test suite.
 | **`enum`** (tagged/anonymous, enumerator constants, enum variables as `int`) | |
 | `struct S *` / `union U *` parameters and returns, struct/union by-value param/return | |
 | file- and block-scope `extern`/`static`, block-scope `auto`/`register`, and `register` parameters | |
-| | variadic functions and old-style function definitions with parameter declaration lists |
+| Compiler headers such as `stdio.h` | __typeof 
+| |  |
 
 `typedef`, `extern`, and `static` are supported at file and block scope.
 
@@ -221,16 +223,14 @@ make clean
 The generated parser source is produced into `build/` and is not committed.
 
 The [`repos/`](repos/) checks document reproducible builds of selected
-third-party C89 code. For example, `./repos/build_jsmn.sh` and
-`./repos/build_uthash.sh` fetch pinned sources, compile smoke tests with xcc,
+third-party C89 code. For example, `./repos/build_jsmn.sh`. 
+fetch pinned sources, compile smoke tests with xcc,
 link with `gcc`, and run them.
 
 ## Roadmap
 
-- `volatile` type qualifier
 - optionally optimize memory-resident F80 values with an x87 stack scheduler after
   source-level semantics and ABI interoperability are complete
-- variadic functions and old-style function definitions with parameter declarations
 - function-pointer and nested-declarator conformance edge cases
 - complete C89 preprocessor support
 - multiple translation units and driver behavior
