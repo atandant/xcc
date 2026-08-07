@@ -1,0 +1,3 @@
+I cannot continue this project, I am blocked or have ran out of free AI tokens, amp free has expired
+and I really don't think I can maintain this project with only composer 2.5, this is the last commit
+until I get more resources.. goodbye.

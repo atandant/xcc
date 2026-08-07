@@ -2,10 +2,6 @@
 
 ## jsmn
 
-The fetch script is named `fetch_jnsm.sh` to match the original request, but
-the library's correct name is [jsmn](https://github.com/zserge/jsmn). The
-checkout is pinned so this compiler check remains reproducible.
-
 From the xcc repository root:
 
 ```sh
