@@ -1,8 +1,10 @@
 /* SPDX-License-Identifier: MIT */
 #define _POSIX_C_SOURCE 200809L
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include "ast.h"
@@ -25,16 +27,19 @@
 #include "target.h"
 
 int yyparse(void);
+void parser_reset(void);
 extern ExternalDecl *g_program;
 
 static void usage(FILE *f)
 {
     fprintf(f,
-        "xcc 0.0.1 - a C89 compiler (x86-64 AT&T assembly)\n"
-        "usage: xcc [file] [-o out] [options]\n"
-        "  file        C source file, or - / omitted for stdin\n"
-        "  -o out      output file, or - / omitted for stdout\n"
+        "xcc - near-stable C89 compiler for x86-64\n"
+        "usage: xcc [options] file...\n"
+        "  file        C source file, or - for stdin\n"
+        "  -o out      executable, object, assembly, or preprocessed output\n"
         "  -E          preprocess only; emit normalized, marker-free C\n"
+        "  -S          compile to assembly without assembling\n"
+        "  -c          compile to an object without linking\n"
         "  -I dir      add dir to the header search path\n"
         "  -iquote dir search dir for quoted includes only\n"
         "  -isystem dir  add dir as a system header search path\n"
@@ -116,16 +121,177 @@ static const char *resource_include_dir(void)
     return path;
 }
 
+static void append_input(const char ***inputs, size_t *count, size_t *cap,
+                         const char *path)
+{
+    append_include_dir(inputs, count, cap, path);
+}
+
+static void reset_translation_unit(void)
+{
+    parser_reset();
+    ast_reset();
+    typedef_reset();
+    struct_tag_reset();
+    enum_reset();
+}
+
+static int compile_one(const char *inpath, const char *outpath,
+                       const CppOptions *cpp_options, int preprocess_only,
+                       int lir_dump_mode, int verify_lir)
+{
+    FILE *in = stdin;
+    FILE *out = stdout;
+    SourceFile *source;
+    int errors_before = diag_error_count;
+    int ok = 0;
+
+    reset_translation_unit();
+    if (inpath && strcmp(inpath, "-") != 0) {
+        in = fopen(inpath, "rb");
+        if (!in) {
+            diag_error("cannot open '%s'", inpath);
+            goto done;
+        }
+    }
+    source = source_read(in, inpath && strcmp(inpath, "-") != 0
+                         ? inpath : "<stdin>");
+    if (in != stdin) {
+        fclose(in);
+        in = stdin;
+    }
+    if (outpath && strcmp(outpath, "-") != 0) {
+        out = fopen(outpath, "w");
+        if (!out) {
+            diag_error("cannot open '%s' for writing", outpath);
+            goto done;
+        }
+    }
+    if (preprocess_only) {
+        ok = cpp_emit(cpp_create(source, cpp_options), out);
+        goto done;
+    }
+
+    lexer_set_source(source, cpp_options);
+    if (yyparse() != 0 || diag_error_count > errors_before)
+        goto done;
+    if (!g_program) {
+        diag_error("empty translation unit");
+        goto done;
+    }
+    sema(g_program);
+    if (diag_error_count > errors_before)
+        goto done;
+    ast_optimize_program(external_functions(g_program));
+
+    if (lir_dump_mode != 0) {
+        for (Function *fn = external_functions(g_program); fn; fn = fn->next) {
+            LirFn *lf;
+
+            if (!fn->is_definition)
+                continue;
+            lf = lower_function(fn);
+            lir_cfg_rebuild_preds(lf);
+            if (verify_lir)
+                lir_cfg_verify(lf);
+            if (lir_dump_mode != 1) {
+                lir_optimize_ssa_function(lf);
+                if (verify_lir)
+                    lir_cfg_verify(lf);
+                lir_cfg_lower(lf);
+                if (verify_lir)
+                    lir_cfg_verify(lf);
+                lir_optimize_function(lf);
+                if (verify_lir)
+                    lir_cfg_verify(lf);
+            }
+            if (lir_dump_mode == 3) {
+                Liveness lv;
+                AllocResult alloc;
+
+                liveness_compute(lf, &X86_SYSV, &lv);
+                regalloc_linear(lf, fn, &lv, &X86_SYSV, &alloc);
+                if (verify_lir)
+                    regalloc_verify(lf, &lv, &X86_SYSV, &alloc);
+                lir_dump_fn(lf, stdout);
+                liveness_dump(lf, &lv, &X86_SYSV, stdout);
+                regalloc_dump(lf, &alloc, &X86_SYSV, stdout);
+            } else {
+                lir_dump_fn(lf, stdout);
+            }
+            fputc('\n', stdout);
+        }
+    } else {
+        codegen(g_program, out, verify_lir);
+    }
+    ok = 1;
+
+done:
+    if (in != stdin)
+        fclose(in);
+    if (out != stdout && fclose(out) != 0) {
+        diag_error("failed closing '%s'", outpath);
+        ok = 0;
+    }
+    reset_translation_unit();
+    arena_free_all();
+    return ok && diag_error_count == errors_before;
+}
+
+static char *default_output_name(const char *input, const char *suffix)
+{
+    const char *base = strrchr(input, '/');
+    const char *dot;
+    size_t stem_len;
+    char *name;
+
+    base = base ? base + 1 : input;
+    dot = strrchr(base, '.');
+    stem_len = dot && dot != base ? (size_t)(dot - base) : strlen(base);
+    name = malloc(stem_len + strlen(suffix) + 1);
+    if (!name)
+        diag_fatal("out of memory creating output name");
+    memcpy(name, base, stem_len);
+    strcpy(name + stem_len, suffix);
+    return name;
+}
+
+static int run_command(char *const command[])
+{
+    pid_t child = fork();
+    int status;
+
+    if (child < 0) {
+        diag_error("cannot start '%s'", command[0]);
+        return 0;
+    }
+    if (child == 0) {
+        execvp(command[0], command);
+        fprintf(stderr, "xcc: error: cannot execute '%s': %s\n",
+                command[0], strerror(errno));
+        _exit(127);
+    }
+    while (waitpid(child, &status, 0) < 0) {
+        if (errno != EINTR) {
+            diag_error("failed waiting for '%s'", command[0]);
+            return 0;
+        }
+    }
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
 int main(int argc, char **argv)
 {
-    const char *inpath = NULL;
     const char *outpath = NULL;
+    const char **inputs = NULL;
+    size_t input_count = 0;
+    size_t input_cap = 0;
     int lir_dump_mode = 0;
     int verify_lir = 1;
     int preprocess_only = 0;
+    int assembly_only = 0;
+    int compile_only = 0;
     int no_stdinc = 0;
-    FILE *in = stdin;
-    SourceFile *source;
     const char **quote_dirs = NULL;
     size_t quote_dir_count = 0;
     size_t quote_dir_cap = 0;
@@ -148,10 +314,14 @@ int main(int argc, char **argv)
             diag_print_warnings_help(stdout);
             return 0;
         } else if (strcmp(argv[i], "--version") == 0) {
-            printf("xcc 0.0.1\n");
+            printf("xcc (near-stable)\n");
             return 0;
         } else if (strcmp(argv[i], "-E") == 0) {
             preprocess_only = 1;
+        } else if (strcmp(argv[i], "-S") == 0) {
+            assembly_only = 1;
+        } else if (strcmp(argv[i], "-c") == 0) {
+            compile_only = 1;
         } else if (strcmp(argv[i], "-nostdinc") == 0) {
             no_stdinc = 1;
         } else if (strcmp(argv[i], "--xcc-dump-raw-lir") == 0) {
@@ -240,28 +410,12 @@ int main(int argc, char **argv)
             diag_error("unknown option '%s'", argv[i]);
             return 1;
         } else {
-            if (inpath) {
-                diag_error("multiple input files not supported");
-                return 1;
-            }
-            inpath = argv[i];
+            append_input(&inputs, &input_count, &input_cap, argv[i]);
         }
     }
 
     if (!no_stdinc)
         resource_dir = resource_include_dir();
-
-    if (inpath && strcmp(inpath, "-") != 0) {
-        in = fopen(inpath, "rb");
-        if (!in) {
-            diag_error("cannot open '%s'", inpath);
-            return 1;
-        }
-    }
-    source = source_read(in, inpath && strcmp(inpath, "-") != 0
-                         ? inpath : "<stdin>");
-    if (in != stdin)
-        fclose(in);
     {
         CppOptions cpp_options = {
             .quote_dirs = quote_dirs,
@@ -274,121 +428,153 @@ int main(int argc, char **argv)
             .actions = actions,
             .action_count = action_count,
         };
+        int modes = preprocess_only + assembly_only + compile_only;
+        int status = 0;
 
-        if (preprocess_only) {
-            FILE *out = stdout;
-            int ok;
+        if (modes > 1) {
+            diag_error("-E, -S, and -c are mutually exclusive");
+            status = 1;
+            goto finish;
+        }
+        if (lir_dump_mode && (preprocess_only || compile_only)) {
+            diag_error("LIR dump options require assembly compilation");
+            status = 1;
+            goto finish;
+        }
+        if (input_count == 0)
+            append_input(&inputs, &input_count, &input_cap, "-");
+        if ((preprocess_only || lir_dump_mode) && input_count != 1) {
+            diag_error("this mode requires exactly one input file");
+            status = 1;
+            goto finish;
+        }
+        if (outpath && input_count > 1 && (assembly_only || compile_only)) {
+            diag_error("cannot use -o with multiple inputs under -S or -c");
+            status = 1;
+            goto finish;
+        }
+        if (preprocess_only || lir_dump_mode) {
+            status = !compile_one(inputs[0], outpath, &cpp_options,
+                                  preprocess_only, lir_dump_mode, verify_lir);
+            goto finish;
+        }
+        if (assembly_only) {
+            for (size_t i = 0; i < input_count; i++) {
+                char *name = NULL;
+                const char *output = outpath;
 
-            if (lir_dump_mode != 0) {
-                diag_error("-E cannot be combined with LIR dump options");
-                free(actions);
-                free(quote_dirs);
-                free(include_dirs);
-                free(system_dirs);
-                return 1;
+                if (!output && strcmp(inputs[i], "-") != 0) {
+                    name = default_output_name(inputs[i], ".s");
+                    output = name;
+                }
+                if (!compile_one(inputs[i], output, &cpp_options, 0, 0,
+                                 verify_lir))
+                    status = 1;
+                free(name);
+                if (status)
+                    break;
             }
-            if (outpath && strcmp(outpath, "-") != 0) {
-                out = fopen(outpath, "w");
-                if (!out) {
-                    diag_error("cannot open '%s' for writing", outpath);
-                    free(actions);
-                    free(quote_dirs);
-                    free(include_dirs);
-                    free(system_dirs);
-                    return 1;
+            goto finish;
+        }
+        {
+            const char *cc = getenv("CC");
+            char temp_template[] = "/tmp/xcc-XXXXXX";
+            char *temp_dir;
+            char **objects = calloc(input_count, sizeof(*objects));
+
+            if (!cc || !*cc)
+                cc = "cc";
+            temp_dir = mkdtemp(temp_template);
+            if (!temp_dir || !objects) {
+                diag_error("cannot create temporary compilation directory");
+                free(objects);
+                status = 1;
+                goto finish;
+            }
+            for (size_t i = 0; i < input_count; i++) {
+                char *assembly = malloc(strlen(temp_dir) + 32);
+                char *object;
+                char *default_object = NULL;
+                char *command[6];
+
+                if (!assembly) {
+                    status = 1;
+                    break;
+                }
+                sprintf(assembly, "%s/unit%zu.s", temp_dir, i);
+                if (compile_only) {
+                    if (outpath)
+                        object = (char *)outpath;
+                    else if (strcmp(inputs[i], "-") != 0)
+                        object = default_object =
+                            default_output_name(inputs[i], ".o");
+                    else
+                        object = "-.o";
+                } else {
+                    object = malloc(strlen(temp_dir) + 32);
+                    if (object)
+                        sprintf(object, "%s/unit%zu.o", temp_dir, i);
+                }
+                if (!object || !compile_one(inputs[i], assembly, &cpp_options,
+                                            0, 0, verify_lir)) {
+                    free(assembly);
+                    free(default_object);
+                    if (!compile_only)
+                        free(object);
+                    status = 1;
+                    break;
+                }
+                command[0] = (char *)cc;
+                command[1] = "-c";
+                command[2] = assembly;
+                command[3] = "-o";
+                command[4] = object;
+                command[5] = NULL;
+                if (!run_command(command))
+                    status = 1;
+                unlink(assembly);
+                free(assembly);
+                if (compile_only) {
+                    free(default_object);
+                } else {
+                    objects[i] = object;
+                }
+                if (status)
+                    break;
+            }
+            if (!status && !compile_only) {
+                char **command = calloc(input_count + 4, sizeof(*command));
+
+                if (!command) {
+                    status = 1;
+                } else {
+                    command[0] = (char *)cc;
+                    for (size_t i = 0; i < input_count; i++)
+                        command[i + 1] = objects[i];
+                    command[input_count + 1] = "-o";
+                    command[input_count + 2] =
+                        (char *)(outpath ? outpath : "a.out");
+                    if (!run_command(command))
+                        status = 1;
+                    free(command);
                 }
             }
-            ok = cpp_emit(cpp_create(source, &cpp_options), out);
-            if (out != stdout && fclose(out) != 0) {
-                diag_error("failed closing '%s'", outpath);
-                ok = 0;
+            for (size_t i = 0; i < input_count; i++) {
+                if (objects[i]) {
+                    unlink(objects[i]);
+                    free(objects[i]);
+                }
             }
-            free(actions);
-            free(quote_dirs);
-            free(include_dirs);
-            free(system_dirs);
-            arena_free_all();
-            return ok && diag_error_count == 0 ? 0 : 1;
+            free(objects);
+            rmdir(temp_dir);
         }
-        lexer_set_source(source, &cpp_options);
+
+finish:
+        free(inputs);
+        free(actions);
+        free(quote_dirs);
+        free(include_dirs);
+        free(system_dirs);
+        return status;
     }
-    free(actions);
-    free(quote_dirs);
-    free(include_dirs);
-    free(system_dirs);
-
-    typedef_reset();
-    struct_tag_reset();
-    enum_reset();
-
-    if (yyparse() != 0 || diag_error_count > 0)
-        return 1;
-
-    if (!g_program) {
-        diag_error("empty translation unit");
-        return 1;
-    }
-
-    sema(g_program);
-    if (diag_error_count > 0)
-        return 1;
-
-    ast_optimize_program(external_functions(g_program));
-
-    if (lir_dump_mode != 0) {
-        for (Function *fn = external_functions(g_program); fn; fn = fn->next) {
-            if (!fn->is_definition)
-                continue;
-            LirFn *lf = lower_function(fn);
-            lir_cfg_rebuild_preds(lf);
-            if (verify_lir)
-                lir_cfg_verify(lf);
-            if (lir_dump_mode != 1) {
-                lir_optimize_ssa_function(lf);
-                if (verify_lir)
-                    lir_cfg_verify(lf);
-                lir_cfg_lower(lf);
-                if (verify_lir)
-                    lir_cfg_verify(lf);
-                lir_optimize_function(lf);
-                if (verify_lir)
-                    lir_cfg_verify(lf);
-            }
-            if (lir_dump_mode == 3) {
-                Liveness lv;
-                AllocResult alloc;
-                liveness_compute(lf, &X86_SYSV, &lv);
-                regalloc_linear(lf, fn, &lv, &X86_SYSV, &alloc);
-                if (verify_lir)
-                    regalloc_verify(lf, &lv, &X86_SYSV, &alloc);
-                /* Splitting materializes fragment vregs and moves, so dump the
-                   final LIR and its recomputed liveness rather than the stale
-                   pre-allocation form. */
-                lir_dump_fn(lf, stdout);
-                liveness_dump(lf, &lv, &X86_SYSV, stdout);
-                regalloc_dump(lf, &alloc, &X86_SYSV, stdout);
-            } else {
-                lir_dump_fn(lf, stdout);
-            }
-            fputc('\n', stdout);
-        }
-        arena_free_all();
-        return 0;
-    }
-
-    FILE *out = stdout;
-    if (outpath && strcmp(outpath, "-") != 0) {
-        out = fopen(outpath, "w");
-        if (!out) {
-            diag_error("cannot open '%s' for writing", outpath);
-            return 1;
-        }
-    }
-
-    codegen(g_program, out, verify_lir);
-
-    if (out != stdout)
-        fclose(out);
-    arena_free_all();
-    return 0;
 }

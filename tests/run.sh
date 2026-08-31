@@ -81,7 +81,7 @@ while IFS='|' read -r kind file expected expected_err xcc_args link_args; do
     case "$kind" in
         run)
             # shellcheck disable=SC2086
-            if ! $XCC $xcc_args "$src" -o "$TMP/out.s" 2> "$TMP/err"; then
+            if ! $XCC -S $xcc_args "$src" -o "$TMP/out.s" 2> "$TMP/err"; then
                 echo "FAIL $file (xcc error)"
                 sed 's/^/      /' "$TMP/err"
                 fail=$((fail + 1))
@@ -108,7 +108,7 @@ while IFS='|' read -r kind file expected expected_err xcc_args link_args; do
             ;;
         stdout)
             # shellcheck disable=SC2086
-            if ! $XCC $xcc_args "$src" -o "$TMP/out.s" 2> "$TMP/err"; then
+            if ! $XCC -S $xcc_args "$src" -o "$TMP/out.s" 2> "$TMP/err"; then
                 echo "FAIL $file (xcc error)"
                 sed 's/^/      /' "$TMP/err"
                 fail=$((fail + 1))
@@ -133,7 +133,7 @@ while IFS='|' read -r kind file expected expected_err xcc_args link_args; do
             ;;
         xcc-error)
             # shellcheck disable=SC2086
-            if $XCC $xcc_args "$src" -o "$TMP/out.s" 2> "$TMP/err"; then
+            if $XCC -S $xcc_args "$src" -o "$TMP/out.s" 2> "$TMP/err"; then
                 echo "FAIL $file: expected xcc error, got success"
                 fail=$((fail + 1))
                 continue
@@ -150,7 +150,7 @@ while IFS='|' read -r kind file expected expected_err xcc_args link_args; do
             ;;
         xcc-warning)
             # shellcheck disable=SC2086
-            if ! $XCC $xcc_args "$src" -o "$TMP/out.s" 2> "$TMP/err"; then
+            if ! $XCC -S $xcc_args "$src" -o "$TMP/out.s" 2> "$TMP/err"; then
                 echo "FAIL $file (xcc error, expected warning only)"
                 sed 's/^/      /' "$TMP/err"
                 fail=$((fail + 1))
@@ -168,7 +168,7 @@ while IFS='|' read -r kind file expected expected_err xcc_args link_args; do
             ;;
         abi-caller|abi-callee)
             peer="$ABI_DIR/$expected_err"
-            if ! $XCC "$src" -o "$TMP/abi-xcc.s" 2> "$TMP/err"; then
+            if ! $XCC -S "$src" -o "$TMP/abi-xcc.s" 2> "$TMP/err"; then
                 echo "FAIL $file (xcc ABI compile error)"
                 sed 's/^/      /' "$TMP/err"
                 fail=$((fail + 1))
@@ -224,7 +224,7 @@ else
 fi
 
 # CLI-only checks (no dedicated source file).
-if ! $XCC -Wnot-a-real-warning "$DIR/warn_implicit_function_decl.c" -o "$TMP/out.s" 2> "$TMP/err"; then
+if ! $XCC -S -Wnot-a-real-warning "$DIR/warn_implicit_function_decl.c" -o "$TMP/out.s" 2> "$TMP/err"; then
     if grep -q "unknown warning option '-Wnot-a-real-warning'" "$TMP/err"; then
         echo "ok   cli-unknown-wflag"
         pass=$((pass + 1))
@@ -239,7 +239,7 @@ else
 fi
 
 # Every generated object should opt out of an executable process stack.
-if $XCC "$DIR/ret_const.c" -o "$TMP/out.s" 2> "$TMP/err" &&
+if $XCC -S "$DIR/ret_const.c" -o "$TMP/out.s" 2> "$TMP/err" &&
    grep -q '^  \.section \.note\.GNU-stack,"",@progbits$' "$TMP/out.s"; then
     echo "ok   assembly-non-executable-stack"
     pass=$((pass + 1))
@@ -268,7 +268,7 @@ fi
 # Diagnostics must retain a physical source line longer than the old 4096-byte
 # read buffer, without splitting it or reading past the captured text.
 awk 'BEGIN { for (i = 0; i < 5000; i++) printf " "; print "@" }' > "$TMP/long-line.c"
-if $XCC "$TMP/long-line.c" -o "$TMP/out.s" 2> "$TMP/err"; then
+if $XCC -S "$TMP/long-line.c" -o "$TMP/out.s" 2> "$TMP/err"; then
     echo "FAIL cli-long-diagnostic-line: expected failure"
     fail=$((fail + 1))
 elif grep -q ':1:5001: error: ' "$TMP/err"; then

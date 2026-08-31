@@ -55,6 +55,8 @@ typedef struct {
 
 typedef struct CppInput {
     const SourceFile *source;
+    const SourceFile *logical_source;
+    int line_bias;
     LogicalChar *chars;
     size_t len;
     size_t pos;
@@ -159,6 +161,7 @@ static CppInput *create_input(const SourceFile *source, CppInput *previous,
 
     input = arena_alloc_zeroed(sizeof(*input));
     input->source = source;
+    input->logical_source = source;
     input->chars = phase2;
     input->len = n2;
     input->starts_line = 1;
@@ -284,6 +287,13 @@ static int is_ident_continue(int ch)
     return is_ident_start(ch) || (ch >= '0' && ch <= '9');
 }
 
+static SourceLoc logical_loc(const CppInput *input, SourceLoc loc)
+{
+    loc.file = input->logical_source;
+    loc.line += input->line_bias;
+    return loc;
+}
+
 static CppToken make_token(Cpp *cpp, CppTokenKind kind, size_t start,
                            size_t end, int starts_line, int leading_space)
 {
@@ -298,9 +308,9 @@ static CppToken make_token(Cpp *cpp, CppTokenKind kind, size_t start,
     token.kind = kind;
     token.text = text;
     token.len = len;
-    token.loc = start < input->len
+    token.loc = logical_loc(input, start < input->len
               ? input->chars[start].loc
-              : (SourceLoc){ input->source, 1, 1 };
+              : (SourceLoc){ input->source, 1, 1 });
     token.leading_space = leading_space;
     token.starts_line = starts_line;
     return token;
@@ -349,9 +359,9 @@ static CppToken scan_next(Cpp *cpp)
         ch = peek(cpp, 0);
         if (ch == EOF)
             return (CppToken){ .kind = CPP_EOF,
-                .loc = { input->source,
+                .loc = logical_loc(input, (SourceLoc){ input->source,
                          input->len ? input->chars[input->len - 1].loc.line : 1,
-                         input->len ? input->chars[input->len - 1].loc.col + 1 : 1 },
+                         input->len ? input->chars[input->len - 1].loc.col + 1 : 1 }),
                 .starts_line = input->starts_line,
                 .leading_space = input->pending_space };
         if (ch == ' ' || ch == '\t' || ch == '\v' || ch == '\f') {
@@ -362,7 +372,8 @@ static CppToken scan_next(Cpp *cpp)
         if (ch == '\n')
             return newline_token(cpp, input->pos);
         if (ch == '/' && peek(cpp, 1) == '*') {
-            input->comment_loc = input->chars[input->pos].loc;
+            input->comment_loc = logical_loc(input,
+                                             input->chars[input->pos].loc);
             input->pos += 2;
             input->in_comment = 1;
             input->pending_space = 1;
@@ -954,6 +965,99 @@ static void handle_error(Cpp *cpp, CppToken directive)
     free(tokens);
 }
 
+static char *parse_line_filename(CppToken token)
+{
+    char *name;
+    size_t out = 0;
+
+    if (token.kind != CPP_STRING || token.len < 2 || token.text[0] != '"' ||
+        token.text[token.len - 1] != '"')
+        return NULL;
+    name = arena_alloc(token.len);
+    for (size_t i = 1; i + 1 < token.len; i++) {
+        int ch = (unsigned char)token.text[i];
+
+        if (ch == '\\' && i + 2 < token.len) {
+            ch = (unsigned char)token.text[++i];
+            switch (ch) {
+            case 'a': ch = '\a'; break;
+            case 'b': ch = '\b'; break;
+            case 'f': ch = '\f'; break;
+            case 'n': ch = '\n'; break;
+            case 'r': ch = '\r'; break;
+            case 't': ch = '\t'; break;
+            case 'v': ch = '\v'; break;
+            case '\\': case '"': case '?': break;
+            default: return NULL;
+            }
+        }
+        name[out++] = (char)ch;
+    }
+    name[out] = '\0';
+    return name;
+}
+
+static void handle_line(Cpp *cpp, CppToken directive)
+{
+    CppInput *input = cpp->input;
+    CppToken *tokens;
+    CppToken *expanded;
+    size_t len;
+    size_t expanded_len;
+    unsigned long number = 0;
+    const char *name;
+    int next_physical_line;
+
+    tokens = read_directive_line(cpp, &len);
+    expanded = cpp_macros_expand_tokens(cpp->macros, tokens, len,
+                                        &expanded_len);
+    if (expanded_len < 1 || expanded_len > 2 ||
+        expanded[0].kind != CPP_NUMBER) {
+        diag_error_at(directive.loc, "invalid #line directive");
+        goto done;
+    }
+    for (size_t i = 0; i < expanded[0].len; i++) {
+        int ch = (unsigned char)expanded[0].text[i];
+
+        if (ch < '0' || ch > '9') {
+            diag_error_at(expanded[0].loc,
+                          "#line requires a decimal line number");
+            goto done;
+        }
+        if (number <= (32767UL - (unsigned long)(ch - '0')) / 10)
+            number = number * 10 + (unsigned long)(ch - '0');
+        else
+            number = 32768;
+    }
+    if (number == 0 || number > 32767) {
+        diag_error_at(expanded[0].loc,
+                      "#line number must be between 1 and 32767");
+        goto done;
+    }
+    name = source_name(input->logical_source);
+    if (expanded_len == 2) {
+        name = parse_line_filename(expanded[1]);
+        if (!name) {
+            diag_error_at(expanded[1].loc,
+                          "#line filename must be a character string literal");
+            goto done;
+        }
+    }
+    if (input->pos < input->len)
+        next_physical_line = input->chars[input->pos].loc.line;
+    else if (input->len)
+        next_physical_line = input->chars[input->len - 1].loc.line + 1;
+    else
+        next_physical_line = 1;
+    input->line_bias = (int)number - next_physical_line;
+    input->logical_source = source_logical_view(input->source, name,
+                                                input->line_bias);
+
+done:
+    free(expanded);
+    free(tokens);
+}
+
 static void handle_pragma_once(Cpp *cpp, const CppToken *tokens, size_t len)
 {
     (void)tokens;
@@ -1093,6 +1197,10 @@ static void handle_directive(Cpp *cpp, SourceLoc hash_loc)
     }
     if (token_is(&directive, "error")) {
         handle_error(cpp, directive);
+        return;
+    }
+    if (token_is(&directive, "line")) {
+        handle_line(cpp, directive);
         return;
     }
     if (token_is(&directive, "pragma")) {

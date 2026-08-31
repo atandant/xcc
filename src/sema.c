@@ -530,15 +530,25 @@ static int init_scalar_brace_unwrap(Node **pcursor, InitFlat *flat, SourceLoc lo
 static int init_aggregate(Type *t, Node **pcursor, InitFlat *flat,
                           SourceLoc loc, int *excess);
 
+static int string_initializes_array(Type *array, Node *string)
+{
+    Type *elem;
+
+    if (!type_is_array(array) || !string || string->kind != ND_STRING)
+        return 0;
+    elem = type_array_elem(array);
+    return string->string_wide ? type_compatible(elem, type_int())
+                               : type_is_char(elem);
+}
+
 static int init_char_array_string(Type *t, Node **pcursor, InitFlat *flat,
                                   SourceLoc loc)
 {
     Node *string = *pcursor;
-    Type *elem = type_array_elem(t);
     int count = type_array_count(t);
     int i;
 
-    if (!string || string->kind != ND_STRING || !type_is_char(elem))
+    if (!string_initializes_array(t, string))
         return 0;
     *pcursor = string->next;
     if (string->string_len > count) {
@@ -1040,7 +1050,8 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
         n->var_decay = 0;
         return;
     case ND_STRING:
-        n->ty = type_array(type_char(), n->string_len + 1);
+        n->ty = type_array(n->string_wide ? type_int() : type_char(),
+                           n->string_len + 1);
         n->is_lvalue = ctx != CTX_RVALUE;
         n->var_decay = 0;
         n->func_decay = 0;
@@ -1860,18 +1871,17 @@ static void resolve_stmt(Node *s)
                           s->name, type_name(s->ty));
         /* C89 3.5.7: an ordinary string initializes a character array,
            including its trailing null when the declared bound has room. */
-        if (type_is_array(s->ty) && type_is_char(type_array_elem(s->ty)) &&
-            s->init && s->init->kind == ND_STRING) {
+        if (string_initializes_array(s->ty, s->init)) {
             if (type_array_count(s->ty) == 0) {
                 s->ty->count = s->init->string_len + 1;
                 s->ty->size = type_size(type_array_elem(s->ty)) * s->ty->count;
             }
             s->init = node_init_list(s->init, s->init->loc);
         }
-        if (type_is_array(s->ty) && type_is_char(type_array_elem(s->ty)) &&
-            type_array_count(s->ty) == 0 && s->init &&
+        if (type_is_array(s->ty) && type_array_count(s->ty) == 0 && s->init &&
             s->init->kind == ND_INIT_LIST && s->init->body &&
-            s->init->body->kind == ND_STRING && !s->init->body->next) {
+            string_initializes_array(s->ty, s->init->body) &&
+            !s->init->body->next) {
             s->ty->count = s->init->body->string_len + 1;
             s->ty->size = type_size(type_array_elem(s->ty)) * s->ty->count;
         }
@@ -2717,22 +2727,22 @@ static void sema_global_object(GlobalObject *object)
                       "invalid storage class for file-scope object '%s'",
                       object->name);
 
-    if (type_is_array(object->ty) &&
-        type_is_char(type_array_elem(object->ty)) && object->init &&
-        object->init->kind == ND_STRING) {
+    if (string_initializes_array(object->ty, object->init)) {
         if (type_array_count(object->ty) == 0) {
             object->ty->count = object->init->string_len + 1;
-            object->ty->size = object->ty->count;
+            object->ty->size = type_size(type_array_elem(object->ty)) *
+                               object->ty->count;
         }
         object->init = node_init_list(object->init, object->init->loc);
     }
-    if (type_is_array(object->ty) &&
-        type_is_char(type_array_elem(object->ty)) &&
-        type_array_count(object->ty) == 0 && object->init &&
+    if (type_is_array(object->ty) && type_array_count(object->ty) == 0 &&
+        object->init &&
         object->init->kind == ND_INIT_LIST && object->init->body &&
-        object->init->body->kind == ND_STRING && !object->init->body->next) {
+        string_initializes_array(object->ty, object->init->body) &&
+        !object->init->body->next) {
         object->ty->count = object->init->body->string_len + 1;
-        object->ty->size = object->ty->count;
+        object->ty->size = type_size(type_array_elem(object->ty)) *
+                           object->ty->count;
     }
     if (type_is_array(object->ty) && type_array_count(object->ty) == 0 &&
         object->init && object->init->kind == ND_INIT_LIST) {

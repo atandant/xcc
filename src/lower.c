@@ -1375,7 +1375,7 @@ static void lower_store_call_result_to_off(LowerCtx *c, int off, const AbiRetPla
         .op = LIR_STORE,
         .a = lir_mem(LIR_FP, off),
         .b = lir_vreg(v),
-        .w = bytes >= 8 ? LIR_W8 : LIR_W4,
+        .w = bytes > 4 ? LIR_W8 : LIR_W4,
         .aux = bytes,
     });
     if (rp->kind != ABI_RET_GPR_PAIR)

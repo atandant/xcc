@@ -22,6 +22,7 @@ for src in "$DIR"/*.c; do
     file=$(basename "$src")
     expected=$(sed -n 's@^/[*] expect: \([0-9][0-9]*\) [*]/$@\1@p' "$src" | sed -n '1p')
     expected_err=$(sed -n 's@^/[*] expect-error: \(.*\) [*]/$@\1@p' "$src" | sed -n '1p')
+    expected_location=$(sed -n 's@^/[*] expect-location: \(.*\) [*]/$@\1@p' "$src" | sed -n '1p')
     expected_note=$(sed -n 's@^/[*] expect-note: \(.*\) [*]/$@\1@p' "$src" | sed -n '1p')
     expected_warning=$(sed -n 's@^/[*] expect-warning: \(.*\) [*]/$@\1@p' "$src" | sed -n '1p')
     expected_no_note=$(sed -n 's@^/[*] expect-no-note: \(.*\) [*]/$@\1@p' "$src" | sed -n '1p')
@@ -45,7 +46,7 @@ for src in "$DIR"/*.c; do
     fi
     if [ -n "$expected" ]; then
         if ! SOURCE_DATE_EPOCH=$source_date_epoch \
-             $XCC "$@" "$src" -o "$TMP/out.s" 2> "$TMP/err"; then
+             $XCC -S "$@" "$src" -o "$TMP/out.s" 2> "$TMP/err"; then
             echo "FAIL cpp/$file (xcc error)"
             sed 's/^/      /' "$TMP/err"
             fail=$((fail + 1))
@@ -98,13 +99,18 @@ for src in "$DIR"/*.c; do
         fi
     elif [ -n "$expected_err" ]; then
         if SOURCE_DATE_EPOCH=$source_date_epoch \
-           $XCC "$@" "$src" -o "$TMP/out.s" 2> "$TMP/err"; then
+           $XCC -S "$@" "$src" -o "$TMP/out.s" 2> "$TMP/err"; then
             echo "FAIL cpp/$file: expected xcc error, got success"
             fail=$((fail + 1))
         elif grep ': error: ' "$TMP/err" | sed 's/^.*: error: //' |
              grep -Fx "$expected_err" > /dev/null; then
             include_count=$(grep -c '^In file included from ' "$TMP/err")
-            if [ -n "$expected_include" ] &&
+            if [ -n "$expected_location" ] &&
+               ! grep -F "$expected_location" "$TMP/err" > /dev/null; then
+                echo "FAIL cpp/$file: expected location '$expected_location'"
+                sed 's/^/      /' "$TMP/err"
+                fail=$((fail + 1))
+            elif [ -n "$expected_include" ] &&
                ! grep -Fx "$expected_include" "$TMP/err" > /dev/null; then
                 echo "FAIL cpp/$file: expected include trace '$expected_include'"
                 sed 's/^/      /' "$TMP/err"

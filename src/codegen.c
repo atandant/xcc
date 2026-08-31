@@ -21,7 +21,8 @@ static void emit_string_literals(FILE *out)
         fprintf(out, "%s:\n", literal->string_label);
         for (int i = 0; i <= literal->string_len; i++) {
             unsigned value = i == literal->string_len ? 0 : literal->string_data[i];
-            fprintf(out, "  .byte %u\n", value);
+            fprintf(out, literal->string_wide ? "  .long %u\n" : "  .byte %u\n",
+                    value);
         }
     }
 }

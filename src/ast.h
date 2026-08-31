@@ -5,13 +5,16 @@
 #include "token.h"
 #include "type.h"
 
+#include <stdint.h>
+
 #define XCC_MAX_CALL_ARGS 4096
 
 typedef struct Node Node;
 
 typedef struct {
-    unsigned char *data;
-    int len;            /* decoded bytes, excluding the trailing null */
+    uint32_t *data;
+    int len;            /* decoded code units, excluding the trailing null */
+    int wide;
 } StringToken;
 
 typedef enum {
@@ -167,8 +170,9 @@ struct Node {
     int is_hex_literal;  /* ND_NUM: 0x/0X constant (C89 3.1.5 typing) */
     int is_octal_literal; /* ND_NUM: 0-prefixed octal (C89 3.1.5 typing) */
     int is_char_constant; /* ND_NUM: ordinary character constant (type int) */
-    unsigned char *string_data; /* ND_STRING: decoded bytes, no final null */
-    int string_len;      /* ND_STRING: decoded byte count             */
+    uint32_t *string_data; /* ND_STRING: decoded units, no final null */
+    int string_len;      /* ND_STRING: decoded code-unit count        */
+    int string_wide;     /* ND_STRING: elements have wchar_t width    */
     char *string_label;  /* ND_STRING: private assembler symbol       */
     Node *string_next;   /* ND_STRING: translation-unit literal list  */
     char *name;        /* ND_VAR, ND_DECL; ND_CALL direct callee name */
@@ -361,6 +365,7 @@ Type *declspec_type(DeclSpec *spec, SourceLoc loc);
 Node *node_string(StringToken *token, SourceLoc loc);
 Node *node_string_append(Node *literal, StringToken *token);
 Node *string_literals(void);
+void ast_reset(void);
 Node *node_var(char *name, SourceLoc loc);
 Node *node_binop(BinOp op, Node *l, Node *r, SourceLoc loc);
 Node *node_pos(Node *o, SourceLoc loc);

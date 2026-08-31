@@ -125,7 +125,7 @@ cat > "$TMP/roundtrip.c" <<'EOF'
 int main(void) { return RESULT; }
 EOF
 if $XCC -E "$TMP/roundtrip.c" > "$TMP/roundtrip.i" &&
-   $XCC "$TMP/roundtrip.i" -o "$TMP/roundtrip.s" &&
+   $XCC -S "$TMP/roundtrip.i" -o "$TMP/roundtrip.s" &&
    gcc "$TMP/roundtrip.s" -o "$TMP/roundtrip"; then
     "$TMP/roundtrip"
     status=$?

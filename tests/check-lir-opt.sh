@@ -124,7 +124,7 @@ if ! "$XCC" --xcc-dump-lir "$TMP/opt-lir.c" > "$TMP/opt-lir" 2> "$TMP/err"; then
     exit 1
 fi
 
-if ! "$XCC" "$TMP/opt-lir.c" -o "$TMP/opt.s" 2>> "$TMP/err"; then
+if ! "$XCC" -S "$TMP/opt-lir.c" -o "$TMP/opt.s" 2>> "$TMP/err"; then
     sed 's/^/      /' "$TMP/err"
     exit 1
 fi

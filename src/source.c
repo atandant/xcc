@@ -21,6 +21,7 @@ struct SourceFile {
     SourceLoc included_from;
     int has_include_origin;
     int is_system_header;
+    int line_bias;
     unsigned char *bytes;
     size_t size;
     char **lines;
@@ -135,6 +136,17 @@ SourceFile *source_include_view(const SourceFile *source, const char *name,
     return view;
 }
 
+SourceFile *source_logical_view(const SourceFile *source, const char *name,
+                                int line_bias)
+{
+    SourceFile *view = arena_alloc(sizeof(*view));
+
+    *view = *source;
+    view->name = arena_strdup(name);
+    view->line_bias = line_bias;
+    return view;
+}
+
 const char *source_name(const SourceFile *source)
 {
     return source ? source->name : "<unknown>";
@@ -198,7 +210,12 @@ size_t source_size(const SourceFile *source)
 
 const char *source_line(const SourceFile *source, int line)
 {
-    if (!source || line < 1 || line > source->nlines)
+    int physical_line;
+
+    if (!source)
         return NULL;
-    return source->lines[line - 1];
+    physical_line = line - source->line_bias;
+    if (physical_line < 1 || physical_line > source->nlines)
+        return NULL;
+    return source->lines[physical_line - 1];
 }

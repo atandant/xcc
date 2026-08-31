@@ -39,6 +39,12 @@ static Type *parameter_declspec_type(DeclSpec *spec, SourceLoc loc)
    initializer cannot contain another declaration, so one active context is
    sufficient. */
 static DeclSpec *local_declspec;
+
+void parser_reset(void)
+{
+    g_program = NULL;
+    local_declspec = NULL;
+}
 %}
 
 %locations

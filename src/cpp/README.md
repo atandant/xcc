@@ -21,7 +21,7 @@
 | `#undef` and null directives | implemented |
 | function-like macros and stringification with `#` | implemented |
 | `#if`, `#ifdef`, `#ifndef`, `#elif`, `#else`, `#endif` | implemented |
-| `#include` and `-I` include search paths | experimental |
+| `#include` and `-I` include search paths | implemented |
 | `#error` | implemented |
 | `#pragma` recognition; unknown pragmas ignored | implemented |
 | `#pragma once` | implemented xcc extension |

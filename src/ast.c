@@ -13,6 +13,14 @@ static Node *literal_head;
 static Node *literal_tail;
 static int next_literal_id;
 
+void ast_reset(void)
+{
+    literal_head = NULL;
+    literal_tail = NULL;
+    next_literal_id = 0;
+    g_typedef_decls = NULL;
+}
+
 DeclSpec *declspec_new(void)
 {
     return arena_alloc_zeroed(sizeof(DeclSpec));
@@ -181,6 +189,7 @@ Node *node_string(StringToken *token, SourceLoc loc)
 
     n->string_data = token->data;
     n->string_len = token->len;
+    n->string_wide = token->wide;
     snprintf(label, sizeof(label), ".L.str.%d", next_literal_id++);
     n->string_label = arena_strdup(label);
     if (literal_tail)
@@ -191,22 +200,99 @@ Node *node_string(StringToken *token, SourceLoc loc)
     return n;
 }
 
+static uint32_t decode_utf8_unit(const uint32_t *bytes, int len, int *index,
+                                 SourceLoc loc)
+{
+    uint32_t first = bytes[(*index)++];
+    uint32_t value;
+    int extra;
+
+    if (first < 0x80)
+        return first;
+    if (first >= 0xc2 && first <= 0xdf) {
+        value = first & 0x1f;
+        extra = 1;
+    } else if (first >= 0xe0 && first <= 0xef) {
+        value = first & 0x0f;
+        extra = 2;
+    } else if (first >= 0xf0 && first <= 0xf4) {
+        value = first & 0x07;
+        extra = 3;
+    } else {
+        diag_error_at(loc, "invalid UTF-8 in character string literal");
+        return 0xfffd;
+    }
+    if (*index + extra > len) {
+        diag_error_at(loc, "incomplete UTF-8 in character string literal");
+        *index = len;
+        return 0xfffd;
+    }
+    for (int i = 0; i < extra; i++) {
+        uint32_t next = bytes[(*index)++];
+        if (next < 0x80 || next > 0xbf) {
+            diag_error_at(loc, "invalid UTF-8 in character string literal");
+            return 0xfffd;
+        }
+        value = (value << 6) | (next & 0x3f);
+    }
+    if ((extra == 2 && value < 0x800) ||
+        (extra == 3 && value < 0x10000) ||
+        (value >= 0xd800 && value <= 0xdfff) || value > 0x10ffff) {
+        diag_error_at(loc, "invalid UTF-8 in character string literal");
+        return 0xfffd;
+    }
+    return value;
+}
+
+static void string_data_promote_wide(uint32_t **data, int *len, SourceLoc loc)
+{
+    uint32_t *wide = arena_alloc((size_t)(*len ? *len : 1) * sizeof(*wide));
+    int in = 0;
+    int out = 0;
+
+    while (in < *len)
+        wide[out++] = decode_utf8_unit(*data, *len, &in, loc);
+    *data = wide;
+    *len = out;
+}
+
+static void string_promote_wide(Node *literal)
+{
+    string_data_promote_wide(&literal->string_data, &literal->string_len,
+                             literal->loc);
+    literal->string_wide = 1;
+}
+
+static void string_token_promote_wide(StringToken *token, SourceLoc loc)
+{
+    string_data_promote_wide(&token->data, &token->len, loc);
+    token->wide = 1;
+}
+
 Node *node_string_append(Node *literal, StringToken *token)
 {
     int len;
-    unsigned char *data;
+    uint32_t *data;
 
     if (literal->string_len >= INT_MAX ||
         token->len > INT_MAX - 1 - literal->string_len) {
         diag_error_at(literal->loc, "character string literal is too long");
         return literal;
     }
+    if (literal->string_wide != token->wide) {
+        if (!literal->string_wide)
+            string_promote_wide(literal);
+        if (!token->wide)
+            string_token_promote_wide(token, literal->loc);
+    }
     len = literal->string_len + token->len;
-    data = arena_alloc((size_t)(len > 0 ? len : 1));
+    data = arena_alloc((size_t)(len > 0 ? len : 1) * sizeof(*data));
     if (literal->string_len > 0)
-        memcpy(data, literal->string_data, (size_t)literal->string_len);
+        memcpy(data, literal->string_data,
+               (size_t)literal->string_len * sizeof(*data));
     if (token->len > 0)
-        memcpy(data + literal->string_len, token->data, (size_t)token->len);
+        memcpy(data + literal->string_len, token->data,
+               (size_t)token->len * sizeof(*data));
     literal->string_data = data;
     literal->string_len = len;
     return literal;

@@ -1,10 +1,12 @@
 # xcc
 
 A C89 compiler written from scratch, targeting x86-64 (System V ABI, Linux).
-It emits AT&T-syntax assembly and hands assembling/linking off to `gcc`.
+It emits AT&T-syntax assembly and, in driver mode, hands assembling/linking off
+to `${CC:-cc}`.
 
-xcc is a `cc1`-style **compiler**, not a driver: normally one `.c` in and one
-`.s` out; `-E` instead emits normalized, marker-free preprocessed C.
+xcc can compile and link one or more translation units directly. Use `-S` for
+assembly output, `-c` for object output, and `-E` for normalized, marker-free
+preprocessed C.
 
 ## Quickstart
 
@@ -17,8 +19,10 @@ echo $?   # -> 13
 Or against files:
 
 ```sh
-./xcc program.c -o program.s
-gcc program.s -o program
+./xcc main.c helper.c -o program
+./program
+
+./xcc -S program.c -o program.s
 ```
 
 ## Examples
@@ -39,8 +43,8 @@ acceptance test suite.
 
 | Supported | Not yet |
 | --- | --- |
-| `char`, `short`, `int`, `long`, `float`, `double`, `void`, pointers (`*`, `&`, dereference) | `#line` |
-| object/function-like `#define`, `#undef`, rescanning, `#`, `##`, and conditionals | multiple translation units |
+| `char`, `short`, `int`, `long`, `float`, `double`, `void`, pointers (`*`, `&`, dereference) | |
+| object/function-like `#define`, `#undef`, rescanning, `#`, `##`, conditionals, and `#line` | |
 | `#error` diagnostics | |
 | `#pragma once`, `#pragma message`; unknown pragmas ignored | |
 | marker-free preprocessing-only output with `-E` | |
@@ -57,12 +61,12 @@ acceptance test suite.
 | scalar brace init `int x = {3};`, `int *p = {0};` | |
 | **arrays of pointers** (`int *p[3]`) with brace init (`{0}`, `{&a, …}`) | |
 | file-scope aggregate initialization (byte images, padding, and bit-fields) | |
-| string initialization of local/file-scope `char[]` objects | |
+| string initialization of local/file-scope `char[]` and `wchar_t[]` objects | |
 | file-scope pointer constants (`&object`, member addresses, string literals and addends) | |
 | casts `(type)expr`, `(void)expr` discard | |
 | `sizeof expr`, `sizeof(type)` (compile-time fold, `unsigned long`) | |
-| ordinary character constants (escapes and implementation-defined multi-character packing) | wide character and string literals |
-| ordinary string literals in expressions (escapes, concatenation, embedded NUL) | |
+| ordinary and wide character constants (escapes, UTF-8 source characters, and ordinary multi-character packing) | |
+| ordinary and wide string literals (escapes, embedded NUL, and same- or mixed-width concatenation) | |
 | decimal `float`/`double`/`long double` literals; scalar floating arithmetic, comparisons, casts, storage, static initialization, and SysV calls/returns | |
 | function calls (prototyped arg checking, void `*` conversions) | |
 | `if` / `else`, `while`, `do ... while`, `for`, blocks and null statements | |
@@ -77,6 +81,7 @@ acceptance test suite.
 | `int`/`long` promotions; `ptr - ptr` → `long` | |
 | warnings (`implicit` decl, unprototyped calls, `char` overflow, …) | |
 | `-W` / `-Wno-` / `-Wall` / `-Werror` CLI flags (`--help-warnings`) | |
+| driver mode for multiple translation units, `-S`, `-c`, and final executable linking | |
 | `file:line:col` diagnostics, carets, `note:` spans, color (`auto`) | |
 | **`typedef`** (scoped names, declarator application) | |
 | **`struct`** (tagged or anonymous, forward-decl, layout), **`.` / `->`**, struct assign (`LIR_MEMCPY`), bitfields | |
@@ -133,6 +138,13 @@ prerequisite.
 > pack up to four decoded bytes from left to right (`'ab' == 0x6162`); this is
 > xcc's implementation-defined C89 behavior.
 >
+> **Literal encoding:** xcc treats source and ordinary string literals as
+> UTF-8. Wide literals use the implementation header's 32-bit `wchar_t` and
+> encode each UTF-8 source character as one Unicode scalar value. Numeric
+> escapes specify one code-unit value directly rather than being UTF-8
+> transcoded. If adjacent ordinary and wide string tokens are mixed, the
+> ordinary UTF-8 bytes are promoted and the result is a wide string.
+>
 > `sizeof` is evaluated at compile time in sema (no runtime codegen). Array
 > operands do not decay; function, `void`, and incomplete types are rejected.
 > The operand of `sizeof expr` is not evaluated.
@@ -179,7 +191,8 @@ The native preprocessing-token input path is active, including C89 trigraphs,
 line splicing, comment replacement, object-like macros, `#undef`, replacement
 rescanning, and conditional inclusion. Function-like macros, argument prescan,
 stringification, token pasting, the C89 predefined macros, `__XCC__`, and
-command-line `-D`/`-U` are also implemented. Active `#error` directives emit
+command-line `-D`/`-U` are also implemented. `#line` updates logical diagnostic
+locations and file names. Active `#error` directives emit
 their unexpanded preprocessing-token messages. Unknown pragmas are ignored,
 `#pragma once` suppresses repeated physical-file inclusions, and macro-expanded
 `#pragma message` notes report build configuration on stderr. `-E` emits clean,
@@ -230,7 +243,6 @@ xcc intentionally does not yet implement the GNU `__typeof__` extension.
   source-level semantics and ABI interoperability are complete
 - function-pointer and nested-declarator conformance edge cases
 - complete C89 preprocessor support
-- multiple translation units and driver behavior
 - broaden the SysV AMD64 ABI beyond the current integer/pointer record subset
 - compile increasingly substantial C89 programs and libraries
 

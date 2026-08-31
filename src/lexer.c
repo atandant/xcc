@@ -38,12 +38,57 @@ static int hex_value(int ch)
     return ch - 'A' + 10;
 }
 
+static uint32_t decode_utf8(const char *text, size_t *index, size_t end,
+                            SourceLoc loc)
+{
+    unsigned first = (unsigned char)text[*index];
+    uint32_t value;
+    int extra;
+
+    if (first < 0x80)
+        return first;
+    if (first >= 0xc2 && first <= 0xdf) {
+        value = first & 0x1f;
+        extra = 1;
+    } else if (first >= 0xe0 && first <= 0xef) {
+        value = first & 0x0f;
+        extra = 2;
+    } else if (first >= 0xf0 && first <= 0xf4) {
+        value = first & 0x07;
+        extra = 3;
+    } else {
+        diag_error_at(loc, "invalid UTF-8 in wide literal");
+        return 0xfffd;
+    }
+    if (*index + (size_t)extra >= end) {
+        diag_error_at(loc, "incomplete UTF-8 in wide literal");
+        *index = end - 1;
+        return 0xfffd;
+    }
+    for (int i = 0; i < extra; i++) {
+        unsigned next = (unsigned char)text[++*index];
+        if (next < 0x80 || next > 0xbf) {
+            diag_error_at(loc, "invalid UTF-8 in wide literal");
+            return 0xfffd;
+        }
+        value = (value << 6) | (next & 0x3f);
+    }
+    if ((extra == 2 && value < 0x800) ||
+        (extra == 3 && value < 0x10000) ||
+        (value >= 0xd800 && value <= 0xdfff) || value > 0x10ffff) {
+        diag_error_at(loc, "invalid UTF-8 in wide literal");
+        return 0xfffd;
+    }
+    return value;
+}
+
 static StringToken *decode_quoted(CppToken token, int quote_offset)
 {
     StringToken *out = arena_alloc(sizeof(*out));
-    unsigned char *data = arena_alloc(token.len ? token.len : 1);
+    uint32_t *data = arena_alloc((token.len ? token.len : 1) * sizeof(*data));
     size_t end = token.len;
     int n = 0;
+    int wide = quote_offset != 0;
 
     if (end <= (size_t)quote_offset + 1 || token.text[end - 1] != token.text[quote_offset]) {
         diag_error_at(token.loc, token.text[quote_offset] == '\''
@@ -59,7 +104,8 @@ static StringToken *decode_quoted(CppToken token, int quote_offset)
         int c = (unsigned char)token.text[i];
 
         if (c != '\\') {
-            data[n++] = (unsigned char)c;
+            data[n++] = wide ? decode_utf8(token.text, &i, end, token.loc)
+                             : (uint32_t)(unsigned char)c;
             continue;
         }
         if (++i >= end) {
@@ -98,9 +144,9 @@ static StringToken *decode_quoted(CppToken token, int quote_offset)
                 else
                     value = ULONG_MAX;
             }
-            if (value > UCHAR_MAX)
+            if (value > (wide ? UINT_MAX : UCHAR_MAX))
                 diag_error_at(token.loc, "hex escape sequence out of range");
-            data[n++] = (unsigned char)value;
+            data[n++] = (uint32_t)value;
             break;
         default:
             if (c >= '0' && c <= '7') {
@@ -113,9 +159,9 @@ static StringToken *decode_quoted(CppToken token, int quote_offset)
                 } while (digits < 3 && i < end &&
                          token.text[i] >= '0' && token.text[i] <= '7');
                 i--;
-                if (value > UCHAR_MAX)
+                if (value > (wide ? UINT_MAX : UCHAR_MAX))
                     diag_error_at(token.loc, "octal escape sequence out of range");
-                data[n++] = (unsigned char)value;
+                data[n++] = (uint32_t)value;
             } else {
                 diag_error_at(token.loc, "unknown escape sequence '\\%c'", c);
                 data[n++] = (unsigned char)c;
@@ -125,6 +171,7 @@ static StringToken *decode_quoted(CppToken token, int quote_offset)
     }
     out->data = data;
     out->len = n;
+    out->wide = wide;
     return out;
 }
 
@@ -336,13 +383,16 @@ int yylex(void)
             StringToken *decoded;
             unsigned long value = 0;
 
-            if (quote_offset)
-                diag_error_at(token.loc, "wide character constants are not yet supported");
             decoded = decode_quoted(token, quote_offset);
             if (decoded->len == 0)
                 diag_error_at(token.loc, "empty character constant");
-            else if (decoded->len > 4)
+            else if (quote_offset && decoded->len != 1)
+                diag_error_at(token.loc,
+                              "wide character constant must contain one character");
+            else if (!quote_offset && decoded->len > 4)
                 diag_error_at(token.loc, "character constant exceeds 4 bytes");
+            else if (quote_offset)
+                value = decoded->data[0];
             else
                 for (int i = 0; i < decoded->len; i++)
                     value = (value << 8) | decoded->data[i];
@@ -360,8 +410,6 @@ int yylex(void)
         }
         if (token.kind == CPP_STRING) {
             int quote_offset = token.text[0] == 'L' ? 1 : 0;
-            if (quote_offset)
-                diag_error_at(token.loc, "wide string literals are not yet supported");
             yylval.string = decode_quoted(token, quote_offset);
             return STRING;
         }

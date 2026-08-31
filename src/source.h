@@ -14,6 +14,8 @@ SourceFile *source_create(const unsigned char *bytes, size_t size,
 SourceFile *source_read(FILE *in, const char *name);
 SourceFile *source_include_view(const SourceFile *source, const char *name,
                                 SourceLoc included_from, int is_system_header);
+SourceFile *source_logical_view(const SourceFile *source, const char *name,
+                                int line_bias);
 const char *source_name(const SourceFile *source);
 int source_same_file(const SourceFile *left, const SourceFile *right);
 int source_matches_path(const SourceFile *source, const char *path);
