@@ -2,6 +2,7 @@
 #include "cpp/cpp.h"
 
 #include "cpp/expr.h"
+#include "cpp/include.h"
 #include "cpp/macro.h"
 
 #include "arena.h"
@@ -72,8 +73,7 @@ struct Cpp {
     Expansion *expansions;
     Replay *replay;
     Conditional *conditionals;
-    const char **include_dirs;
-    size_t include_dir_count;
+    CppIncludeResolver *include_resolver;
     int include_depth;
     OnceFile *once_files;
 };
@@ -242,17 +242,22 @@ static SourceFile *create_command_source(const CppAction *actions,
 Cpp *cpp_create(const SourceFile *source, const CppOptions *options)
 {
     Cpp *cpp = arena_alloc_zeroed(sizeof(*cpp));
+    CppIncludeOptions include_options = { 0 };
 
     cpp->input = create_input(source, NULL, NULL, 0, 1);
     cpp->macros = cpp_macros_create();
     cpp->include_depth = 1;
-    if (options && options->include_dir_count) {
-        size_t bytes = options->include_dir_count * sizeof(*cpp->include_dirs);
-
-        cpp->include_dirs = arena_alloc(bytes);
-        memcpy(cpp->include_dirs, options->include_dirs, bytes);
-        cpp->include_dir_count = options->include_dir_count;
+    if (options) {
+        include_options.quote_dirs = options->quote_dirs;
+        include_options.quote_dir_count = options->quote_dir_count;
+        include_options.include_dirs = options->include_dirs;
+        include_options.include_dir_count = options->include_dir_count;
+        include_options.system_dirs = options->system_dirs;
+        include_options.system_dir_count = options->system_dir_count;
+        include_options.resource_dir = options->resource_dir;
     }
+    cpp->include_resolver = cpp_include_resolver_create(source,
+                                                        &include_options);
     if (options && options->action_count) {
         SourceFile *commands = create_command_source(options->actions,
                                                      options->action_count);
@@ -616,6 +621,8 @@ static int parse_header_operand(const CppToken *tokens, size_t len,
         char *name;
 
         for (size_t i = 1; i + 1 < len; i++) {
+            if (token_is(&tokens[i], ">"))
+                return 0;
             if (tokens[i].leading_space)
                 name_len++;
             name_len += tokens[i].len;
@@ -637,87 +644,6 @@ static int parse_header_operand(const CppToken *tokens, size_t len,
         return 1;
     }
     return 0;
-}
-
-static char *source_directory(const SourceFile *source)
-{
-    const char *name = source_name(source);
-    const char *slash;
-
-    if (name[0] == '<')
-        return copy_text(".", 1);
-    slash = strrchr(name, '/');
-    if (!slash)
-        return copy_text(".", 1);
-    if (slash == name)
-        return copy_text("/", 1);
-    return copy_text(name, (size_t)(slash - name));
-}
-
-static char *join_path(const char *directory, const char *name)
-{
-    size_t dir_len = strlen(directory);
-    size_t name_len = strlen(name);
-    int separator = dir_len != 0 && directory[dir_len - 1] != '/';
-    char *path = malloc(dir_len + (size_t)separator + name_len + 1);
-
-    if (!path)
-        diag_fatal("out of memory searching for header");
-    memcpy(path, directory, dir_len);
-    if (separator)
-        path[dir_len++] = '/';
-    memcpy(path + dir_len, name, name_len + 1);
-    return path;
-}
-
-static SourceFile *try_header(CppToken operand, const char *path,
-                              int *hard_error)
-{
-    FILE *file = fopen(path, "rb");
-    SourceFile *source;
-
-    if (!file) {
-        if (errno != ENOENT && errno != ENOTDIR) {
-            diag_error_at(operand.loc, "cannot open header '%s': %s",
-                          path, strerror(errno));
-            *hard_error = 1;
-        }
-        return NULL;
-    }
-    source = source_read(file, path);
-    fclose(file);
-    return source;
-}
-
-static SourceFile *find_header(Cpp *cpp, CppToken operand, const char *name,
-                               int quoted)
-{
-    SourceFile *source;
-    int hard_error = 0;
-
-    if (name[0] == '/')
-        return try_header(operand, name, &hard_error);
-    if (quoted) {
-        char *directory = source_directory(cpp->input->source);
-        char *path = join_path(directory, name);
-
-        source = try_header(operand, path, &hard_error);
-        free(path);
-        free(directory);
-        if (source || hard_error)
-            return source;
-    }
-    for (size_t i = 0; i < cpp->include_dir_count; i++) {
-        char *path = join_path(cpp->include_dirs[i], name);
-
-        source = try_header(operand, path, &hard_error);
-        free(path);
-        if (source || hard_error)
-            return source;
-    }
-    if (!hard_error)
-        diag_error_at(operand.loc, "header '%s' not found", name);
-    return NULL;
 }
 
 static int once_contains(const Cpp *cpp, const SourceFile *source)
@@ -761,7 +687,8 @@ static void handle_include(Cpp *cpp, CppToken directive)
             return;
         }
     }
-    source = find_header(cpp, operand, name, quoted);
+    source = cpp_include_resolve(cpp->include_resolver, cpp->input->source,
+                                 name, quoted, operand.loc);
     if (source && !once_contains(cpp, source)) {
         if (cpp->include_depth >= CPP_INCLUDE_DEPTH_LIMIT) {
             diag_error_at(operand.loc, "maximum include depth of %d exceeded",

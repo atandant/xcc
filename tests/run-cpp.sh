@@ -26,6 +26,8 @@ for src in "$DIR"/*.c; do
     expected_warning=$(sed -n 's@^/[*] expect-warning: \(.*\) [*]/$@\1@p' "$src" | sed -n '1p')
     expected_no_note=$(sed -n 's@^/[*] expect-no-note: \(.*\) [*]/$@\1@p' "$src" | sed -n '1p')
     expected_no_warning=$(sed -n 's@^/[*] expect-no-warning: \(.*\) [*]/$@\1@p' "$src" | sed -n '1p')
+    expected_include=$(sed -n 's@^/[*] expect-include: \(.*\) [*]/$@\1@p' "$src" | sed -n '1p')
+    expected_include_count=$(sed -n 's@^/[*] expect-include-count: \([0-9][0-9]*\) [*]/$@\1@p' "$src" | sed -n '1p')
     cpp_flags=$(sed -n 's@^/[*] cpp-flags: \(.*\) [*]/$@\1@p' "$src" | sed -n '1p')
     source_date_epoch=$(sed -n 's@^/[*] source-date-epoch: \([0-9][0-9]*\) [*]/$@\1@p' "$src" | sed -n '1p')
     pragma_identity_fixture=$(sed -n 's@^/[*] pragma-identity-fixture [*]/$@yes@p' "$src" | sed -n '1p')
@@ -101,8 +103,21 @@ for src in "$DIR"/*.c; do
             fail=$((fail + 1))
         elif grep ': error: ' "$TMP/err" | sed 's/^.*: error: //' |
              grep -Fx "$expected_err" > /dev/null; then
-            echo "ok   cpp/$file -> xcc error"
-            pass=$((pass + 1))
+            include_count=$(grep -c '^In file included from ' "$TMP/err")
+            if [ -n "$expected_include" ] &&
+               ! grep -Fx "$expected_include" "$TMP/err" > /dev/null; then
+                echo "FAIL cpp/$file: expected include trace '$expected_include'"
+                sed 's/^/      /' "$TMP/err"
+                fail=$((fail + 1))
+            elif [ -n "$expected_include_count" ] &&
+                 [ "$include_count" -ne "$expected_include_count" ]; then
+                echo "FAIL cpp/$file: expected $expected_include_count include trace lines, got $include_count"
+                sed 's/^/      /' "$TMP/err"
+                fail=$((fail + 1))
+            else
+                echo "ok   cpp/$file -> xcc error"
+                pass=$((pass + 1))
+            fi
         else
             echo "FAIL cpp/$file: expected primary error '$expected_err'"
             sed 's/^/      /' "$TMP/err"

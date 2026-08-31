@@ -43,8 +43,13 @@ typedef struct {
 } CppAction;
 
 typedef struct {
+    const char **quote_dirs;
+    size_t quote_dir_count;
     const char **include_dirs;
     size_t include_dir_count;
+    const char **system_dirs;
+    size_t system_dir_count;
+    const char *resource_dir;
     const CppAction *actions;
     size_t action_count;
 } CppOptions;

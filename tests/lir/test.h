@@ -59,6 +59,8 @@ void test_copy_prop_f80_self_move(void);
 void test_cfg_simplify_forwarding(void);
 void test_cfg_simplify_merge_unreachable(void);
 void test_dom_chk_sparse(void);
+void test_regalloc_two_address_affinity(void);
+void test_emit_direct_register_store(void);
 void test_long_double_type_foundation(void);
 void test_x87_runtime(void);
 

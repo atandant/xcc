@@ -18,6 +18,9 @@ struct SourceFile {
     dev_t device;
     ino_t inode;
     const char *canonical_path;
+    SourceLoc included_from;
+    int has_include_origin;
+    int is_system_header;
     unsigned char *bytes;
     size_t size;
     char **lines;
@@ -119,6 +122,19 @@ SourceFile *source_read(FILE *in, const char *name)
     return source;
 }
 
+SourceFile *source_include_view(const SourceFile *source, const char *name,
+                                SourceLoc included_from, int is_system_header)
+{
+    SourceFile *view = arena_alloc(sizeof(*view));
+
+    *view = *source;
+    view->name = arena_strdup(name);
+    view->included_from = included_from;
+    view->has_include_origin = 1;
+    view->is_system_header = is_system_header;
+    return view;
+}
+
 const char *source_name(const SourceFile *source)
 {
     return source ? source->name : "<unknown>";
@@ -134,6 +150,40 @@ int source_same_file(const SourceFile *left, const SourceFile *right)
         return left->device == right->device && left->inode == right->inode;
     return left->canonical_path && right->canonical_path &&
            strcmp(left->canonical_path, right->canonical_path) == 0;
+}
+
+int source_matches_path(const SourceFile *source, const char *path)
+{
+    struct stat status;
+    char *canonical;
+    int matches = 0;
+
+    if (!source || !path)
+        return 0;
+    if (source->has_stat_identity && stat(path, &status) == 0)
+        return source->device == status.st_dev && source->inode == status.st_ino;
+    if (!source->canonical_path)
+        return 0;
+    canonical = realpath(path, NULL);
+    if (canonical) {
+        matches = strcmp(source->canonical_path, canonical) == 0;
+        free(canonical);
+    }
+    return matches;
+}
+
+int source_include_origin(const SourceFile *source, SourceLoc *out)
+{
+    if (!source || !source->has_include_origin)
+        return 0;
+    if (out)
+        *out = source->included_from;
+    return 1;
+}
+
+int source_is_system_header(const SourceFile *source)
+{
+    return source && source->is_system_header;
 }
 
 const unsigned char *source_bytes(const SourceFile *source)

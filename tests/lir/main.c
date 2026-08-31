@@ -21,6 +21,8 @@ int main(void)
         {"cfg-simplify-forwarding",test_cfg_simplify_forwarding},
         {"cfg-simplify-merge-unreachable",test_cfg_simplify_merge_unreachable},
         {"dom-chk-sparse",test_dom_chk_sparse},
+        {"regalloc-two-address-affinity",test_regalloc_two_address_affinity},
+        {"emit-direct-register-store",test_emit_direct_register_store},
         {"long-double-type-foundation",test_long_double_type_foundation},
         {"x87-runtime",test_x87_runtime},
     };

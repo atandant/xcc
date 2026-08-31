@@ -106,10 +106,22 @@ static void diag_emit_caret(SourceLoc loc)
     fputc('\n', stderr);
 }
 
+static void diag_emit_include_chain(const SourceFile *source)
+{
+    SourceLoc origin;
+
+    if (!source_include_origin(source, &origin))
+        return;
+    diag_emit_include_chain(origin.file);
+    fprintf(stderr, "In file included from %s:%d:%d:\n",
+            source_name(origin.file), origin.line, origin.col);
+}
+
 static void diag_vemit_at(SourceLoc loc, const char *kind, const char *sgr_kind,
                           const char *fmt, va_list ap)
 {
     diag_ensure_colors();
+    diag_emit_include_chain(loc.file);
 
     fprintf(stderr, "%s%s:%d:%d:%s ", sgr_bold, source_name(loc.file),
             loc.line, loc.col, sgr_reset);
@@ -329,7 +341,7 @@ void diag_warn(DiagWarnId id, SourceLoc loc, const char *fmt, ...)
 {
     va_list ap;
 
-    if (!diag_warn_enabled(id))
+    if (!diag_warn_enabled(id) || source_is_system_header(loc.file))
         return;
 
     va_start(ap, fmt);

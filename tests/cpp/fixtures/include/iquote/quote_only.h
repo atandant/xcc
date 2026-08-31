@@ -1,0 +1,1 @@
+#define QUOTE_ONLY_VALUE 31

@@ -800,15 +800,16 @@ static int emit_load_scalar_to_phys(EmitCtx *c, X86MemRef ref, int bytes,
     }
 }
 
-static int emit_store_scalar_from_rax(EmitCtx *c, X86MemRef ref, int bytes)
+static int emit_store_scalar_from_phys(EmitCtx *c, X86MemRef ref, int bytes,
+                                       int phys)
 {
     const char *src;
 
     switch (bytes) {
-    case 1: src = "%al"; break;
-    case 2: src = "%ax"; break;
-    case 4: src = "%eax"; break;
-    case 8: src = "%rax"; break;
+    case 1: src = reg8_name(phys); break;
+    case 2: src = reg16_name(phys); break;
+    case 4: src = reg32_name(phys); break;
+    case 8: src = reg64_name(phys); break;
     default: return 0;
     }
     fprintf(c->out, "  mov %s, ", src);
@@ -1376,6 +1377,8 @@ static void emit_instr(EmitCtx *c, Instr *ins)
         X86MemRef ref;
         int scalar = ins->aux == 1 || ins->aux == 2 ||
                      ins->aux == 4 || ins->aux == 8;
+        int source = ins->b.kind == OPND_VREG
+            ? vreg_phys(c, ins->b.u.vreg) : PHYS_NONE;
 
         if (ins->b.kind == OPND_VREG &&
             lir_vreg_type(c->lf, ins->b.u.vreg) == LIR_TYPE_F80) {
@@ -1402,10 +1405,15 @@ static void emit_instr(EmitCtx *c, Instr *ins)
             fprintf(c->out, "\n");
             return;
         }
+        if (scalar && source >= 0 && source < PHYS_XMM0) {
+            ref = prepare_mem_ref(c, ins->a);
+            emit_store_scalar_from_phys(c, ref, ins->aux, source);
+            return;
+        }
         load_operand(c, ins->b, "%rax", ins->w);
         ref = prepare_mem_ref(c, ins->a);
         if (scalar)
-            emit_store_scalar_from_rax(c, ref, ins->aux);
+            emit_store_scalar_from_phys(c, ref, ins->aux, PHYS_RAX);
         else
             emit_store_rax_partial(c, ref, ins->aux);
         return;

@@ -9,7 +9,7 @@ BIN   = xcc
 
 # Hand-written sources
 SRCS = src/main.c src/arena.c src/source.c src/cpp/cpp.c src/cpp/macro.c \
-       src/cpp/expr.c src/lexer.c \
+       src/cpp/expr.c src/cpp/include.c src/lexer.c \
        src/ast.c src/type.c src/diag.c src/sema.c \
        src/sema_scope.c src/sema_functab.c src/sema_typedef.c src/sema_struct.c \
        src/sema_enum.c src/abi_sysv_amd64.c \
@@ -32,7 +32,7 @@ LIR_TEST_SRCS = tests/lir/main.c tests/lir/test.c \
                 tests/lir/algebraic.c tests/lir/strength_reduce.c \
                 tests/lir/simplify_conv.c tests/lir/dce.c \
                 tests/lir/licm.c tests/lir/mem2reg.c tests/lir/copy_prop.c \
-                tests/lir/cfg.c \
+                tests/lir/cfg.c tests/lir/regalloc.c \
                 tests/lir/x87.c
 LIR_TEST_OBJS = $(BUILD)/arena.o $(BUILD)/source.o $(BUILD)/diag.o $(BUILD)/lir.o \
                 $(BUILD)/lir_cfg.o $(BUILD)/lir_dom.o $(BUILD)/lir_mem2reg.o \

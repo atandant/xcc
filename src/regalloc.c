@@ -272,6 +272,97 @@ static int mask_count(unsigned mask)
     return count;
 }
 
+/* Return the input that the target can consume destructively in dst.  When
+   that input dies here, assigning it and dst the same register avoids the
+   otherwise mandatory copy imposed by x86's two-address instructions. */
+static int coalesce_source(const Instr *ins)
+{
+    if (ins->a.kind != OPND_VREG || ins->dst == LIR_NO_VREG)
+        return LIR_NO_VREG;
+
+    switch (ins->op) {
+    case LIR_MOV:
+    case LIR_ADD:
+    case LIR_SUB:
+    case LIR_MUL:
+    case LIR_AND:
+    case LIR_XOR:
+    case LIR_OR:
+    case LIR_SHL:
+    case LIR_SHR:
+    case LIR_SAR:
+    case LIR_NEG:
+    case LIR_FADD:
+    case LIR_FSUB:
+    case LIR_FMUL:
+    case LIR_FDIV:
+    case LIR_FNEG:
+        return ins->a.u.vreg;
+    default:
+        return LIR_NO_VREG;
+    }
+}
+
+static int is_register_affinity(const LirFn *lf, const Liveness *lv,
+                                const Instr *ins, int *src_out)
+{
+    int src = coalesce_source(ins);
+
+    if (src == LIR_NO_VREG ||
+        lv->by_vreg[ins->dst].start != ins->position ||
+        lv->by_vreg[src].end != ins->position ||
+        lir_vreg_precolor(lf, ins->dst) >= 0 ||
+        lir_vreg_precolor(lf, src) >= 0 ||
+        lir_vreg_class(lf, ins->dst) != lir_vreg_class(lf, src))
+        return 0;
+    *src_out = src;
+    return 1;
+}
+
+/* Improve two-address placement after linear scan, without perturbing the
+   scan's spill decisions.  Restrict recoloring to values with one incoming
+   affinity and no outgoing affinity, so satisfying this edge cannot break a
+   different already-coalesced edge. */
+static void improve_register_affinities(const LirFn *lf, const Liveness *lv,
+                                        const TargetDesc *td, int *reg)
+{
+    int nv = lf->nvreg;
+    int *incoming = arena_alloc_zeroed((size_t)nv * sizeof(*incoming));
+    int *outgoing = arena_alloc_zeroed((size_t)nv * sizeof(*outgoing));
+
+    for (int b = 0; b < lf->nblocks; b++) {
+        const LirBlock *block = &lf->blocks[b];
+        for (int i = 0; i < block->ninstr; i++) {
+            const Instr *ins = &block->instrs[i];
+            int src;
+
+            if (!is_register_affinity(lf, lv, ins, &src))
+                continue;
+            incoming[ins->dst]++;
+            outgoing[src]++;
+        }
+    }
+
+    for (int b = 0; b < lf->nblocks; b++) {
+        const LirBlock *block = &lf->blocks[b];
+        for (int i = 0; i < block->ninstr; i++) {
+            const Instr *ins = &block->instrs[i];
+            int src;
+
+            if (!is_register_affinity(lf, lv, ins, &src) ||
+                incoming[ins->dst] != 1 || outgoing[ins->dst] != 0 ||
+                reg[src] < 0 || reg[ins->dst] < 0 ||
+                reg[src] == reg[ins->dst])
+                continue;
+            int preferred = reg[src];
+            int cross_call = interval_spans_call(lf, &lv->by_vreg[ins->dst]);
+            if (reg_ok_for_interval(td, preferred, cross_call) &&
+                phys_available(lv, reg, nv, ins->dst, preferred, src))
+                reg[ins->dst] = preferred;
+        }
+    }
+}
+
 void regalloc_trivial(LirFn *lf, Function *fn, AllocResult *out)
 {
     int max_out = lir_max_outgoing(lf);
@@ -437,6 +528,8 @@ static void regalloc_pass(LirFn *lf, Function *fn, const Liveness *lv,
         reg[v] = r;
         active_insert(active, &nactive, v, end);
     }
+
+    improve_register_affinities(lf, lv, td, reg);
 
     unsigned used_callee = 0;
     for (int i = 0; i < nv; i++) {
@@ -770,7 +863,8 @@ static int single_overlap_position(const LiveInterval *a,
     return found;
 }
 
-static int move_connects_at(const LirFn *lf, int a, int b, int position)
+static int coalescing_instruction_at(const LirFn *lf, int a, int b,
+                                     int position)
 {
     for (int block = 0; block < lf->nblocks; block++) {
         const LirBlock *bb = &lf->blocks[block];
@@ -778,11 +872,11 @@ static int move_connects_at(const LirFn *lf, int a, int b, int position)
         for (int i = 0; i < bb->ninstr; i++) {
             const Instr *ins = &bb->instrs[i];
 
-            if (ins->position != position || ins->op != LIR_MOV ||
-                ins->a.kind != OPND_VREG)
+            if (ins->position != position)
                 continue;
-            if ((ins->dst == a && ins->a.u.vreg == b) ||
-                (ins->dst == b && ins->a.u.vreg == a))
+            int src = coalesce_source(ins);
+            if ((ins->dst == a && src == b) ||
+                (ins->dst == b && src == a))
                 return 1;
         }
     }
@@ -848,7 +942,7 @@ void regalloc_verify(const LirFn *lf, const Liveness *lv,
                 continue;
             if (!single_overlap_position(&lv->by_vreg[u], &lv->by_vreg[v],
                                          &position) ||
-                !move_connects_at(lf, u, v, position))
+                !coalescing_instruction_at(lf, u, v, position))
                 diag_fatal("register allocation overlaps v%d and v%d", u, v);
         }
     }

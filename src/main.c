@@ -36,6 +36,9 @@ static void usage(FILE *f)
         "  -o out      output file, or - / omitted for stdout\n"
         "  -E          preprocess only; emit normalized, marker-free C\n"
         "  -I dir      add dir to the header search path\n"
+        "  -iquote dir search dir for quoted includes only\n"
+        "  -isystem dir  add dir as a system header search path\n"
+        "  -nostdinc   do not search xcc's bundled headers\n"
         "  -D name[=value]  define a preprocessing macro\n"
         "  -U name     undefine a preprocessing macro\n"
         "  --help      show this help\n"
@@ -120,11 +123,19 @@ int main(int argc, char **argv)
     int lir_dump_mode = 0;
     int verify_lir = 1;
     int preprocess_only = 0;
+    int no_stdinc = 0;
     FILE *in = stdin;
     SourceFile *source;
+    const char **quote_dirs = NULL;
+    size_t quote_dir_count = 0;
+    size_t quote_dir_cap = 0;
     const char **include_dirs = NULL;
     size_t include_dir_count = 0;
     size_t include_dir_cap = 0;
+    const char **system_dirs = NULL;
+    size_t system_dir_count = 0;
+    size_t system_dir_cap = 0;
+    const char *resource_dir = NULL;
     CppAction *actions = NULL;
     size_t action_count = 0;
     size_t action_cap = 0;
@@ -141,6 +152,8 @@ int main(int argc, char **argv)
             return 0;
         } else if (strcmp(argv[i], "-E") == 0) {
             preprocess_only = 1;
+        } else if (strcmp(argv[i], "-nostdinc") == 0) {
+            no_stdinc = 1;
         } else if (strcmp(argv[i], "--xcc-dump-raw-lir") == 0) {
             lir_dump_mode = 1;
         } else if (strcmp(argv[i], "--xcc-dump-lir") == 0) {
@@ -168,6 +181,30 @@ int main(int argc, char **argv)
                 return 1;
             }
             outpath = argv[++i];
+        } else if (strncmp(argv[i], "-iquote", 7) == 0) {
+            const char *dir = argv[i] + 7;
+
+            if (!*dir) {
+                if (i + 1 >= argc) {
+                    diag_error("-iquote requires an argument");
+                    return 1;
+                }
+                dir = argv[++i];
+            }
+            append_include_dir(&quote_dirs, &quote_dir_count,
+                               &quote_dir_cap, dir);
+        } else if (strncmp(argv[i], "-isystem", 8) == 0) {
+            const char *dir = argv[i] + 8;
+
+            if (!*dir) {
+                if (i + 1 >= argc) {
+                    diag_error("-isystem requires an argument");
+                    return 1;
+                }
+                dir = argv[++i];
+            }
+            append_include_dir(&system_dirs, &system_dir_count,
+                               &system_dir_cap, dir);
         } else if (strncmp(argv[i], "-I", 2) == 0) {
             const char *dir = argv[i] + 2;
 
@@ -211,13 +248,8 @@ int main(int argc, char **argv)
         }
     }
 
-    {
-        const char *resource_dir = resource_include_dir();
-
-        if (resource_dir)
-            append_include_dir(&include_dirs, &include_dir_count,
-                               &include_dir_cap, resource_dir);
-    }
+    if (!no_stdinc)
+        resource_dir = resource_include_dir();
 
     if (inpath && strcmp(inpath, "-") != 0) {
         in = fopen(inpath, "rb");
@@ -232,8 +264,13 @@ int main(int argc, char **argv)
         fclose(in);
     {
         CppOptions cpp_options = {
+            .quote_dirs = quote_dirs,
+            .quote_dir_count = quote_dir_count,
             .include_dirs = include_dirs,
             .include_dir_count = include_dir_count,
+            .system_dirs = system_dirs,
+            .system_dir_count = system_dir_count,
+            .resource_dir = resource_dir,
             .actions = actions,
             .action_count = action_count,
         };
@@ -245,7 +282,9 @@ int main(int argc, char **argv)
             if (lir_dump_mode != 0) {
                 diag_error("-E cannot be combined with LIR dump options");
                 free(actions);
+                free(quote_dirs);
                 free(include_dirs);
+                free(system_dirs);
                 return 1;
             }
             if (outpath && strcmp(outpath, "-") != 0) {
@@ -253,7 +292,9 @@ int main(int argc, char **argv)
                 if (!out) {
                     diag_error("cannot open '%s' for writing", outpath);
                     free(actions);
+                    free(quote_dirs);
                     free(include_dirs);
+                    free(system_dirs);
                     return 1;
                 }
             }
@@ -263,14 +304,18 @@ int main(int argc, char **argv)
                 ok = 0;
             }
             free(actions);
+            free(quote_dirs);
             free(include_dirs);
+            free(system_dirs);
             arena_free_all();
             return ok && diag_error_count == 0 ? 0 : 1;
         }
         lexer_set_source(source, &cpp_options);
     }
     free(actions);
+    free(quote_dirs);
     free(include_dirs);
+    free(system_dirs);
 
     typedef_reset();
     struct_tag_reset();
