@@ -311,7 +311,9 @@ static Type *record_tag_define(char *tag, StructField *fields, int is_union,
                                SourceLoc loc)
 {
     int mismatch = 0;
-    StructTagEntry *e = struct_tag_entry(tag, is_union, loc, 1, &mismatch);
+    StructTagEntry *e = tag
+                      ? struct_tag_entry(tag, is_union, loc, 1, &mismatch)
+                      : NULL;
     Type *ty = (e && !mismatch) ? e->ty : NULL;
     const char *kw = is_union ? "union" : "struct";
     Member *members;
@@ -320,8 +322,13 @@ static Type *record_tag_define(char *tag, StructField *fields, int is_union,
 
     members = fields_to_members(fields, &nmembers, loc);
     for (i = 0; i < nmembers; i++) {
-        if (!members[i].is_bitfield && !member_type_ok(members[i].ty, loc))
-            return ty ? ty : record_tag_forward(tag, is_union, loc);
+        if (!members[i].is_bitfield && !member_type_ok(members[i].ty, loc)) {
+            if (ty)
+                return ty;
+            if (tag)
+                return record_tag_forward(tag, is_union, loc);
+            return struct_type_new(NULL, is_union);
+        }
     }
 
     if (ty && type_struct_is_complete(ty)) {
@@ -341,7 +348,8 @@ static Type *record_tag_define(char *tag, StructField *fields, int is_union,
 
     if (!ty) {
         ty = struct_type_new(tag, is_union);
-        struct_tag_register(tag, ty, is_union, loc);
+        if (tag)
+            struct_tag_register(tag, ty, is_union, loc);
     }
 
     ty->members = members;

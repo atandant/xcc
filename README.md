@@ -79,12 +79,12 @@ acceptance test suite.
 | `-W` / `-Wno-` / `-Wall` / `-Werror` CLI flags (`--help-warnings`) | |
 | `file:line:col` diagnostics, carets, `note:` spans, color (`auto`) | |
 | **`typedef`** (scoped names, declarator application) | |
-| **`struct`** (tagged, forward-decl, layout), **`.` / `->`**, struct assign (`LIR_MEMCPY`), bitfields | |
-| **`union`** (tagged, forward-decl, overlap layout), member access, union assign | |
+| **`struct`** (tagged or anonymous, forward-decl, layout), **`.` / `->`**, struct assign (`LIR_MEMCPY`), bitfields | |
+| **`union`** (tagged or anonymous, forward-decl, overlap layout), member access, union assign | |
 | **`enum`** (tagged/anonymous, enumerator constants, enum variables as `int`) | |
 | `struct S *` / `union U *` parameters and returns, struct/union by-value param/return | |
 | file- and block-scope `extern`/`static`, block-scope `auto`/`register`, and `register` parameters | |
-| Compiler headers such as `stdio.h` | __typeof 
+| Compiler headers such as `stdio.h` | GNU `__typeof__` |
 | |  |
 
 `typedef`, `extern`, and `static` are supported at file and block scope.
@@ -223,9 +223,10 @@ make clean
 The generated parser source is produced into `build/` and is not committed.
 
 The [`repos/`](repos/) checks document reproducible builds of selected
-third-party C89 code. For example, `./repos/build_jsmn.sh`. 
-fetch pinned sources, compile smoke tests with xcc,
-link with `gcc`, and run them.
+third-party C code. `./repos/build_jsmn.sh` and `./repos/build_uthash.sh` fetch
+pinned sources, compile checks with xcc, link with `${CC:-cc}`, and run them.
+uthash is compiled with its supported `NO_DECLTYPE` portability mode because
+xcc intentionally does not yet implement the GNU `__typeof__` extension.
 
 ## Roadmap
 

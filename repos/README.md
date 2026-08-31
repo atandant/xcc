@@ -26,3 +26,18 @@ header must both be on the include path:
 ./xcc -Iinclude -Irepos/jsmn program.c -o program.s
 cc program.s -o program
 ```
+
+## uthash
+
+From the xcc repository root:
+
+```sh
+./repos/fetch_uthash.sh
+./repos/build_uthash.sh
+```
+
+The pinned uthash 2.3.0 checks cover integer, compound, and pointer keys, along
+with insertion, lookup, iteration, and deletion. The script defines
+`NO_DECLTYPE=1`, uthash's upstream portability mode for compilers without GNU
+`__typeof__`; no patch to the downloaded project is required. The compound-key
+and pointer-key checks also exercise xcc's anonymous struct typedef support.

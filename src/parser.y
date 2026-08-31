@@ -350,6 +350,8 @@ struct_specifier:
         { $$ = struct_tag_forward($2, LOC(@1)); }
   | STRUCT struct_tag '{' struct_declaration_list '}'
         { $$ = struct_tag_define($2, $4, LOC(@1)); }
+  | STRUCT '{' struct_declaration_list '}'
+        { $$ = struct_tag_define(NULL, $3, LOC(@1)); }
   ;
 
 union_specifier:
@@ -357,6 +359,8 @@ union_specifier:
         { $$ = union_tag_forward($2, LOC(@1)); }
   | UNION struct_tag '{' struct_declaration_list '}'
         { $$ = union_tag_define($2, $4, LOC(@1)); }
+  | UNION '{' struct_declaration_list '}'
+        { $$ = union_tag_define(NULL, $3, LOC(@1)); }
   ;
 
 enum_specifier:
