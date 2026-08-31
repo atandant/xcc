@@ -63,6 +63,7 @@ typedef enum { LIR_FP_NONE, LIR_FP_F32, LIR_FP_F64, LIR_FP_F80 } LirFloatWidth;
 
 typedef enum {
     LIR_TYPE_I64,
+    LIR_TYPE_I32,
     LIR_TYPE_F32,
     LIR_TYPE_F64,
     LIR_TYPE_F80,

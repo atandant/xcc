@@ -75,9 +75,15 @@ static void verify_operand(const LirFn *fn, int block, Operand operand)
         if (operand.u.mem.base != LIR_FP &&
             (operand.u.mem.base < 0 || operand.u.mem.base >= fn->nvreg))
             malformed(fn, block, "memory operand has an invalid base vreg");
+        if (operand.u.mem.base != LIR_FP &&
+            lir_vreg_type(fn, operand.u.mem.base) == LIR_TYPE_I32)
+            malformed(fn, block, "memory operand has an I32 base");
         if (operand.u.mem.index != LIR_NO_IDX &&
             (operand.u.mem.index < 0 || operand.u.mem.index >= fn->nvreg))
             malformed(fn, block, "memory operand has an invalid index vreg");
+        if (operand.u.mem.index != LIR_NO_IDX &&
+            lir_vreg_type(fn, operand.u.mem.index) == LIR_TYPE_I32)
+            malformed(fn, block, "memory operand has an I32 index");
     }
 }
 
@@ -85,6 +91,74 @@ static int operand_is_type(const LirFn *fn, Operand operand, LirType type)
 {
     return operand.kind == OPND_VREG &&
            lir_vreg_type(fn, operand.u.vreg) == type;
+}
+
+static void verify_wide_operand(const LirFn *fn, int block, Operand operand)
+{
+    if (operand.kind == OPND_VREG &&
+        lir_vreg_type(fn, operand.u.vreg) == LIR_TYPE_I32)
+        malformed(fn, block, "W8 instruction consumes an I32 value");
+}
+
+static int integer_binary_op(LirOp op)
+{
+    return op == LIR_ADD || op == LIR_SUB || op == LIR_MUL ||
+           op == LIR_DIV || op == LIR_MOD || op == LIR_AND ||
+           op == LIR_XOR || op == LIR_OR || op == LIR_SHL ||
+           op == LIR_SHR || op == LIR_SAR;
+}
+
+static void verify_integer_types(const LirFn *fn, int block, const Instr *ins)
+{
+    if (ins->op == LIR_MOV && ins->dst >= 0 &&
+        ins->a.kind == OPND_VREG &&
+        lir_vreg_type(fn, ins->dst) != lir_vreg_type(fn, ins->a.u.vreg))
+        malformed(fn, block, "move mixes value types");
+
+    if ((integer_binary_op(ins->op) || ins->op == LIR_NEG) &&
+        ins->w == LIR_W8) {
+        verify_wide_operand(fn, block, ins->a);
+        verify_wide_operand(fn, block, ins->b);
+        if (ins->dst >= 0 && lir_vreg_type(fn, ins->dst) == LIR_TYPE_I32)
+            malformed(fn, block, "W8 instruction defines an I32 value");
+    }
+
+    if (ins->op != LIR_CONV)
+        return;
+
+    switch (ins->conv) {
+    case CONV_ZEXT32:
+    case CONV_SEXT32_64:
+        if (!operand_is_type(fn, ins->a, LIR_TYPE_I32) ||
+            lir_vreg_type(fn, ins->dst) != LIR_TYPE_I64)
+            malformed(fn, block, "I32 widening conversion mixes value types");
+        break;
+    case CONV_TRUNC_LO32:
+        if (!operand_is_type(fn, ins->a, LIR_TYPE_I64) ||
+            lir_vreg_type(fn, ins->dst) != LIR_TYPE_I32)
+            malformed(fn, block, "I32 truncation conversion mixes value types");
+        break;
+    case CONV_SI32_F32:
+    case CONV_SI32_F64:
+    case CONV_UI32_F32:
+    case CONV_UI32_F64:
+    case CONV_SI32_F80:
+    case CONV_UI32_F80:
+        if (!operand_is_type(fn, ins->a, LIR_TYPE_I32))
+            malformed(fn, block, "I32 floating conversion has a non-I32 source");
+        break;
+    case CONV_F32_SI32:
+    case CONV_F64_SI32:
+    case CONV_F32_UI32:
+    case CONV_F64_UI32:
+    case CONV_F80_SI32:
+    case CONV_F80_UI32:
+        if (lir_vreg_type(fn, ins->dst) != LIR_TYPE_I32)
+            malformed(fn, block, "floating conversion has a non-I32 destination");
+        break;
+    default:
+        break;
+    }
 }
 
 static void verify_f80_instr(const LirFn *fn, int block, const Instr *ins)
@@ -135,7 +209,7 @@ static void verify_f80_instr(const LirFn *fn, int block, const Instr *ins)
     }
 
     if (ins->op == LIR_FSETCC && ins->fpw == LIR_FP_F80) {
-        if (ins->dst < 0 || lir_vreg_type(fn, ins->dst) != LIR_TYPE_I64 ||
+        if (ins->dst < 0 || lir_vreg_type(fn, ins->dst) != LIR_TYPE_I32 ||
             !operand_is_type(fn, ins->a, LIR_TYPE_F80) ||
             !operand_is_type(fn, ins->b, LIR_TYPE_F80))
             malformed(fn, block, "F80 comparison mixes value types");
@@ -156,6 +230,8 @@ static void verify_f80_instr(const LirFn *fn, int block, const Instr *ins)
         ins->conv == CONV_UI32_F80 || ins->conv == CONV_UI64_F80) {
         LirType source = ins->conv == CONV_F32_F80 ? LIR_TYPE_F32 :
                          ins->conv == CONV_F64_F80 ? LIR_TYPE_F64 :
+                         ins->conv == CONV_SI32_F80 ||
+                         ins->conv == CONV_UI32_F80 ? LIR_TYPE_I32 :
                          LIR_TYPE_I64;
         if (ins->dst < 0 || lir_vreg_type(fn, ins->dst) != LIR_TYPE_F80 ||
             !operand_is_type(fn, ins->a, source))
@@ -165,7 +241,8 @@ static void verify_f80_instr(const LirFn *fn, int block, const Instr *ins)
                ins->conv == CONV_F80_UI32 || ins->conv == CONV_F80_UI64) {
         LirType destination = ins->conv == CONV_F80_F32
             ? LIR_TYPE_F32 : ins->conv == CONV_F80_F64
-            ? LIR_TYPE_F64 : LIR_TYPE_I64;
+            ? LIR_TYPE_F64 : ins->conv == CONV_F80_SI32 ||
+              ins->conv == CONV_F80_UI32 ? LIR_TYPE_I32 : LIR_TYPE_I64;
         if (ins->dst < 0 || lir_vreg_type(fn, ins->dst) != destination ||
             !operand_is_type(fn, ins->a, LIR_TYPE_F80))
             malformed(fn, block, "conversion from F80 mixes value types");
@@ -227,10 +304,15 @@ void lir_cfg_verify(const LirFn *fn)
                 defined[ins->dst] = 1;
             }
             verify_f80_instr(fn, i, ins);
+            verify_integer_types(fn, i, ins);
         }
         if (block->term.kind == LIR_TERM_BR) {
             verify_operand(fn, i, block->term.a);
             verify_operand(fn, i, block->term.b);
+            if (block->term.fpw == LIR_FP_NONE && block->term.w == LIR_W8) {
+                verify_wide_operand(fn, i, block->term.a);
+                verify_wide_operand(fn, i, block->term.b);
+            }
             if (block->term.fpw == LIR_FP_F80 &&
                 (!operand_is_type(fn, block->term.a, LIR_TYPE_F80) ||
                  !operand_is_type(fn, block->term.b, LIR_TYPE_F80)))

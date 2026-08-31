@@ -6,7 +6,6 @@
 #include "lir_dce.h"
 #include "lir_licm.h"
 #include "lir_mem2reg.h"
-#include "lir_simplify_conv.h"
 #include "lir_strength_reduce.h"
 
 #define MAX_ROUNDS 4
@@ -27,7 +26,6 @@ void lir_optimize_function(LirFn *lf)
         changed |= lir_propagate_f80_copies(lf);
         changed |= lir_algebraic_simplify_function(lf);
         changed |= lir_strength_reduce_function(lf);
-        changed |= lir_simplify_conversions_function(lf);
         if (!changed)
             break;
     }

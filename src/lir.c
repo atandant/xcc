@@ -321,12 +321,16 @@ RegClass lir_vreg_class(const LirFn *fn, int vreg)
 
 int lir_type_storage_size(LirType type)
 {
-    return type == LIR_TYPE_F80 ? 16 : 8;
+    if (type == LIR_TYPE_F80)
+        return 16;
+    return type == LIR_TYPE_I32 ? 4 : 8;
 }
 
 int lir_type_storage_align(LirType type)
 {
-    return type == LIR_TYPE_F80 ? 16 : 8;
+    if (type == LIR_TYPE_F80)
+        return 16;
+    return type == LIR_TYPE_I32 ? 4 : 8;
 }
 
 void lir_precolor_vreg(LirFn *fn, int vreg, int phys)

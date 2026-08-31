@@ -17,7 +17,7 @@ SRCS = src/main.c src/arena.c src/source.c src/cpp/cpp.c src/cpp/macro.c \
        src/lir_opt.c src/lir_dom.c src/lir_mem2reg.c src/lir_copy_prop.c \
        src/lir_dce.c src/lir_licm.c \
        src/lir_algebraic_simplify.c src/lir_strength_reduce.c \
-       src/lir_simplify_conv.c src/codegen.c \
+       src/codegen.c \
        src/lir.c src/lir_cfg.c src/lower.c src/liveness.c src/regalloc.c src/emit_x86.c
 OBJS = $(patsubst src/%.c,$(BUILD)/%.o,$(SRCS))
 
@@ -30,7 +30,7 @@ DEPS = $(OBJS:.o=.d) $(GEN_OBJS:.o=.d)
 
 LIR_TEST_SRCS = tests/lir/main.c tests/lir/test.c \
                 tests/lir/algebraic.c tests/lir/strength_reduce.c \
-                tests/lir/simplify_conv.c tests/lir/dce.c \
+                tests/lir/dce.c \
                 tests/lir/licm.c tests/lir/mem2reg.c tests/lir/copy_prop.c \
                 tests/lir/cfg.c tests/lir/regalloc.c \
                 tests/lir/x87.c
@@ -38,7 +38,7 @@ LIR_TEST_OBJS = $(BUILD)/arena.o $(BUILD)/source.o $(BUILD)/diag.o $(BUILD)/lir.
                 $(BUILD)/lir_cfg.o $(BUILD)/lir_dom.o $(BUILD)/lir_mem2reg.o \
                 $(BUILD)/lir_copy_prop.o $(BUILD)/lir_dce.o $(BUILD)/lir_licm.o \
                 $(BUILD)/lir_algebraic_simplify.o $(BUILD)/lir_strength_reduce.o \
-                $(BUILD)/lir_simplify_conv.o $(BUILD)/type.o \
+                $(BUILD)/type.o \
                 $(BUILD)/abi_sysv_amd64.o $(BUILD)/liveness.o \
                 $(BUILD)/regalloc.o $(BUILD)/emit_x86.o
 

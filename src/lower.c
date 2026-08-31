@@ -101,8 +101,13 @@ static LirType floating_lir_type(Type *ty)
 
 static int fresh_type(LowerCtx *c, Type *ty)
 {
-    if (!type_is_floating(ty))
+    TypeScalarInfo si;
+
+    if (!type_is_floating(ty)) {
+        if (type_scalar_info(ty, &si) && si.is_integer && si.width <= 4)
+            return lir_new_vreg_type(c->lf, LIR_TYPE_I32);
         return lir_new_vreg_type(c->lf, LIR_TYPE_I64);
+    }
     return lir_new_vreg_type(c->lf, floating_lir_type(ty));
 }
 
@@ -118,6 +123,7 @@ static void emit_store_slot(LowerCtx *c, int src, Type *ty, int offset);
 static void lower_bitfield_store_off(LowerCtx *c, int struct_off, Member *m,
                                      int val, int is_volatile);
 static int lower_cast_value(LowerCtx *c, Node *n);
+static int emit_conv_value(LowerCtx *c, int src, ConvKind k);
 static int convert_value(LowerCtx *c, int v, Type *from, Type *to);
 
 static FrameLocal *param_frame_local(LowerCtx *c, int offset)
@@ -177,12 +183,12 @@ static void lower_params(LowerCtx *c)
             continue;
         (void)type_scalar_info(type_decay(p->ty), &si);
         if (si.width == 4) {
-            value = fresh(c);
+            value = lir_new_vreg_type(c->lf, LIR_TYPE_I32);
             emit(c, (Instr){
                 .op = LIR_CONV,
                 .dst = value,
                 .a = lir_vreg(raw),
-                .conv = si.is_signed ? CONV_TRUNC_LO32 : CONV_ZEXT32,
+                .conv = CONV_TRUNC_LO32,
             });
         } else {
             value = fresh(c);
@@ -305,22 +311,11 @@ static LirWidth load_lir_width(Type *ty)
 
 static int widen_loaded_value(LowerCtx *c, int v, Type *ty)
 {
-    if (load_lir_width(ty) == LIR_W8)
-        return v;
-    if (type_is_char(ty))
-        return v;
-    if (load_lir_width(ty) == LIR_W4 && !type_is_short(ty))
-        return v;
-    if (type_is_short(ty) && load_sign(ty) == LIR_SGN_S) {
-        int t = fresh(c);
-        emit(c, (Instr){
-            .op = LIR_CONV, .dst = t, .a = lir_vreg(v), .conv = CONV_SEXT16 });
-        v = t;
-    }
-    int dst = fresh(c);
-    emit(c, (Instr){
-        .op = LIR_CONV, .dst = dst, .a = lir_vreg(v), .conv = CONV_SEXT32_64 });
-    return dst;
+    (void)c;
+    (void)ty;
+    /* Loads narrower than long now produce I32 directly.  C integer
+       promotions change the interpretation, not these low 32 value bits. */
+    return v;
 }
 
 static int emit_load_slot(LowerCtx *c, int dst, Type *ty, int offset)
@@ -648,7 +643,7 @@ static int emit_binop_imm(LowerCtx *c, LirOp op, int dst, int lhs, long imm)
 static int lower_bitfield_unit_load_off(LowerCtx *c, int struct_off,
                                         int unit_off, int is_volatile)
 {
-    int dst = fresh(c);
+    int dst = lir_new_vreg_type(c->lf, LIR_TYPE_I32);
 
     emit(c, (Instr){
         .op = LIR_LOAD,
@@ -669,9 +664,13 @@ static void lower_bitfield_unit_store_off(LowerCtx *c, int struct_off,
                                           int unit_off, int val,
                                           int is_volatile)
 {
-    int t = fresh(c);
-    emit(c, (Instr){
-        .op = LIR_CONV, .dst = t, .a = lir_vreg(val), .conv = CONV_TRUNC_LO32 });
+    int t = val;
+    if (lir_vreg_type(c->lf, val) != LIR_TYPE_I32) {
+        t = lir_new_vreg_type(c->lf, LIR_TYPE_I32);
+        emit(c, (Instr){
+            .op = LIR_CONV, .dst = t, .a = lir_vreg(val),
+            .conv = CONV_TRUNC_LO32 });
+    }
     emit(c, (Instr){
         .op = LIR_STORE,
         .a = lir_mem(LIR_FP, struct_off + unit_off),
@@ -687,6 +686,8 @@ static void lower_bitfield_store_off(LowerCtx *c, int struct_off, Member *m,
 {
     int unit = lower_bitfield_unit_load_off(c, struct_off, m->offset,
                                             is_volatile);
+    if (lir_vreg_type(c->lf, val) == LIR_TYPE_I32)
+        val = emit_conv_value(c, val, CONV_ZEXT32);
     long bmask = ((1L << m->bit_width) - 1) << m->bit_offset;
     int cleared = fresh(c);
     int bits = fresh(c);
@@ -712,7 +713,7 @@ static int lower_bitfield_unit_load(LowerCtx *c, Node *base, int unit_off,
                                             is_volatile);
 
     {
-        int dst = fresh(c);
+        int dst = lir_new_vreg_type(c->lf, LIR_TYPE_I32);
         int b = lower_object_addr(c, base);
 
         emit(c, (Instr){
@@ -742,11 +743,15 @@ static void lower_bitfield_unit_store(LowerCtx *c, Node *base, int unit_off,
     }
 
     {
-        int t = fresh(c);
+        int t = val;
         int b = lower_object_addr(c, base);
 
-        emit(c, (Instr){
-            .op = LIR_CONV, .dst = t, .a = lir_vreg(val), .conv = CONV_TRUNC_LO32 });
+        if (lir_vreg_type(c->lf, val) != LIR_TYPE_I32) {
+            t = lir_new_vreg_type(c->lf, LIR_TYPE_I32);
+            emit(c, (Instr){
+                .op = LIR_CONV, .dst = t, .a = lir_vreg(val),
+                .conv = CONV_TRUNC_LO32 });
+        }
         emit(c, (Instr){
             .op = LIR_STORE,
             .a = lir_mem(b, unit_off),
@@ -791,6 +796,8 @@ static void lower_bitfield_store(LowerCtx *c, Node *lhs, Member *m, int val)
     {
         int unit = lower_bitfield_unit_load(c, lhs->lhs, m->offset,
                                             type_is_volatile(lhs->ty));
+        if (lir_vreg_type(c->lf, val) == LIR_TYPE_I32)
+            val = emit_conv_value(c, val, CONV_ZEXT32);
         long bmask = ((1L << m->bit_width) - 1) << m->bit_offset;
         int cleared = fresh(c);
         int bits = fresh(c);
@@ -905,6 +912,12 @@ static int emit_conv_value(LowerCtx *c, int src, ConvKind k)
     int to_f80 = k == CONV_F32_F80 || k == CONV_F64_F80 ||
                  k == CONV_SI32_F80 || k == CONV_SI64_F80 ||
                  k == CONV_UI32_F80 || k == CONV_UI64_F80;
+    int to_i32 = k == CONV_ZEXT8 || k == CONV_SEXT8 ||
+                 k == CONV_ZEXT16 || k == CONV_SEXT16 ||
+                 k == CONV_TRUNC_LO32 || k == CONV_F32_SI32 ||
+                 k == CONV_F64_SI32 || k == CONV_F32_UI32 ||
+                 k == CONV_F64_UI32 || k == CONV_F80_SI32 ||
+                 k == CONV_F80_UI32;
     LirFloatWidth fpw = (k == CONV_SI32_F32 || k == CONV_SI64_F32 ||
                          k == CONV_UI32_F32 || k == CONV_F64_F32 ||
                          k == CONV_UI64_F32 ||
@@ -918,7 +931,7 @@ static int emit_conv_value(LowerCtx *c, int src, ConvKind k)
     int dst = lir_new_vreg_type(c->lf,
         to_f80 ? LIR_TYPE_F80 :
         to_f32 ? LIR_TYPE_F32 : to_f64 ? LIR_TYPE_F64 :
-        LIR_TYPE_I64);
+        to_i32 ? LIR_TYPE_I32 : LIR_TYPE_I64);
     emit(c, (Instr){ .op = LIR_CONV, .dst = dst, .a = lir_vreg(src),
                      .conv = k, .fpw = fpw });
     return dst;
@@ -1066,8 +1079,8 @@ static int convert_value(LowerCtx *c, int v, Type *from, Type *to)
     int sw = si.width;
     int ss = si.is_signed;
 
-    /* No representation change. */
-    if (dw == sw && ds == ss)
+    /* Same-width signedness changes preserve the bit representation. */
+    if (dw == sw)
         return v;
 
     if (dw >= 8) {
@@ -1078,26 +1091,18 @@ static int convert_value(LowerCtx *c, int v, Type *from, Type *to)
             v = emit_conv_value(c, v, ss ? CONV_SEXT32_64 : CONV_ZEXT32);
         } else if (sw == 2) {
             v = emit_conv_value(c, v, ss ? CONV_SEXT16 : CONV_ZEXT16);
+            v = emit_conv_value(c, v, ss ? CONV_SEXT32_64 : CONV_ZEXT32);
         } else {
-            if (ss) {
-                v = emit_conv_value(c, v, CONV_SEXT8);
-                v = emit_conv_value(c, v, CONV_SEXT32_64);
-            } else {
-                v = emit_conv_value(c, v, CONV_ZEXT8);
-            }
+            v = emit_conv_value(c, v, ss ? CONV_SEXT8 : CONV_ZEXT8);
+            v = emit_conv_value(c, v, ss ? CONV_SEXT32_64 : CONV_ZEXT32);
         }
         return v;
     }
 
     if (dw == 4) {
-        /* Truncate to 32 bits then re-canonicalise per destination sign.
-           A signed int from a <=32-bit source is already canonical. */
+        /* I32 values are bit patterns; signedness matters only when widened. */
         if (sw >= 8)
-            v = emit_conv_value(c, v, ds ? CONV_SEXT32_64 : CONV_ZEXT32);
-        else if (ds && sw == 4)
-            v = emit_conv_value(c, v, CONV_SEXT32_64);
-        else if (!ds)
-            v = emit_conv_value(c, v, CONV_ZEXT32);
+            v = emit_conv_value(c, v, CONV_TRUNC_LO32);
         return v;
     }
 
@@ -1142,6 +1147,8 @@ static void lower_ptr_int_arith(LowerCtx *c, int dst, BinOp op,
     int scale = ptr_elem_size(ptr->ty);
     int vi = lower_expr(c, idx);
     int vp = lower_expr(c, ptr);
+
+    vi = convert_value(c, vi, idx->ty, type_long());
 
     if (scale > 1) {
         int t = fresh(c);
@@ -1225,6 +1232,8 @@ static void lower_binop(LowerCtx *c, int dst, BinOp op, Node *lhs, Node *rhs,
 
     int w = binop_width(lhs, rhs);
     int vl = lower_expr(c, lhs);
+    if (w == LIR_W8 && lir_vreg_type(c->lf, vl) == LIR_TYPE_I32)
+        vl = convert_value(c, vl, lhs->ty, type_long());
     vl = protect_home_before(c, vl, rhs);
     LirSign sgn = binop_sign(lhs, rhs, res_ty, op);
 
@@ -1233,8 +1242,12 @@ static void lower_binop(LowerCtx *c, int dst, BinOp op, Node *lhs, Node *rhs,
     Operand rb;
     if (imm_ok)
         rb = lir_imm(rhs->val);
-    else
-        rb = lir_vreg(lower_expr(c, rhs));
+    else {
+        int vr = lower_expr(c, rhs);
+        if (w == LIR_W8 && lir_vreg_type(c->lf, vr) == LIR_TYPE_I32)
+            vr = convert_value(c, vr, rhs->ty, type_long());
+        rb = lir_vreg(vr);
+    }
 
     switch (op) {
     case OP_ADD:
@@ -1955,7 +1968,10 @@ static void store_prepared_lvalue(LowerCtx *c, PreparedLvalue *lv, int value)
         int bits = fresh(c);
         int shifted = fresh(c);
         int merged = fresh(c);
-        int truncated = fresh(c);
+        int truncated = lir_new_vreg_type(c->lf, LIR_TYPE_I32);
+
+        if (lir_vreg_type(c->lf, value) == LIR_TYPE_I32)
+            value = emit_conv_value(c, value, CONV_ZEXT32);
 
         emit_binop_imm(c, LIR_AND, cleared, lv->bitfield_unit, ~field_mask);
         emit_binop_imm(c, LIR_AND, bits, value, value_mask);
@@ -2020,7 +2036,7 @@ static int lower_step_value(LowerCtx *c, int old, Type *oty, int is_inc)
         unsigned long bits = 0;
 
         if (float_width(oty) == LIR_FP_F80) {
-            int integer_one = fresh(c);
+            int integer_one = lir_new_vreg_type(c->lf, LIR_TYPE_I32);
             emit(c, (Instr){
                 .op = LIR_MOVI, .dst = integer_one, .a = lir_imm(1),
             });
@@ -2042,7 +2058,7 @@ static int lower_step_value(LowerCtx *c, int old, Type *oty, int is_inc)
         return dst;
     }
     {
-        int dst = fresh(c);
+        int dst = fresh_type(c, oty);
         LirWidth w = store_lir_width(oty);
         emit(c, (Instr){
             .op = is_inc ? LIR_ADD : LIR_SUB,
@@ -2079,6 +2095,8 @@ static int lower_compound_assign(LowerCtx *c, Node *n)
 
     if (type_is_pointer(n->op_ty)) {
         int scale = ptr_elem_size(n->op_ty);
+
+        right = convert_value(c, right, n->rhs->ty, type_long());
 
         if (scale > 1) {
             int scaled = fresh(c);
@@ -2252,8 +2270,8 @@ static int lower_expr(LowerCtx *c, Node *n)
         int no = lir_new_label(c->lf);
         int merge = lir_new_label(c->lf);
         int dst = fresh_type(c, n->ty);
-        int one = fresh(c);
-        int zero = fresh(c);
+        int one = fresh_type(c, n->ty);
+        int zero = fresh_type(c, n->ty);
         LirBlockId yes_exit;
         LirBlockId no_exit;
 
@@ -2489,12 +2507,18 @@ static void lower_branch(LowerCtx *c, Node *cond, int true_label,
         }
         int w = binop_width(cond->lhs, cond->rhs);
         int vl = lower_expr(c, cond->lhs);
+        if (w == LIR_W8 && lir_vreg_type(c->lf, vl) == LIR_TYPE_I32)
+            vl = convert_value(c, vl, cond->lhs->ty, type_long());
         vl = protect_home_before(c, vl, cond->rhs);
         Operand rb;
         if (cond->rhs->kind == ND_NUM && fits_imm32(cond->rhs->val))
             rb = lir_imm(cond->rhs->val);
-        else
-            rb = lir_vreg(lower_expr(c, cond->rhs));
+        else {
+            int vr = lower_expr(c, cond->rhs);
+            if (w == LIR_W8 && lir_vreg_type(c->lf, vr) == LIR_TYPE_I32)
+                vr = convert_value(c, vr, cond->rhs->ty, type_long());
+            rb = lir_vreg(vr);
+        }
         emit(c, (Instr){
             .op = LIR_BR,
             .a = lir_vreg(vl),

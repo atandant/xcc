@@ -9,7 +9,7 @@ void test_copy_prop_f80_chain(void)
     int source = lir_new_vreg_type(fn, LIR_TYPE_F80);
     int mid = lir_new_vreg_type(fn, LIR_TYPE_F80);
     int tail = lir_new_vreg_type(fn, LIR_TYPE_F80);
-    int result = lir_new_vreg_type(fn, LIR_TYPE_I64);
+    int result = lir_new_vreg_type(fn, LIR_TYPE_I32);
 
     test_emit(fn, b, (Instr){
         .op = LIR_FMOVI, .dst = source, .a = lir_imm(0), .fpw = LIR_FP_F80,

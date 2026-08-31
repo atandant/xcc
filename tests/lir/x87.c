@@ -211,7 +211,7 @@ static int emit_compare(FILE *out, const char *name, LirCond cc,
     int b64 = lir_new_vreg_type(lf, LIR_TYPE_F64);
     int a80 = lir_new_vreg_type(lf, LIR_TYPE_F80);
     int b80 = lir_new_vreg_type(lf, LIR_TYPE_F80);
-    int result = lir_new_vreg_type(lf, LIR_TYPE_I64);
+    int result = lir_new_vreg_type(lf, LIR_TYPE_I32);
     Function fn = { .name = (char *)name, .linkage = LINKAGE_EXTERNAL,
                     .ret_ty = type_int() };
     Liveness lv;
@@ -424,9 +424,15 @@ static int emit_integer_roundtrip(FILE *out, const char *name, uint64_t value,
     LirFn *lf = lir_fn_new(name);
     int entry = lf->entry_block;
     int epilogue = lir_new_block(lf);
-    int source = lir_new_vreg_type(lf, LIR_TYPE_I64);
+    int source_i32 = to_f80 == CONV_SI32_F80 || to_f80 == CONV_UI32_F80;
+    int result_i32 = from_f80 == CONV_F80_SI32 ||
+                     from_f80 == CONV_F80_UI32;
+    int source = lir_new_vreg_type(lf, source_i32
+        ? LIR_TYPE_I32 : LIR_TYPE_I64);
     int extended = lir_new_vreg_type(lf, LIR_TYPE_F80);
-    int result = lir_new_vreg_type(lf, LIR_TYPE_I64);
+    int result = lir_new_vreg_type(lf, result_i32
+        ? LIR_TYPE_I32 : LIR_TYPE_I64);
+    int return_value = result;
     Function fn = { .name = (char *)name, .linkage = LINKAGE_EXTERNAL,
                     .ret_ty = type_unsigned_long() };
     Liveness lv;
@@ -445,7 +451,15 @@ static int emit_integer_roundtrip(FILE *out, const char *name, uint64_t value,
         .op = LIR_CONV, .dst = result, .a = lir_vreg(extended),
         .conv = from_f80, .fpw = LIR_FP_F80,
     });
-    lir_precolor_vreg(lf, result, PHYS_RAX);
+    if (result_i32) {
+        return_value = lir_new_vreg_type(lf, LIR_TYPE_I64);
+        lir_block_emit(&lf->blocks[entry], (Instr){
+            .op = LIR_CONV, .dst = return_value, .a = lir_vreg(result),
+            .conv = from_f80 == CONV_F80_SI32
+                ? CONV_SEXT32_64 : CONV_ZEXT32,
+        });
+    }
+    lir_precolor_vreg(lf, return_value, PHYS_RAX);
     lf->blocks[entry].term = (LirTerminator){
         .kind = LIR_TERM_JMP, .target = epilogue,
     };

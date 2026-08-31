@@ -31,6 +31,21 @@ void test_mem2reg_diamond(void)
     CHECK_EQ(test_phi_input(p,l),lv); CHECK_EQ(test_phi_input(p,r),rv); CHECK_EQ(fn->blocks[j].term.a.u.vreg,p->dst); CHECK_EQ(test_op_count(fn,LIR_STORE),0);
 }
 
+void test_mem2reg_i32_phi(void)
+{
+    LirFn *fn=test_fn("mem2reg_i32_phi"); int e=fn->entry_block,l=test_block(fn),r=test_block(fn),j=test_block(fn);
+    int cond=test_vreg(fn),lv=lir_new_vreg_type(fn,LIR_TYPE_I32),rv=lir_new_vreg_type(fn,LIR_TYPE_I32),got=lir_new_vreg_type(fn,LIR_TYPE_I32);
+    test_add_local(fn,-4,4,1,0);
+    test_branch(fn,e,lir_vreg(cond),lir_imm(0),l,r);
+    test_emit(fn,l,movi(lv,-1)); test_emit(fn,l,store(-4,4,lv)); test_jump(fn,l,j);
+    test_emit(fn,r,movi(rv,0x80000000L)); test_emit(fn,r,store(-4,4,rv)); test_jump(fn,r,j);
+    test_emit(fn,j,load(got,-4,4)); test_return(fn,j,lir_vreg(got));
+    test_finish(fn); CHECK(lir_promote_memory_to_registers(fn)); lir_cfg_verify(fn);
+    CHECK_EQ(fn->blocks[j].nphis,1); LirPhi *p=&fn->blocks[j].phis[0];
+    CHECK_EQ(lir_vreg_type(fn,p->dst),LIR_TYPE_I32); CHECK_EQ(test_phi_input(p,l),lv); CHECK_EQ(test_phi_input(p,r),rv);
+    CHECK_EQ(fn->blocks[j].term.a.u.vreg,p->dst); CHECK_EQ(test_op_count(fn,LIR_STORE),0);
+}
+
 void test_mem2reg_loop(void)
 {
     LirFn *fn=test_fn("mem2reg_loop"); int e=fn->entry_block,h=test_block(fn),body=test_block(fn),exit=test_block(fn);

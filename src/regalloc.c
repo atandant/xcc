@@ -298,6 +298,11 @@ static int coalesce_source(const Instr *ins)
     case LIR_FDIV:
     case LIR_FNEG:
         return ins->a.u.vreg;
+    case LIR_CONV:
+        if (ins->conv == CONV_ZEXT32 || ins->conv == CONV_SEXT32_64 ||
+            ins->conv == CONV_TRUNC_LO32)
+            return ins->a.u.vreg;
+        return LIR_NO_VREG;
     default:
         return LIR_NO_VREG;
     }
