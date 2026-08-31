@@ -5,7 +5,7 @@
 int main(void)
 {
     jmp_buf env;
-    int step;
+    volatile int step;
 
     step = 0;
     if (setjmp(env) == 0) {

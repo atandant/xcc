@@ -140,6 +140,12 @@ typedef enum {
     VAR_STORAGE_FUNCTION,
 } VarStorage;
 
+typedef enum {
+    CALL_EFFECT_NONE          = 0,
+    CALL_EFFECT_RETURNS_TWICE = 1 << 0,
+    CALL_EFFECT_NORETURN      = 1 << 1,
+} CallEffect;
+
 typedef struct Node Node;
 typedef struct NodeList NodeList;
 struct Node {
@@ -169,6 +175,7 @@ struct Node {
     char *symbol_name; /* ND_VAR: assembler name when different       */
     Node *callee;      /* ND_CALL: callee expression (sema)         */
     int call_direct;   /* ND_CALL: 1 → emit direct call by name     */
+    unsigned call_effects; /* ND_CALL: CALL_EFFECT_* flags           */
     int func_decay;    /* ND_VAR: 1 → function/array address escape  */
     VarStorage storage;/* ND_VAR: resolved object/function storage   */
     int offset;        /* stack offset from frame pointer (sema)     */
@@ -385,6 +392,8 @@ Node *node_call(Node *callee, NodeList *args, SourceLoc loc);
 Node *node_builtin_va_start(Node *ap, Node *last, SourceLoc loc);
 Node *node_builtin_va_arg(Node *ap, Type *ty, SourceLoc loc);
 Node *node_builtin_va_end(Node *ap, SourceLoc loc);
+Node *node_builtin_setjmp(Node *env, SourceLoc loc);
+Node *node_builtin_longjmp(Node *env, Node *value, SourceLoc loc);
 Node *node_if(Node *cond, Node *then_body, Node *else_body, SourceLoc loc);
 Node *node_while(Node *cond, Node *body, SourceLoc loc);
 Node *node_do_while(Node *body, Node *cond, SourceLoc loc);

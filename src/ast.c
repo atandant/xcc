@@ -432,18 +432,18 @@ Node *node_call(Node *callee, NodeList *args, SourceLoc loc)
     return n;
 }
 
-static Node *node_builtin_va(const char *name, Node *ap, SourceLoc loc)
+static Node *node_builtin_call(const char *name, Node *args, SourceLoc loc)
 {
     Node *n = new_node(ND_CALL, loc);
     n->name = (char *)name;
-    n->args = ap;
+    n->args = args;
     n->nargs = 1;
     return n;
 }
 
 Node *node_builtin_va_start(Node *ap, Node *last, SourceLoc loc)
 {
-    Node *n = node_builtin_va("__builtin_va_start", ap, loc);
+    Node *n = node_builtin_call("__builtin_va_start", ap, loc);
     ap->next = last;
     n->nargs = 2;
     return n;
@@ -451,14 +451,27 @@ Node *node_builtin_va_start(Node *ap, Node *last, SourceLoc loc)
 
 Node *node_builtin_va_arg(Node *ap, Type *ty, SourceLoc loc)
 {
-    Node *n = node_builtin_va("__builtin_va_arg", ap, loc);
+    Node *n = node_builtin_call("__builtin_va_arg", ap, loc);
     n->cast_ty = ty;
     return n;
 }
 
 Node *node_builtin_va_end(Node *ap, SourceLoc loc)
 {
-    return node_builtin_va("__builtin_va_end", ap, loc);
+    return node_builtin_call("__builtin_va_end", ap, loc);
+}
+
+Node *node_builtin_setjmp(Node *env, SourceLoc loc)
+{
+    return node_builtin_call("__builtin_setjmp", env, loc);
+}
+
+Node *node_builtin_longjmp(Node *env, Node *value, SourceLoc loc)
+{
+    Node *n = node_builtin_call("__builtin_longjmp", env, loc);
+    env->next = value;
+    n->nargs = 2;
+    return n;
 }
 
 Node *node_if(Node *cond, Node *then_body, Node *else_body, SourceLoc loc)

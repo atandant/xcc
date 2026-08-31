@@ -147,6 +147,8 @@ static int keyword(const char *text)
         { "__builtin_va_start", BUILTIN_VA_START },
         { "__builtin_va_arg", BUILTIN_VA_ARG },
         { "__builtin_va_end", BUILTIN_VA_END },
+        { "__builtin_setjmp", BUILTIN_SETJMP },
+        { "__builtin_longjmp", BUILTIN_LONGJMP },
     };
 
     for (size_t i = 0; i < sizeof(words) / sizeof(words[0]); i++)

@@ -1729,6 +1729,7 @@ static int lower_call_ex(LowerCtx *c, Node *n, int result_off)
             .call_name = n->call_direct ? n->name : NULL,
             .call_indirect = n->call_direct ? 0 : 1,
             .call_reg = call_reg,
+            .call_effects = n->call_effects,
             .nargs = total,
             .call_nreg = nreg + nsse,
             .call_ngpr = nreg,
@@ -2562,8 +2563,12 @@ static void lower_stmt(LowerCtx *c, Node *n)
         return;
     }
     case ND_EXPR_STMT:
-        if (n->operand)
+        if (n->operand) {
             (void)lower_expr(c, n->operand);
+            if (n->operand->kind == ND_CALL &&
+                (n->operand->call_effects & CALL_EFFECT_NORETURN))
+                current_block(c)->term.kind = LIR_TERM_UNREACHABLE;
+        }
         return;
     case ND_DECL:
         if ((n->decl_storage != STORAGE_NONE &&

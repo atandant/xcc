@@ -107,14 +107,6 @@ static void block_caller_saved(Liveness *lv, const TargetDesc *td, int idx)
     }
 }
 
-static void block_callee_saved(Liveness *lv, const TargetDesc *td, int idx)
-{
-    for (int r = 0; r < PHYS_COUNT; r++) {
-        if (td->callee_saved_mask & (1u << r))
-            block_phys(lv, r, idx);
-    }
-}
-
 static void operand_vreg_uses(Operand o, int *uses, int *nu)
 {
     switch (o.kind) {
@@ -256,13 +248,6 @@ static void instr_use_def(Instr *ins, int i, const TargetDesc *td, Liveness *lv,
         /* Arguments and an indirect callee are read at i.  The call clobbers
            caller-saved registers immediately afterward, at i + 1. */
         block_caller_saved(lv, td, i + 1);
-        /* setjmp hack: block callee-saved registers so locals spanning these
-           libc calls are not allocated into registers that longjmp restores.
-           See lir_call_is_setjmp_family() and include/README.md. */
-        if (lir_call_is_setjmp_family(ins)) {
-            block_callee_saved(lv, td, i);
-            block_callee_saved(lv, td, i + 1);
-        }
         if (ins->call_ret_type == LIR_TYPE_F80)
             add_def(defs, nd, ins->dst);
         return;

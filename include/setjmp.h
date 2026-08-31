@@ -2,9 +2,7 @@
 #ifndef __XCC_SETJMP_H
 #define __XCC_SETJMP_H
 
-/* Layout matches glibc x86-64 so setjmp/longjmp link against system libc.
-   xcc recognizes direct calls to _setjmp/longjmp for codegen; see
-   include/README.md ("setjmp / longjmp"). */
+/* Layout matches glibc x86-64 so setjmp/longjmp link against system libc. */
 
 typedef long int __jmp_buf[8];
 
@@ -23,9 +21,9 @@ struct __jmp_buf_tag {
 
 typedef struct __jmp_buf_tag jmp_buf[1];
 
-int _setjmp(jmp_buf env);
 void longjmp(jmp_buf env, int val);
 
-#define setjmp(env) _setjmp(env)
+#define setjmp(env) __builtin_setjmp(env)
+#define longjmp(env, val) __builtin_longjmp(env, val)
 
 #endif

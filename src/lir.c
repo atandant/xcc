@@ -603,6 +603,10 @@ static void dump_instr(FILE *out, Instr *ins, int index)
                 dump_operand(out, ins->call_args[a]);
             }
             fprintf(out, ")");
+            if (ins->call_effects & CALL_EFFECT_RETURNS_TWICE)
+                fprintf(out, " returns-twice");
+            if (ins->call_effects & CALL_EFFECT_NORETURN)
+                fprintf(out, " noreturn");
             break;
         case LIR_RET:
             dump_operand(out, ins->a);
@@ -642,28 +646,10 @@ static void dump_block_term(FILE *out, const LirTerminator *term)
         dump_operand(out, term->a);
         fprintf(out, "\n");
         return;
+    case LIR_TERM_UNREACHABLE:
+        fprintf(out, "    unreachable\n");
+        return;
     }
-}
-
-int lir_call_is_setjmp_family(const Instr *ins)
-{
-    if (ins->op != LIR_CALL || ins->call_indirect || !ins->call_name)
-        return 0;
-    /* Match include/setjmp.h on x86-64 Linux (setjmp expands to _setjmp). */
-    return strcmp(ins->call_name, "_setjmp") == 0 ||
-           strcmp(ins->call_name, "longjmp") == 0;
-}
-
-int lir_function_has_setjmp(const LirFn *fn)
-{
-    for (int b = 0; b < fn->nblocks; b++) {
-        const LirBlock *block = &fn->blocks[b];
-        for (int i = 0; i < block->ninstr; i++) {
-            if (lir_call_is_setjmp_family(&block->instrs[i]))
-                return 1;
-        }
-    }
-    return 0;
 }
 
 void lir_dump_fn(LirFn *fn, FILE *out)

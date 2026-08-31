@@ -2069,7 +2069,8 @@ static void emit_terminator(EmitCtx *c, const LirBlock *block, int next)
     const LirTerminator *term = &block->term;
     Instr ins = {0};
 
-    if (term->kind == LIR_TERM_RET)
+    if (term->kind == LIR_TERM_RET ||
+        term->kind == LIR_TERM_UNREACHABLE)
         return;
     if (term->kind == LIR_TERM_JMP) {
         if (term->target == next)

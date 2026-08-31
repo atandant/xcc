@@ -1118,6 +1118,37 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
         n->call_direct = 0;
         n->is_lvalue = 0;
         n->var_decay = 0;
+        if (n->name &&
+            (strcmp(n->name, "__builtin_setjmp") == 0 ||
+             strcmp(n->name, "__builtin_longjmp") == 0)) {
+            Node *env = n->args;
+
+            resolve_expr_ctx(env, CTX_RVALUE);
+            if (!type_is_pointer(env->ty))
+                diag_error_at(env->loc, "setjmp environment must have pointer type");
+
+            n->call_direct = 1;
+            if (strcmp(n->name, "__builtin_setjmp") == 0) {
+                n->name = "_setjmp";
+                n->call_effects = CALL_EFFECT_RETURNS_TWICE;
+                n->ty = type_int();
+                n->func_ty = type_func(type_int(), NULL, 0, 0, 0);
+            } else {
+                Node **value = &env->next;
+
+                resolve_expr_ctx(*value, CTX_RVALUE);
+                if (!type_is_integer((*value)->ty))
+                    diag_error_at((*value)->loc,
+                                  "longjmp value must have integer type");
+                else
+                    convert_expr(value, type_int());
+                n->name = "longjmp";
+                n->call_effects = CALL_EFFECT_NORETURN;
+                n->ty = type_void();
+                n->func_ty = type_func(type_void(), NULL, 0, 0, 0);
+            }
+            return;
+        }
         if (n->name && strncmp(n->name, "__builtin_va_", 13) == 0) {
             Node *ap = n->args;
 

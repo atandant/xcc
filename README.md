@@ -97,23 +97,22 @@ records use sret/stack memory.
 ### setjmp / longjmp
 
 Hosted non-local control flow via `<setjmp.h>` (`-Iinclude`) is supported on
-x86-64 Linux by linking against glibc. The header maps `setjmp` to `_setjmp` and
-uses a glibc-compatible `jmp_buf` layout.
+x86-64 Linux by linking against glibc. `jmp_buf` uses the glibc-compatible
+layout, while the public macros expand to xcc builtins.
 
-Because `_setjmp` / `longjmp` snapshot and restore machine state, xcc
-**recognizes direct calls to those libc symbol names** and adjusts codegen:
+The builtins validate their arguments and lower to the glibc `_setjmp` and
+`longjmp` symbols with generic call-effect flags:
 
-- **liveness** blocks callee-saved registers at the call sites.
-- **regalloc** keeps affected live ranges on the stack (no callee-saved
-  registers, no spill fragmentation across the calls).
-- **mem2reg** is disabled for all locals in any function that contains those
-  calls.
+- `setjmp` is marked `returns-twice`.
+- `longjmp` is marked `noreturn`, and its block has no normal CFG successor.
 
-This is a deliberate, name-based hack (`lir_call_is_setjmp_family()` in
-`src/lir.c`), not a general non-local-control-flow analysis. It matches
-`include/setjmp.h` and is documented in
-[`include/README.md`](include/README.md#setjmp--longjmp). Indirect calls and
-variants such as `sigsetjmp` are not covered yet.
+The optimizer and register allocator otherwise use their ordinary call rules.
+In accordance with C89, an automatic non-`volatile` local modified after
+`setjmp` has an indeterminate value after `longjmp`; use `volatile` when that
+value must survive. Volatile and address-taken locals already remain in memory,
+so setjmp no longer requires name-based liveness/regalloc exceptions or
+whole-function mem2reg disabling. See
+[`include/README.md`](include/README.md#setjmp--longjmp).
 
 **Floating point:** scalar `float` and `double` use SSE registers and the SysV
 AMD64 calling convention. Scalar `long double` is a 16-byte, 16-aligned,
@@ -140,9 +139,6 @@ prerequisite.
 >
 > Eligible integer, `float`, and `double` locals are promoted from stack slots
 > into typed SSA values; address-taken and narrow integer objects stay in memory.
-> Functions that call hosted `setjmp` / `longjmp` keep all locals on the stack
-> (see [setjmp / longjmp](#setjmp--longjmp) below).
->
 > Brace initializers pad unspecified elements with zero (`{0}` zero-fills the
 > whole array). Partial lists and excess-element errors follow C89 aggregate rules.
 > Init element expressions are lowered normally so `cosfold`/`cosprop` can fold them.
