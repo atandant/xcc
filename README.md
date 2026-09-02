@@ -11,9 +11,14 @@ preprocessed C.
 ## Quickstart
 
 ```sh
-make
-echo 'int main(void){ return 2*(3+4)-1; }' | ./xcc | gcc -xassembler - -o a && ./a
+echo 'int main(void){ return 2*(3+4)-1; }' | ./xcc -S | gcc -xassembler - -o a && ./a
 echo $?   # -> 13
+```
+Or this more modern version that does not use the two stage idiom.
+
+```sh
+echo 'int main(void){ return 2*(3+4)-1; }' | ./xcc -o a && ./a
+echo $? # -> 13
 ```
 
 Or against files:
