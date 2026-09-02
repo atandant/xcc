@@ -114,13 +114,14 @@ void parser_reset(void)
 %token ELLIPSIS
 %token BUILTIN_VA_START BUILTIN_VA_ARG BUILTIN_VA_END
 %token BUILTIN_SETJMP BUILTIN_LONGJMP
+%token BUILTIN_OFFSETOF BUILTIN_HUGE_VAL
 
 %type <node> expr expr_opt arg_expr conditional_expr logical_or_expr
              logical_and_expr bitwise_or_expr bitwise_xor_expr bitwise_and_expr
              equality_expr relational_expr shift_expr additive_expr
              multiplicative_expr cast_expr unary_expr postfix_expr primary_expr
              string_literal stmt initializer init_list initializer_opt
-             local_declaration local_init_declarator
+             local_declaration local_init_declarator offsetof_designator
 %type <list> stmt_list arg_clause arg_list local_init_declarator_list
 %type <param> param_list param
 %type <pclause> param_clause
@@ -697,6 +698,9 @@ local_declaration:
         { local_declspec = $1; }
     local_init_declarator_list ';'
         { $$ = stmt_list_head($3); local_declspec = NULL; }
+  | struct_specifier ';'    { (void)$1; $$ = node_expr_stmt(NULL, LOC(@2)); }
+  | union_specifier ';'     { (void)$1; $$ = node_expr_stmt(NULL, LOC(@2)); }
+  | enum_specifier ';'      { (void)$1; $$ = node_expr_stmt(NULL, LOC(@2)); }
   ;
 
 local_init_declarator_list:
@@ -924,7 +928,17 @@ primary_expr:
                              { $$ = node_builtin_setjmp($3, LOC(@1)); }
   | BUILTIN_LONGJMP '(' arg_expr ',' arg_expr ')'
                              { $$ = node_builtin_longjmp($3, $5, LOC(@1)); }
+  | BUILTIN_OFFSETOF '(' cast_type ',' offsetof_designator ')'
+                             { $$ = node_builtin_offsetof($3, $5, LOC(@1)); }
+  | BUILTIN_HUGE_VAL '(' ')'
+                             { $$ = node_builtin_huge_val(LOC(@1)); }
   | '(' expr ')'             { $$ = $2; }
+  ;
+
+offsetof_designator:
+    member_name              { $$ = node_var($1, LOC(@1)); }
+  | offsetof_designator '.' member_name
+                             { $$ = node_member($1, $3, LOC(@2)); }
   ;
 
 string_literal:

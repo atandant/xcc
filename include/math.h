@@ -2,7 +2,7 @@
 #ifndef __XCC_MATH_H
 #define __XCC_MATH_H
 
-#define HUGE_VAL 1e10000
+#define HUGE_VAL (__builtin_huge_val())
 
 double acos(double x);
 double asin(double x);
@@ -19,6 +19,7 @@ double frexp(double x, int *exp);
 double ldexp(double x, int exp);
 double log(double x);
 double log10(double x);
+double fmod(double x, double y);
 double modf(double value, double *iptr);
 double pow(double x, double y);
 double sqrt(double x);

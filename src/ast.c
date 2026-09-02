@@ -6,6 +6,7 @@
 #include "sema_enum.h"
 
 #include <limits.h>
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -557,6 +558,60 @@ Node *node_builtin_longjmp(Node *env, Node *value, SourceLoc loc)
     Node *n = node_builtin_call("__builtin_longjmp", env, loc);
     env->next = value;
     n->nargs = 2;
+    return n;
+}
+
+static Type *offsetof_designator_type(Type *ty, Node *designator,
+                                      long *offset, SourceLoc loc)
+{
+    Member *member;
+
+    if (designator->kind == ND_MEMBER) {
+        ty = offsetof_designator_type(ty, designator->lhs, offset, loc);
+        if (!ty)
+            return NULL;
+    } else if (designator->kind != ND_VAR) {
+        diag_error_at(loc, "invalid member designator in __builtin_offsetof");
+        return NULL;
+    }
+
+    member = type_struct_member(ty, designator->name, NULL);
+    if (!member) {
+        diag_error_at(loc, "no member named '%s' in __builtin_offsetof",
+                      designator->name);
+        return NULL;
+    }
+    if (member->is_bitfield) {
+        diag_error_at(loc, "cannot apply __builtin_offsetof to bit-field '%s'",
+                      designator->name);
+        return NULL;
+    }
+    *offset += member->offset;
+    return member->ty;
+}
+
+Node *node_builtin_offsetof(Type *ty, Node *designator, SourceLoc loc)
+{
+    Node *n;
+    long offset = 0;
+
+    if (!type_struct_is_complete(ty))
+        diag_error_at(loc, "__builtin_offsetof requires a complete struct or union type");
+    else
+        (void)offsetof_designator_type(ty, designator, &offset, loc);
+
+    n = node_num(offset, loc);
+    n->has_long_suffix = 1;
+    n->has_unsigned_suffix = 1;
+    return n;
+}
+
+Node *node_builtin_huge_val(SourceLoc loc)
+{
+    Node *n = node_num(0, loc);
+
+    n->float_val = (long double)INFINITY;
+    n->is_floating_literal = 1;
     return n;
 }
 

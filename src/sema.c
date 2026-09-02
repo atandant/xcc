@@ -1477,10 +1477,16 @@ static void resolve_expr_inner(Node *n, ExprCtx ctx)
             n->ty = n->else_expr->ty;
         } else if (type_is_pointer(n->then_expr->ty) &&
                    type_is_pointer(n->else_expr->ty) &&
-                   (is_void_ptr_type(n->then_expr->ty) ||
-                    is_void_ptr_type(n->else_expr->ty))) {
-            n->ty = is_void_ptr_type(n->then_expr->ty)
-                ? n->then_expr->ty : n->else_expr->ty;
+                   type_compatible(n->then_expr->ty, n->else_expr->ty)) {
+            Type *then_base = type_ptr_elem(n->then_expr->ty);
+            Type *else_base = type_ptr_elem(n->else_expr->ty);
+            unsigned qualifiers = type_qualifiers(then_base) |
+                                  type_qualifiers(else_base);
+            Type *base = (type_is_void(type_unqualified(then_base)) ||
+                          type_is_void(type_unqualified(else_base)))
+                ? type_void() : type_unqualified(then_base);
+
+            n->ty = type_ptr(type_qualify(base, qualifiers));
         } else {
             diag_error_at(n->loc,
                           "incompatible operands to conditional operator");
@@ -2095,6 +2101,14 @@ static void sema_scan_call_member_scratch(Node *n, int *maxsz)
         }
         return;
     case ND_ASSIGN:
+        if (n->rhs && n->rhs->kind == ND_CALL &&
+            abi_type_is_record_pass(n->rhs->ty) &&
+            !(n->lhs && n->lhs->kind == ND_VAR &&
+              n->lhs->storage == VAR_STORAGE_LOCAL)) {
+            int sz = type_size(n->rhs->ty);
+            if (sz > *maxsz)
+                *maxsz = sz;
+        }
         sema_scan_call_member_scratch(n->lhs, maxsz);
         sema_scan_call_member_scratch(n->rhs, maxsz);
         return;

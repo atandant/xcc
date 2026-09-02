@@ -1186,16 +1186,6 @@ static void lower_setcc(LowerCtx *c, int dst, BinOp op, int lhs, Operand rhs,
 static void lower_binop(LowerCtx *c, int dst, BinOp op, Node *lhs, Node *rhs,
                         Type *res_ty)
 {
-    if (op == OP_COMMA) {
-        int vr;
-
-        (void)lower_expr(c, lhs);
-        vr = lower_expr(c, rhs);
-        emit(c, (Instr){
-            .op = LIR_MOV, .dst = dst, .a = lir_vreg(vr) });
-        return;
-    }
-
     if (type_is_pointer(lhs->ty) && type_is_pointer(rhs->ty) && op == OP_SUB) {
         lower_ptr_diff(c, dst, lhs, rhs);
         return;
@@ -2289,11 +2279,14 @@ static int lower_expr(LowerCtx *c, Node *n)
         int yes = lir_new_label(c->lf);
         int no = lir_new_label(c->lf);
         int merge = lir_new_label(c->lf);
-        int dst = fresh_type(c, n->ty);
+        int dst = LIR_NO_VREG;
         int yes_value;
         int no_value;
         LirBlockId yes_exit;
         LirBlockId no_exit;
+
+        if (!type_is_void(n->ty))
+            dst = fresh_type(c, n->ty);
 
         lower_branch(c, n->cond, yes, no);
         emit(c, (Instr){ .op = LIR_LABEL, .label = yes });
@@ -2307,6 +2300,8 @@ static int lower_expr(LowerCtx *c, Node *n)
         emit(c, (Instr){ .op = LIR_JMP, .label = merge });
 
         emit(c, (Instr){ .op = LIR_LABEL, .label = merge });
+        if (type_is_void(n->ty))
+            return LIR_NO_VREG;
         LirPhi *phi = lir_block_add_phi(current_block(c), dst);
         lir_phi_add_input(phi, yes_exit, yes_value);
         lir_phi_add_input(phi, no_exit, no_value);
@@ -2455,6 +2450,10 @@ static int lower_expr(LowerCtx *c, Node *n)
         return val;
     }
     case ND_BINOP: {
+        if (n->op == OP_COMMA) {
+            (void)lower_expr(c, n->lhs);
+            return lower_expr(c, n->rhs);
+        }
         int dst = fresh_type(c, n->ty);
         lower_binop(c, dst, n->op, n->lhs, n->rhs, n->ty);
         return dst;

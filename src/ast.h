@@ -399,6 +399,8 @@ Node *node_builtin_va_arg(Node *ap, Type *ty, SourceLoc loc);
 Node *node_builtin_va_end(Node *ap, SourceLoc loc);
 Node *node_builtin_setjmp(Node *env, SourceLoc loc);
 Node *node_builtin_longjmp(Node *env, Node *value, SourceLoc loc);
+Node *node_builtin_offsetof(Type *ty, Node *designator, SourceLoc loc);
+Node *node_builtin_huge_val(SourceLoc loc);
 Node *node_if(Node *cond, Node *then_body, Node *else_body, SourceLoc loc);
 Node *node_while(Node *cond, Node *body, SourceLoc loc);
 Node *node_do_while(Node *body, Node *cond, SourceLoc loc);

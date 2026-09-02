@@ -232,13 +232,15 @@ make clean
 The generated parser source is produced into `build/` and is not committed.
 
 The [`repos/`](repos/) checks document reproducible builds of selected
-third-party C code. The jsmn, uthash, and zlib scripts fetch pinned sources,
-compile them with xcc, link with `${CC:-cc}`, and run their checks. The full
-zlib 1.3.1 library includes its `gz*` file API and exercises xcc's minimal
-x86-64 Linux POSIX filesystem headers. Their public types and structure layouts
-are checked against the glibc ABI. uthash uses its supported `NO_DECLTYPE`
-portability mode because xcc intentionally does not yet implement the GNU
-`__typeof__` extension.
+third-party C code. The jsmn, uthash, zlib, and Lua scripts fetch pinned
+sources, compile them with xcc, link with `${CC:-cc}`, and run their checks.
+The full zlib 1.3.1 library includes its `gz*` file API and exercises xcc's
+minimal x86-64 Linux POSIX filesystem headers. Their public types and structure
+layouts are checked against the glibc ABI. uthash uses its supported
+`NO_DECLTYPE` portability mode because xcc intentionally does not yet implement
+the GNU `__typeof__` extension. Unmodified Lua 5.5.1 builds and runs in its
+portable C89 mode with compiler builtins disabled, including Lua's upstream
+internal test instrumentation and portable test suite.
 
 ## Roadmap
 
