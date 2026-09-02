@@ -1658,7 +1658,7 @@ static int lower_call_ex(LowerCtx *c, Node *n, int result_off)
     Operand *args;
     LirType *arg_types;
     int i;
-    int f80_result = LIR_NO_VREG;
+    int call_result = LIR_NO_VREG;
     Node *a;
 
     if (n->nargs > XCC_MAX_CALL_ARGS)
@@ -1734,11 +1734,11 @@ static int lower_call_ex(LowerCtx *c, Node *n, int result_off)
 
         if (!n->call_direct)
             call_reg = lower_call_callee(c, n->callee);
-        if (type_is_floating(ret_ty) && float_width(ret_ty) == LIR_FP_F80)
-            f80_result = fresh_type(c, ret_ty);
+        if (!abi_type_is_record_pass(ret_ty) && !type_is_void(ret_ty))
+            call_result = fresh_type(c, ret_ty);
         emit(c, (Instr){
             .op = LIR_CALL,
-            .dst = f80_result,
+            .dst = call_result,
             .call_name = n->call_direct ? n->name : NULL,
             .call_indirect = n->call_direct ? 0 : 1,
             .call_reg = call_reg,
@@ -1749,8 +1749,9 @@ static int lower_call_ex(LowerCtx *c, Node *n, int result_off)
             .call_nsse = nsse,
             .call_args = args,
             .call_arg_types = arg_types,
-            .call_ret_type = f80_result == LIR_NO_VREG
-                           ? LIR_TYPE_I64 : LIR_TYPE_F80,
+            .call_ret_type = call_result == LIR_NO_VREG
+                           ? LIR_TYPE_I64
+                           : lir_vreg_type(c->lf, call_result),
         });
     }
 
@@ -1769,15 +1770,7 @@ static int lower_call_ex(LowerCtx *c, Node *n, int result_off)
         return fresh(c);
     }
 
-    if (f80_result != LIR_NO_VREG)
-        return f80_result;
-
-    int dst = fresh_type(c, ret_ty);
-    emit(c, (Instr){
-        .op = LIR_MOV, .dst = dst,
-        .a = lir_phys(type_is_floating(ret_ty) ? PHYS_XMM0 : PHYS_RAX),
-        .fpw = type_is_floating(ret_ty) ? float_width(ret_ty) : LIR_FP_NONE });
-    return dst;
+    return call_result;
 }
 
 static int lower_call(LowerCtx *c, Node *n)

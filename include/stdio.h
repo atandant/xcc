@@ -49,6 +49,8 @@ int fclose(FILE *stream);
 int fflush(FILE *stream);
 FILE *fopen(const char *filename, const char *mode);
 FILE *freopen(const char *filename, const char *mode, FILE *stream);
+FILE *fdopen(int fd, const char *mode);
+int fileno(FILE *stream);
 void setbuf(FILE *stream, char *buf);
 int setvbuf(FILE *stream, char *buf, int mode, size_t size);
 
@@ -58,6 +60,10 @@ int sprintf(char *s, const char *format, ...);
 int vfprintf(FILE *stream, const char *format, va_list arg);
 int vprintf(const char *format, va_list arg);
 int vsprintf(char *s, const char *format, va_list arg);
+int snprintf(char *s, size_t n, const char *format, ...);
+int vsnprintf(char *s, size_t n, const char *format, va_list arg);
+int dprintf(int fd, const char *format, ...);
+int vdprintf(int fd, const char *format, va_list arg);
 
 int fscanf(FILE *stream, const char *format, ...);
 int scanf(const char *format, ...);

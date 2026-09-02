@@ -248,7 +248,7 @@ static void instr_use_def(Instr *ins, int i, const TargetDesc *td, Liveness *lv,
         /* Arguments and an indirect callee are read at i.  The call clobbers
            caller-saved registers immediately afterward, at i + 1. */
         block_caller_saved(lv, td, i + 1);
-        if (ins->call_ret_type == LIR_TYPE_F80)
+        if (ins->dst >= 0)
             add_def(defs, nd, ins->dst);
         return;
 
@@ -646,8 +646,10 @@ void liveness_compute(LirFn *lf, const TargetDesc *td, Liveness *out)
                 }
             }
             for (int d = 0; d < nd; d++) {
-                touch_vreg_def(out, defs[d], ins->position);
-                record_vreg_position(out, defs[d], ins->position, LIVE_POS_DEF);
+                int def_position = ins->op == LIR_CALL
+                    ? ins->position + 2 : ins->position;
+                touch_vreg_def(out, defs[d], def_position);
+                record_vreg_position(out, defs[d], def_position, LIVE_POS_DEF);
             }
         }
 

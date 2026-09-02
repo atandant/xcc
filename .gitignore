@@ -7,6 +7,7 @@
 # fetched third-party integration sources and outputs
 /repos/jsmn/
 /repos/uthash/
+/repos/zlib/
 /repos/build/
 
 # editor / OS noise
@@ -15,3 +16,6 @@
 *.s
 *.swp
 .DS_Store
+
+# executables
+*.out

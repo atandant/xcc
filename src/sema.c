@@ -2543,6 +2543,16 @@ static int static_address_expr(Node *n, char **symbol, long *addend)
     }
 }
 
+static int static_integer_pointer_expr(Node *n, long *value)
+{
+    while (n && n->kind == ND_CAST && type_is_pointer(n->ty)) {
+        if (n->operand && type_is_integer(n->operand->ty))
+            return ice_eval(n->operand, value);
+        n = n->operand;
+    }
+    return 0;
+}
+
 static int static_initializer_error(GlobalObject *object)
 {
     if (object->source_name)
@@ -2692,6 +2702,11 @@ static int encode_static_initializer(GlobalObject *object, Type *ty,
 
             if (is_null_ptr_constant(value))
                 return 1;
+            if (static_integer_pointer_expr(value, &addend)) {
+                static_write_integer(object->init_data, offset, type_size(ty),
+                                     (unsigned long)addend);
+                return 1;
+            }
             if (!static_address_expr(value, &symbol, &addend))
                 return static_initializer_error(object);
             static_add_reloc(object, offset, symbol, addend);

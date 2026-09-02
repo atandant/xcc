@@ -1,4 +1,4 @@
-# xcc C89 headers
+# xcc implementation headers
 
 Hosted-environment declaration headers for glibc on x86-64 Linux. xcc finds
 these headers relative to its executable and links with the system C library
@@ -24,11 +24,20 @@ these headers relative to its executable and links with the system C library
 | `<stdarg.h>` | `va_list`, `va_start`, `va_arg`, `va_end` |
 | `<stdio.h>` | Streams, formatted I/O, file positioning, and buffering |
 
-## Not provided
+## POSIX compatibility tier
 
-All C89 headers are now provided.
+The hosted x86-64 Linux layer also provides `<stdint.h>` and a defined POSIX
+filesystem tier through `<sys/types.h>`, `<sys/stat.h>`, `<unistd.h>`,
+`<fcntl.h>`, and `<dirent.h>`. This tier covers file descriptors, positioned
+I/O, descriptor duplication, stream/descriptor conversion, file metadata and
+permissions, links, directories, and the corresponding error constants.
 
-Non-C89 headers (`<stdint.h>`, `<stdbool.h>`, …) are intentionally omitted.
+The POSIX structures and scalar types match the x86-64 glibc ABI. Cross-compiler
+tests compare their sizes and member offsets against the host headers. APIs for
+process control, sockets, polling, memory mapping, terminals, and threads remain
+outside this tier.
+
+Other non-C89 headers (`<stdbool.h>`, …) are intentionally omitted.
 
 `struct tm`, `struct lconv`, `jmp_buf`, and `errno` use glibc-compatible
 layouts/macros so calls into the system C library remain ABI-safe on Linux.

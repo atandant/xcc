@@ -108,6 +108,11 @@ static int integer_binary_op(LirOp op)
            op == LIR_SHR || op == LIR_SAR;
 }
 
+static int shift_op(LirOp op)
+{
+    return op == LIR_SHL || op == LIR_SHR || op == LIR_SAR;
+}
+
 static void verify_integer_types(const LirFn *fn, int block, const Instr *ins)
 {
     if (ins->op == LIR_MOV && ins->dst >= 0 &&
@@ -118,10 +123,16 @@ static void verify_integer_types(const LirFn *fn, int block, const Instr *ins)
     if ((integer_binary_op(ins->op) || ins->op == LIR_NEG) &&
         ins->w == LIR_W8) {
         verify_wide_operand(fn, block, ins->a);
-        verify_wide_operand(fn, block, ins->b);
+        if (!shift_op(ins->op))
+            verify_wide_operand(fn, block, ins->b);
         if (ins->dst >= 0 && lir_vreg_type(fn, ins->dst) == LIR_TYPE_I32)
             malformed(fn, block, "W8 instruction defines an I32 value");
     }
+
+    if (shift_op(ins->op) && ins->b.kind == OPND_VREG &&
+        lir_vreg_type(fn, ins->b.u.vreg) != LIR_TYPE_I32 &&
+        lir_vreg_type(fn, ins->b.u.vreg) != LIR_TYPE_I64)
+        malformed(fn, block, "shift count is not an integer value");
 
     if (ins->op != LIR_CONV)
         return;
@@ -290,11 +301,10 @@ void lir_cfg_verify(const LirFn *fn)
                     malformed(fn, i, "indirect call uses an invalid vreg");
                 for (int a = 0; a < ins->nargs; a++)
                     verify_operand(fn, i, ins->call_args[a]);
-                if (ins->call_ret_type == LIR_TYPE_F80) {
-                    if (ins->dst < 0 || ins->dst >= fn->nvreg ||
-                        lir_vreg_type(fn, ins->dst) != LIR_TYPE_F80)
-                        malformed(fn, i, "F80 call has an invalid destination");
-                }
+                if (ins->dst >= 0 &&
+                    (ins->dst >= fn->nvreg ||
+                     lir_vreg_type(fn, ins->dst) != ins->call_ret_type))
+                    malformed(fn, i, "call has an invalid destination");
             }
             if (lir_instruction_defines_vreg(ins)) {
                 if (ins->dst >= fn->nvreg)

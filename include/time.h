@@ -4,10 +4,22 @@
 
 #include <stddef.h>
 
+#ifndef __XCC_CLOCK_T_DEFINED
+#define __XCC_CLOCK_T_DEFINED
 typedef long clock_t;
+#endif
+
+#ifndef __XCC_TIME_T_DEFINED
+#define __XCC_TIME_T_DEFINED
 typedef long time_t;
+#endif
 
 #define CLOCKS_PER_SEC 1000000L
+
+struct timespec {
+    time_t tv_sec;
+    long tv_nsec;
+};
 
 struct tm {
     int tm_sec;

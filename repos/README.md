@@ -41,3 +41,19 @@ with insertion, lookup, iteration, and deletion. The script defines
 `NO_DECLTYPE=1`, uthash's upstream portability mode for compilers without GNU
 `__typeof__`; no patch to the downloaded project is required. The compound-key
 and pointer-key checks also exercise xcc's anonymous struct typedef support.
+
+## zlib
+
+From the xcc repository root:
+
+```sh
+./repos/fetch_zlib.sh
+./repos/build_zlib.sh
+```
+
+The pinned zlib 1.3.1 build compiles all fifteen library translation units and
+the unmodified upstream `example.c`, `minigzip.c`, and `infcover.c` tests
+through xcc's driver. These cover compression, checksums, inflate error paths,
+multi-translation-unit linking, gzip pipe round-trips, and the `gz*` file API,
+including formatted output, reading, writing, seeking, and closing. The build
+uses xcc's x86-64 Linux POSIX compatibility headers rather than host headers.

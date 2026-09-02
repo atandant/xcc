@@ -67,7 +67,7 @@ void parser_reset(void)
 /* Storage classes and qualifiers next to a typedef name are intentionally
    shifted into declaration specifiers rather than reduced as an implicit-int
    declaration whose declarator happens to use that spelling. */
-%expect 29
+%expect 54
 
 %code requires {
     #include "ast.h"
@@ -126,6 +126,7 @@ void parser_reset(void)
 %type <pclause> param_clause
 %type <external> toplevel
 %type <type> cast_type struct_specifier union_specifier enum_specifier
+             named_type_specifier
 %type <declspec> declaration_specifiers builtin_declaration_specifiers
                  named_declaration_specifiers
 %type <fields> struct_declaration_list struct_declaration struct_declarator_list
@@ -201,6 +202,36 @@ declaration_specifiers:
   | VOLATILE CONST builtin_declaration_specifiers
         { $$ = declspec_add_qualifier($3, TQ_VOLATILE, LOC(@1));
           $$ = declspec_add_qualifier($$, TQ_CONST, LOC(@2)); }
+  | EXTERN CONST builtin_declaration_specifiers
+        { $$ = declspec_add_storage($3, STORAGE_EXTERN, LOC(@1));
+          $$ = declspec_add_qualifier($$, TQ_CONST, LOC(@2)); }
+  | STATIC CONST builtin_declaration_specifiers
+        { $$ = declspec_add_storage($3, STORAGE_STATIC, LOC(@1));
+          $$ = declspec_add_qualifier($$, TQ_CONST, LOC(@2)); }
+  | TYPEDEF CONST builtin_declaration_specifiers
+        { $$ = declspec_add_storage($3, STORAGE_TYPEDEF, LOC(@1));
+          $$ = declspec_add_qualifier($$, TQ_CONST, LOC(@2)); }
+  | AUTO CONST builtin_declaration_specifiers
+        { $$ = declspec_add_storage($3, STORAGE_AUTO, LOC(@1));
+          $$ = declspec_add_qualifier($$, TQ_CONST, LOC(@2)); }
+  | REGISTER CONST builtin_declaration_specifiers
+        { $$ = declspec_add_storage($3, STORAGE_REGISTER, LOC(@1));
+          $$ = declspec_add_qualifier($$, TQ_CONST, LOC(@2)); }
+  | EXTERN VOLATILE builtin_declaration_specifiers
+        { $$ = declspec_add_storage($3, STORAGE_EXTERN, LOC(@1));
+          $$ = declspec_add_qualifier($$, TQ_VOLATILE, LOC(@2)); }
+  | STATIC VOLATILE builtin_declaration_specifiers
+        { $$ = declspec_add_storage($3, STORAGE_STATIC, LOC(@1));
+          $$ = declspec_add_qualifier($$, TQ_VOLATILE, LOC(@2)); }
+  | TYPEDEF VOLATILE builtin_declaration_specifiers
+        { $$ = declspec_add_storage($3, STORAGE_TYPEDEF, LOC(@1));
+          $$ = declspec_add_qualifier($$, TQ_VOLATILE, LOC(@2)); }
+  | AUTO VOLATILE builtin_declaration_specifiers
+        { $$ = declspec_add_storage($3, STORAGE_AUTO, LOC(@1));
+          $$ = declspec_add_qualifier($$, TQ_VOLATILE, LOC(@2)); }
+  | REGISTER VOLATILE builtin_declaration_specifiers
+        { $$ = declspec_add_storage($3, STORAGE_REGISTER, LOC(@1));
+          $$ = declspec_add_qualifier($$, TQ_VOLATILE, LOC(@2)); }
   ;
 
 builtin_declaration_specifiers:
@@ -350,6 +381,53 @@ named_declaration_specifiers:
         { $$ = declspec_add_qualifier($2, TQ_VOLATILE, LOC(@1)); }
   | named_declaration_specifiers VOLATILE
         { $$ = declspec_add_qualifier($1, TQ_VOLATILE, LOC(@2)); }
+  | EXTERN CONST named_type_specifier
+        { $$ = declspec_add_storage(NULL, STORAGE_EXTERN, LOC(@1));
+          $$ = declspec_add_qualifier($$, TQ_CONST, LOC(@2));
+          $$ = declspec_add_type($$, $3, LOC(@3)); }
+  | STATIC CONST named_type_specifier
+        { $$ = declspec_add_storage(NULL, STORAGE_STATIC, LOC(@1));
+          $$ = declspec_add_qualifier($$, TQ_CONST, LOC(@2));
+          $$ = declspec_add_type($$, $3, LOC(@3)); }
+  | TYPEDEF CONST named_type_specifier
+        { $$ = declspec_add_storage(NULL, STORAGE_TYPEDEF, LOC(@1));
+          $$ = declspec_add_qualifier($$, TQ_CONST, LOC(@2));
+          $$ = declspec_add_type($$, $3, LOC(@3)); }
+  | AUTO CONST named_type_specifier
+        { $$ = declspec_add_storage(NULL, STORAGE_AUTO, LOC(@1));
+          $$ = declspec_add_qualifier($$, TQ_CONST, LOC(@2));
+          $$ = declspec_add_type($$, $3, LOC(@3)); }
+  | REGISTER CONST named_type_specifier
+        { $$ = declspec_add_storage(NULL, STORAGE_REGISTER, LOC(@1));
+          $$ = declspec_add_qualifier($$, TQ_CONST, LOC(@2));
+          $$ = declspec_add_type($$, $3, LOC(@3)); }
+  | EXTERN VOLATILE named_type_specifier
+        { $$ = declspec_add_storage(NULL, STORAGE_EXTERN, LOC(@1));
+          $$ = declspec_add_qualifier($$, TQ_VOLATILE, LOC(@2));
+          $$ = declspec_add_type($$, $3, LOC(@3)); }
+  | STATIC VOLATILE named_type_specifier
+        { $$ = declspec_add_storage(NULL, STORAGE_STATIC, LOC(@1));
+          $$ = declspec_add_qualifier($$, TQ_VOLATILE, LOC(@2));
+          $$ = declspec_add_type($$, $3, LOC(@3)); }
+  | TYPEDEF VOLATILE named_type_specifier
+        { $$ = declspec_add_storage(NULL, STORAGE_TYPEDEF, LOC(@1));
+          $$ = declspec_add_qualifier($$, TQ_VOLATILE, LOC(@2));
+          $$ = declspec_add_type($$, $3, LOC(@3)); }
+  | AUTO VOLATILE named_type_specifier
+        { $$ = declspec_add_storage(NULL, STORAGE_AUTO, LOC(@1));
+          $$ = declspec_add_qualifier($$, TQ_VOLATILE, LOC(@2));
+          $$ = declspec_add_type($$, $3, LOC(@3)); }
+  | REGISTER VOLATILE named_type_specifier
+        { $$ = declspec_add_storage(NULL, STORAGE_REGISTER, LOC(@1));
+          $$ = declspec_add_qualifier($$, TQ_VOLATILE, LOC(@2));
+          $$ = declspec_add_type($$, $3, LOC(@3)); }
+  ;
+
+named_type_specifier:
+    TYPEDEF_NAME         { $$ = typedef_lookup($1); }
+  | struct_specifier     { $$ = $1; }
+  | union_specifier      { $$ = $1; }
+  | enum_specifier       { $$ = $1; }
   ;
 
 struct_specifier:

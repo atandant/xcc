@@ -84,7 +84,7 @@ int lir_instruction_defines_vreg(const Instr *ins)
     case LIR_CONV:
         return ins->dst >= 0;
     case LIR_CALL:
-        return ins->call_ret_type == LIR_TYPE_F80 && ins->dst >= 0;
+        return ins->dst >= 0;
     default:
         return 0;
     }

@@ -1081,7 +1081,10 @@ static void emit_shift(EmitCtx *c, Instr *ins)
         fprintf(c->out, "  %s $%ld, %s\n", op, ins->b.u.imm,
                 ins->w == LIR_W4 ? reg32_name(result) : reg64_name(result));
     } else {
-        load_operand(c, ins->b, reg64_name(c->td->shift_count_reg), LIR_W8);
+        LirWidth count_width =
+            lir_vreg_type(c->lf, ins->b.u.vreg) == LIR_TYPE_I32
+                ? LIR_W4 : LIR_W8;
+        load_operand(c, ins->b, reg64_name(c->td->shift_count_reg), count_width);
         fprintf(c->out, "  %s %%cl, %s\n", op,
                 ins->w == LIR_W4 ? reg32_name(result) : reg64_name(result));
     }
@@ -2056,8 +2059,16 @@ static void emit_instr(EmitCtx *c, Instr *ins)
         } else {
             fprintf(c->out, "  call %s\n", ins->call_name);
         }
-        if (ins->call_ret_type == LIR_TYPE_F80)
+        invalidate_rax(c);
+        if (ins->call_ret_type == LIR_TYPE_F80 && ins->dst >= 0)
             fprintf(c->out, "  fstpt %d(%%rbp)\n", vreg_off(c, ins->dst));
+        else if ((ins->call_ret_type == LIR_TYPE_F32 ||
+                  ins->call_ret_type == LIR_TYPE_F64) && ins->dst >= 0)
+            store_float(c, ins->dst, PHYS_XMM0,
+                        ins->call_ret_type == LIR_TYPE_F32
+                            ? LIR_FP_F32 : LIR_FP_F64);
+        else if (ins->dst >= 0)
+            store_vreg_value(c, ins->dst, "%rax");
         return;
     }
 
