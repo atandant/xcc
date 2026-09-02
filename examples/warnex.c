@@ -6,8 +6,8 @@
  * unprototyped calls, char overflow, bare return) while still producing
  * a runnable program. Diagnostics go to stderr; stdout is unused.
  *
- *   ./xcc examples/warnex.c -o /tmp/warnex.s 2>/tmp/warnex.err
- *   gcc /tmp/warnex.s -o /tmp/warnex && /tmp/warnex; echo $?
+ *   ./xcc examples/warnex.c -o /tmp/warnex 2>/tmp/warnex.err
+ *   /tmp/warnex; echo $?
  *   # -> 42
  *
  * Marked xcc-expect-warning for examples/build.sh (warnings are expected).

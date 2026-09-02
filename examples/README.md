@@ -40,8 +40,7 @@ build returns `67`; priority scheduling changes the order and returns `159`:
 ./xcc examples/job_queue.c \
     -DJOB_QUEUE_ENABLE_PRIORITY=1 \
     -DJOB_QUEUE_VERBOSE_BUILD=1 \
-    -o /tmp/job_queue.s
-gcc /tmp/job_queue.s -o /tmp/job_queue
+    -o /tmp/job_queue
 /tmp/job_queue; echo $?   # -> 159
 ```
 
@@ -90,15 +89,20 @@ From the repository root (after `make`):
 Or one runnable file by hand:
 
 ```sh
-./xcc examples/primes.c -o /tmp/primes.s
-gcc /tmp/primes.s -o /tmp/primes
+./xcc examples/primes.c -o /tmp/primes
 /tmp/primes
 echo $?    # -> 25
 ```
 
-The build script compiles every runnable `examples/*.c` file, links with `gcc`,
-runs each binary, and prints its exit code. Files containing `xcc-expect-error`
-in a comment (currently `errnop.c`) are compiled expecting failure; their
-diagnostics are printed instead. Files with `xcc-expect-warning` (currently
-`warnex.c`) must compile and run successfully; warnings on stderr are expected
-and shown, not treated as failure.
+To keep the assembly instead:
+
+```sh
+./xcc -S examples/primes.c -o /tmp/primes.s
+```
+
+The build script compiles and links every runnable `examples/*.c` file through
+xcc's driver mode, runs each binary, and prints its exit code. Files containing
+`xcc-expect-error` in a comment (currently `errnop.c`) are compiled expecting
+failure; their diagnostics are printed instead. Files with `xcc-expect-warning`
+(currently `warnex.c`) must compile and run successfully; warnings on stderr are
+expected and shown, not treated as failure.

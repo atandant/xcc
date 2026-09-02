@@ -1,6 +1,6 @@
 #!/bin/sh
 # SPDX-License-Identifier: MIT
-# Compile and run every example with xcc + gcc.
+# Compile and run every example with xcc.
 # Files marked with "xcc-expect-error" are expected to fail xcc and only
 # print their diagnostics (see examples/errnop.c).
 # Files marked with "xcc-expect-warning" compile and run, but stderr is
@@ -36,7 +36,7 @@ for src in "$EXDIR"/*.c; do
     name=$(basename "$src" .c)
 
     if is_error_demo "$src"; then
-        if "$XCC" "$src" -o "$OUTDIR/$name.s" 2> "$OUTDIR/$name.err"; then
+        if "$XCC" "$src" -o "$OUTDIR/$name" 2> "$OUTDIR/$name.err"; then
             echo "FAIL $name (expected xcc compile error)"
             fail=$((fail + 1))
             continue
@@ -49,7 +49,7 @@ for src in "$EXDIR"/*.c; do
         continue
     fi
 
-    if ! "$XCC" "$src" -o "$OUTDIR/$name.s" 2> "$OUTDIR/$name.err"; then
+    if ! "$XCC" "$src" -o "$OUTDIR/$name" 2> "$OUTDIR/$name.err"; then
         echo "FAIL $name (xcc)"
         sed 's/^/  /' "$OUTDIR/$name.err"
         fail=$((fail + 1))
@@ -69,13 +69,6 @@ for src in "$EXDIR"/*.c; do
             fail=$((fail + 1))
             continue
         fi
-    fi
-
-    if ! gcc "$OUTDIR/$name.s" -o "$OUTDIR/$name" 2> "$OUTDIR/$name.gccerr"; then
-        echo "FAIL $name (gcc)"
-        sed 's/^/  /' "$OUTDIR/$name.gccerr"
-        fail=$((fail + 1))
-        continue
     fi
 
     if "$OUTDIR/$name"; then
