@@ -246,8 +246,11 @@ internal test instrumentation and portable test suite.
 
 - optionally optimize memory-resident F80 values with an x87 stack scheduler after
   source-level semantics and ABI interoperability are complete
-- function-pointer and nested-declarator conformance edge cases
-- complete C89 preprocessor support
+- function-pointer and nested-declarator conformance edge cases (most we handled)
+- stabilize C89 preprocessor support
+- add more builtins and GNU extensions
+- add more headers
+- arm64 support
 - broaden the SysV AMD64 ABI beyond the current integer/pointer record subset
 - compile increasingly substantial C89 programs and libraries
 
